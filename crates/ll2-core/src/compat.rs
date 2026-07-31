@@ -104,6 +104,16 @@ pub fn const_basic_point_is_mutable() -> bool {
     bug_compat()
 }
 
+/// Upstream never registers a Python class for the vector type behind
+/// `TrafficSignsWithType.trafficSigns`, so reading the property raises
+/// `TypeError: No Python class registered for C++ class std::vector<...>`.
+/// The property is simply unusable there.
+///
+/// Upstream: `lanelet2_python/python_api/core.cpp:1320`
+pub fn traffic_signs_property_unreadable() -> bool {
+    bug_compat()
+}
+
 // --- registration-time switches -------------------------------------------
 // These change method signatures, so they are consulted when classes are
 // registered rather than when methods are called.

@@ -16,8 +16,12 @@ use pyo3::types::{PyDict, PyTuple};
 
 use crate::conv::{attribute_map_from_any, attributes_repr_arg, optional_attribute_map};
 use crate::core::attribute::PyAttributeMap;
+use crate::core::compound::{PyCompoundPolygon2d, PyCompoundPolygon3d};
 use crate::core::linestring::{PyConstLineString3d, PyLineString3d, linestring_of};
+use crate::core::regelem::{PyRegulatoryElement, regelem_of};
 use crate::err::argument_error;
+use ll2_core::regelem::{RegElemKind, RegulatoryElement};
+use pyo3::types::PyList;
 
 /// Extracts the shared lanelet behind either lanelet class.
 pub fn lanelet_of(obj: &Bound<'_, PyAny>) -> Option<(Lanelet, bool)> {
@@ -28,6 +32,62 @@ pub fn lanelet_of(obj: &Bound<'_, PyAny>) -> Option<(Lanelet, bool)> {
         return Some((value.borrow().lanelet.clone(), false));
     }
     None
+}
+
+/// Wraps regulatory elements in the concrete Python class each one reports.
+///
+/// PyO3 needs the subclass initializer, so the mapping from kind to class is
+/// spelled out rather than inferred.
+pub fn regelems_to_py(py: Python<'_>, regelems: &[RegulatoryElement]) -> PyResult<Py<PyAny>> {
+    use crate::core::regelem::{PyAllWayStop, PyRightOfWay, PySpeedLimit, PyTrafficLight, PyTrafficSign};
+
+    let list = PyList::empty(py);
+    for regelem in regelems {
+        let base = PyRegulatoryElement::wrap(regelem.clone());
+        let object: Py<PyAny> = match regelem.kind() {
+            RegElemKind::TrafficLight => Py::new(py, (PyTrafficLight, base))?.into_any(),
+            RegElemKind::RightOfWay => Py::new(py, (PyRightOfWay, base))?.into_any(),
+            RegElemKind::AllWayStop => Py::new(py, (PyAllWayStop, base))?.into_any(),
+            RegElemKind::TrafficSign => Py::new(py, (PyTrafficSign, base))?.into_any(),
+            RegElemKind::SpeedLimit => Py::new(
+                py,
+                PyClassInitializer::from(base)
+                    .add_subclass(PyTrafficSign)
+                    .add_subclass(PySpeedLimit),
+            )?
+            .into_any(),
+            RegElemKind::Generic => Py::new(py, base)?.into_any(),
+        };
+        list.append(object)?;
+    }
+    Ok(list.into_any().unbind())
+}
+
+/// The regulatory-element argument of a repr: a bracketed list, or empty when
+/// there are none so that `make_repr` drops it.
+pub fn regelems_repr_arg(py: Python<'_>, regelems: &[RegulatoryElement]) -> PyResult<String> {
+    if regelems.is_empty() {
+        return Ok(String::new());
+    }
+    let rendered: Vec<String> = regelems
+        .iter()
+        .map(|regelem| PyRegulatoryElement::wrap(regelem.clone()).__repr__(py))
+        .collect::<PyResult<_>>()?;
+    Ok(format!("[{}]", rendered.join(", ")))
+}
+
+/// Filters the attached elements down to one kind, for `trafficLights()` and friends.
+fn regelems_of_kind(
+    py: Python<'_>,
+    lanelet: &Lanelet,
+    kind: RegElemKind,
+) -> PyResult<Py<PyAny>> {
+    let matching: Vec<RegulatoryElement> = lanelet
+        .regulatory_elements()
+        .into_iter()
+        .filter(|regelem| regelem.kind() == kind)
+        .collect();
+    regelems_to_py(py, &matching)
 }
 
 fn linestring_arg(obj: &Bound<'_, PyAny>, class: &str) -> PyResult<LineString> {
@@ -76,7 +136,18 @@ fn construct(
         class,
     )?;
     let attributes = optional_attribute_map(arg(3, "attributes")?.as_ref())?;
-    Ok(Lanelet::new(id, left, right, attributes))
+    let lanelet = Lanelet::new(id, left, right, attributes);
+    if let Some(regelems) = arg(4, "regelems")? {
+        if !regelems.is_none() {
+            for item in regelems.try_iter()? {
+                let item = item?;
+                let regelem = regelem_of(&item)
+                    .ok_or_else(|| argument_error(class, "__init__"))?;
+                lanelet.add_regulatory_element(regelem);
+            }
+        }
+    }
+    Ok(lanelet)
 }
 
 macro_rules! lanelet_class {
@@ -188,6 +259,48 @@ macro_rules! lanelet_class {
                 self.lanelet.reset_cache();
             }
 
+            #[getter]
+            #[pyo3(name = "regulatoryElements")]
+            fn regulatory_elements(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+                regelems_to_py(py, &self.lanelet.regulatory_elements())
+            }
+
+            #[pyo3(name = "trafficLights")]
+            fn traffic_lights(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+                regelems_of_kind(py, &self.lanelet, RegElemKind::TrafficLight)
+            }
+
+            #[pyo3(name = "trafficSigns")]
+            fn traffic_signs(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+                regelems_of_kind(py, &self.lanelet, RegElemKind::TrafficSign)
+            }
+
+            #[pyo3(name = "speedLimits")]
+            fn speed_limits(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+                regelems_of_kind(py, &self.lanelet, RegElemKind::SpeedLimit)
+            }
+
+            #[pyo3(name = "rightOfWay")]
+            fn right_of_way(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+                regelems_of_kind(py, &self.lanelet, RegElemKind::RightOfWay)
+            }
+
+            #[pyo3(name = "allWayStop")]
+            fn all_way_stop(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+                regelems_of_kind(py, &self.lanelet, RegElemKind::AllWayStop)
+            }
+
+            /// The outline: the left bound followed by the reversed right bound.
+            #[pyo3(name = "polygon3d")]
+            fn polygon3d(&self) -> PyCompoundPolygon3d {
+                PyCompoundPolygon3d::wrap(self.lanelet.polygon())
+            }
+
+            #[pyo3(name = "polygon2d")]
+            fn polygon2d(&self) -> PyCompoundPolygon2d {
+                PyCompoundPolygon2d::wrap(self.lanelet.polygon())
+            }
+
             fn invert(&self) -> Self {
                 $rust::wrap(self.lanelet.invert())
             }
@@ -221,11 +334,12 @@ macro_rules! lanelet_class {
                 self.lanelet.to_display_string()
             }
 
-            fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+            pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
                 let attributes = attributes_repr_arg(py, &self.lanelet.attributes().read())?;
-                let left = PyLineString3d::wrap(self.lanelet.left_bound()).__repr__(py)?;
-                let right = PyLineString3d::wrap(self.lanelet.right_bound()).__repr__(py)?;
-                Ok(self.lanelet.repr($py_name, &left, &right, &attributes, ""))
+                let left = $bound::wrap(self.lanelet.left_bound()).__repr__(py)?;
+                let right = $bound::wrap(self.lanelet.right_bound()).__repr__(py)?;
+                let regelems = regelems_repr_arg(py, &self.lanelet.regulatory_elements())?;
+                Ok(self.lanelet.repr($py_name, &left, &right, &attributes, &regelems))
             }
         }
     };
@@ -233,6 +347,24 @@ macro_rules! lanelet_class {
 
 lanelet_class!("Lanelet", PyLanelet, true, PyLineString3d);
 lanelet_class!("ConstLanelet", PyConstLanelet, false, PyConstLineString3d);
+
+#[pymethods]
+impl PyLanelet {
+    #[pyo3(name = "addRegulatoryElement")]
+    fn add_regulatory_element(&self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let regelem = regelem_of(value)
+            .ok_or_else(|| argument_error("Lanelet", "addRegulatoryElement"))?;
+        self.lanelet.add_regulatory_element(regelem);
+        Ok(())
+    }
+
+    #[pyo3(name = "removeRegulatoryElement")]
+    fn remove_regulatory_element(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let regelem = regelem_of(value)
+            .ok_or_else(|| argument_error("Lanelet", "removeRegulatoryElement"))?;
+        Ok(self.lanelet.remove_regulatory_element(&regelem))
+    }
+}
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLanelet>()?;

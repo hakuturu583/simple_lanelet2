@@ -35,3 +35,31 @@ reason = "id-only hashing makes two distinct points with the same id hash equal"
 case = "0130_linestring"
 key = "hash_matches_inverse"
 reason = "id-only hashing makes a linestring and its inverse hash equal despite comparing unequal"
+
+[[entry]]
+case = "0210_lanelet"
+key = "hash_matches_inverse"
+reason = "id-only hashing makes a lanelet and its inverse hash equal despite comparing unequal"
+
+[[entry]]
+case = "0220_regelem"
+key = "limit_attributes"
+reason = """\
+Upstream binds SpeedLimit's constructor to TrafficSign::make, so a SpeedLimit is \
+tagged subtype=traffic_sign instead of speed_limit -- which then round-trips \
+through a written map as the wrong kind of element."""
+
+[[entry]]
+case = "0220_regelem"
+key = "tswt_signs"
+reason = """\
+Upstream never registers a Python class for the vector behind \
+TrafficSignsWithType.trafficSigns, so reading the property raises TypeError -- the \
+property is unusable there. We return the list of signs."""
+
+[[entry]]
+case = "0230_area"
+key = "const_repr"
+reason = """\
+Upstream's makeAreaRepr takes a display name and then ignores it, hardcoding \
+"Area", so repr(ConstArea(...)) claims to be a mutable Area."""

@@ -77,6 +77,10 @@ def expect_raises(key, fn, msg=False):
     Emits ``[type_name]``, or ``[type_name, message]`` when ``msg`` is true. If no
     exception is raised, emits ``["<no-exception>", repr(result)]`` so the mismatch
     is visible rather than silently passing.
+
+    Use this for anything that raises in *one* mode only. An uncaught exception
+    ends the script, so the remaining keys vanish from that run and a single-key
+    difference is reported as a whole-case mismatch.
     """
     try:
         result = fn()

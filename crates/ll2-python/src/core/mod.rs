@@ -5,11 +5,16 @@
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
+pub mod area;
 pub mod attribute;
 pub mod basic;
+pub mod compound;
 pub mod lanelet;
 pub mod linestring;
+pub mod map;
 pub mod point;
+pub mod regelem;
+pub mod sequence;
 
 /// `lanelet2.core.getId()` — a fresh globally unique id.
 #[pyfunction]
@@ -41,7 +46,12 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<point::PyConstPoint3d>()?;
 
     linestring::register(m)?;
+    compound::register(m)?;
     lanelet::register(m)?;
+    regelem::register(m)?;
+    area::register(m)?;
+    sequence::register(m)?;
+    map::register(m)?;
 
     m.add_function(wrap_pyfunction!(get_id, m)?)?;
     m.add_function(wrap_pyfunction!(register_id, m)?)?;

@@ -98,6 +98,28 @@ pub enum RuleParameter {
 }
 
 impl RuleParameter {
+    /// Whether two parameters reference the very same primitive.
+    pub fn is_same_data(&self, other: &RuleParameter) -> bool {
+        match (self, other) {
+            (RuleParameter::Point(a), RuleParameter::Point(b)) => a.is_same_data(b),
+            (
+                RuleParameter::LineString(a) | RuleParameter::Polygon(a),
+                RuleParameter::LineString(b) | RuleParameter::Polygon(b),
+            ) => a.is_same_data(b),
+            (RuleParameter::Lanelet(a), RuleParameter::Lanelet(b)) => {
+                match (a.upgrade(), b.upgrade()) {
+                    (Some(a), Some(b)) => a.is_same_data(&b),
+                    _ => false,
+                }
+            }
+            (RuleParameter::Area(a), RuleParameter::Area(b)) => match (a.upgrade(), b.upgrade()) {
+                (Some(a), Some(b)) => a.is_same_data(&b),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// The id of the referenced primitive, or `None` if a weak reference expired.
     pub fn id(&self) -> Option<Id> {
         match self {
@@ -199,13 +221,13 @@ impl RegulatoryElement {
             .unwrap_or_default()
     }
 
+    /// Assigns a role's contents.
+    ///
+    /// An emptied role is *kept*, not removed: upstream's roles are created by the
+    /// constructor and never disappear afterwards, so `removeStopLine` leaves
+    /// `ref_line` present but empty.
     pub fn set_parameters_for(&self, role: &str, values: Vec<RuleParameter>) {
-        let mut parameters = self.data.parameters.write();
-        if values.is_empty() {
-            parameters.remove(role);
-        } else {
-            parameters.insert(role.to_owned(), values);
-        }
+        self.data.parameters.write().insert(role.to_owned(), values);
     }
 
     /// Appends to a role, creating it if absent.
@@ -218,20 +240,20 @@ impl RegulatoryElement {
             .push(value);
     }
 
-    /// Removes the first entry under `role` with the given id, reporting whether
-    /// anything was removed. Empties the role rather than leaving it blank.
-    pub fn remove_parameter(&self, role: &str, id: Id) -> bool {
+    /// Removes the first entry under `role` that is *the same object* as `target`,
+    /// reporting whether anything was removed.
+    ///
+    /// Identity, not id: upstream compares primitives with `operator==`, so passing
+    /// a freshly built copy with a matching id removes nothing.
+    pub fn remove_parameter(&self, role: &str, target: &RuleParameter) -> bool {
         let mut parameters = self.data.parameters.write();
         let Some(values) = parameters.get_mut(role) else {
             return false;
         };
-        let Some(index) = values.iter().position(|value| value.id() == Some(id)) else {
+        let Some(index) = values.iter().position(|value| value.is_same_data(target)) else {
             return false;
         };
         values.remove(index);
-        if values.is_empty() {
-            parameters.remove(role);
-        }
         true
     }
 
@@ -321,11 +343,20 @@ mod tests {
     }
 
     #[test]
-    fn removing_the_last_entry_removes_the_role() {
+    fn removing_the_last_entry_leaves_the_role_in_place() {
         let regelem = traffic_light();
-        assert!(regelem.remove_parameter(roles::REF_LINE, 11));
-        assert_eq!(regelem.roles(), ["refers"]);
-        assert!(!regelem.remove_parameter(roles::REF_LINE, 11));
+        let target = RuleParameter::LineString(match regelem.parameters_for(roles::REF_LINE)
+            .into_iter()
+            .next()
+            .unwrap()
+        {
+            RuleParameter::LineString(line) => line,
+            _ => unreachable!(),
+        });
+        assert!(regelem.remove_parameter(roles::REF_LINE, &target));
+        assert_eq!(regelem.roles(), ["ref_line", "refers"], "an emptied role is kept");
+        assert!(regelem.parameters_for(roles::REF_LINE).is_empty());
+        assert!(!regelem.remove_parameter(roles::REF_LINE, &target));
     }
 
     #[test]

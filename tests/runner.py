@@ -61,7 +61,8 @@ EXPECT_RE = re.compile(r"^#\s*EXPECT:\s*(\w+)\s*$", re.MULTILINE)
 #: flaky cases, because upstream layers are ``std::unordered_map``. Catch it
 #: statically rather than debugging it later.
 LAYER_ITER_RE = re.compile(
-    r"(?<!by_id\()(?:for\s+\w+\s+in\s+|list\(|sorted\()\s*[\w.]*\.(?:point|lineString|polygon|lanelet|area|regulatoryElement)Layer\b"
+    r"(?:for\s+\w+\s+in\s+|list\(|sorted\()\s*[\w.]+"
+    r"\.(?:point|lineString|polygon|lanelet|area|regulatoryElement)Layer\s*(?![.\w(])"
 )
 
 RESET = "\033[0m"
