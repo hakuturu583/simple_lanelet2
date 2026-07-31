@@ -5,6 +5,10 @@
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
+pub mod attribute;
+pub mod basic;
+pub mod point;
+
 /// `lanelet2.core.getId()` — a fresh globally unique id.
 #[pyfunction]
 #[pyo3(name = "getId")]
@@ -20,6 +24,20 @@ fn register_id(id: i64) {
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<attribute::PyAttributeMap>()?;
+    m.add_class::<attribute::PyAttributeMapEntry>()?;
+
+    m.add_class::<basic::PyBasicPoint2d>()?;
+    m.add_class::<basic::PyBasicPoint3d>()?;
+    m.add_class::<basic::PyVector2d>()?;
+    m.add_class::<basic::PyBoundingBox2d>()?;
+    m.add_class::<basic::PyBoundingBox3d>()?;
+
+    m.add_class::<point::PyPoint2d>()?;
+    m.add_class::<point::PyPoint3d>()?;
+    m.add_class::<point::PyConstPoint2d>()?;
+    m.add_class::<point::PyConstPoint3d>()?;
+
     m.add_function(wrap_pyfunction!(get_id, m)?)?;
     m.add_function(wrap_pyfunction!(register_id, m)?)?;
     Ok(())

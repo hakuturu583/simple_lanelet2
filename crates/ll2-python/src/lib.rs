@@ -13,7 +13,9 @@
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
+mod conv;
 mod core;
+mod err;
 mod geometry;
 mod io;
 mod matching;

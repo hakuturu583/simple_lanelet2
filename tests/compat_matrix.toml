@@ -12,7 +12,18 @@
 # `case` and `key` are fnmatch patterns. Keep `reason` in sync with
 # docs/DIVERGENCE.md and the predicate names in crates/ll2-core/src/compat.rs.
 
-# [[entry]]
-# case = "0110_basic_point"
-# key = "truediv"
-# reason = "upstream registers __div__ only, so `p / 2` raises TypeError on Python 3"
+[[entry]]
+case = "0110_basic_point"
+key = "truediv"
+reason = """\
+Upstream registers only __div__, which Python 3 never calls, so `p / 2` raises \
+TypeError on every basic point type. We implement __truediv__; in bug-compat mode \
+it returns NotImplemented so Python raises upstream's exact TypeError."""
+
+[[entry]]
+case = "0120_point"
+key = "hash_matches_same_id"
+reason = """\
+Upstream's __hash__ hashes the id alone while __eq__ compares storage identity, \
+violating Python's hash/eq contract: two distinct points with the same id hash \
+equal. We hash identity instead so the two agree."""

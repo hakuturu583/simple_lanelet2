@@ -4,7 +4,13 @@
 //! in `ll2-python`. Every non-trivial algorithm here is a port of a specific piece of
 //! upstream Lanelet2 C++ and carries a `file:line` reference in its doc comment.
 
+pub mod attribute;
 pub mod compat;
+pub mod fmt;
 pub mod id;
+pub mod point;
+pub mod refs;
 
+pub use attribute::{Attribute, AttributeMap};
 pub use id::{Id, INVAL_ID, get_id, register_id};
+pub use point::Point;
