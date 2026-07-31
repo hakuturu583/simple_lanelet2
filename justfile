@@ -49,6 +49,10 @@ upstream-tests:
     LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream -q
     ./.venv/bin/python -m pytest tests/upstream -q
 
+# Regenerate the type stubs from the built extension.
+stubs: build
+    ./.venv/bin/python tools/gen_stubs.py
+
 fmt:
     cargo fmt --all
 

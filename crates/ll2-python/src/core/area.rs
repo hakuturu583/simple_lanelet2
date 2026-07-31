@@ -393,7 +393,13 @@ macro_rules! area_class {
 }
 
 area_class!("Area", PyArea, true, PyLineString3d, PyInnerBounds);
-area_class!("ConstArea", PyConstArea, false, PyConstLineString3d, PyConstInnerBounds);
+area_class!(
+    "ConstArea",
+    PyConstArea,
+    false,
+    PyConstLineString3d,
+    PyConstInnerBounds
+);
 
 /// The mutable area additionally lets regulatory elements be attached.
 #[pymethods]

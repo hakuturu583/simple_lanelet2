@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use ll2_traffic_rules::{TrafficRules, SpeedLimit, locations, participants};
+use ll2_traffic_rules::{SpeedLimit, TrafficRules, locations, participants};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
@@ -154,8 +154,13 @@ impl PyTrafficRules {
     /// `canPass(lanelet)` or `canPass(from, to)`.
     #[pyo3(signature = (lanelet, other = None))]
     #[pyo3(name = "canPass")]
-    fn can_pass(&self, lanelet: &Bound<'_, PyAny>, other: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        let (first, _) = lanelet_of(lanelet).ok_or_else(|| argument_error("TrafficRules", "canPass"))?;
+    fn can_pass(
+        &self,
+        lanelet: &Bound<'_, PyAny>,
+        other: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let (first, _) =
+            lanelet_of(lanelet).ok_or_else(|| argument_error("TrafficRules", "canPass"))?;
         match other {
             None => Ok(self.rules.can_pass(&first)),
             Some(other) => {
@@ -178,7 +183,9 @@ impl PyTrafficRules {
     fn speed_limit(&self, lanelet: &Bound<'_, PyAny>) -> PyResult<PySpeedLimitInformation> {
         let (lanelet, _) =
             lanelet_of(lanelet).ok_or_else(|| argument_error("TrafficRules", "speedLimit"))?;
-        Ok(PySpeedLimitInformation::wrap(self.rules.speed_limit(&lanelet)))
+        Ok(PySpeedLimitInformation::wrap(
+            self.rules.speed_limit(&lanelet),
+        ))
     }
 
     #[pyo3(name = "isOneWay")]
@@ -206,7 +213,10 @@ impl PyTrafficRules {
     ) -> PyResult<String> {
         let (boundary, _) = linestring_of(boundary)
             .ok_or_else(|| argument_error("TrafficRules", "laneChangeType"))?;
-        Ok(format!("{:?}", self.rules.lane_change_type(&boundary, virtualIsPassable)))
+        Ok(format!(
+            "{:?}",
+            self.rules.lane_change_type(&boundary, virtualIsPassable)
+        ))
     }
 
     fn __str__(&self) -> String {
@@ -226,7 +236,9 @@ fn create(location: &str, participant: &str) -> PyResult<PyTrafficRules> {
 
 /// Extracts the shared rules behind a `TrafficRules` object.
 pub fn traffic_rules_of(obj: &Bound<'_, PyAny>) -> Option<Arc<TrafficRules>> {
-    obj.cast::<PyTrafficRules>().ok().map(|value| value.borrow().shared())
+    obj.cast::<PyTrafficRules>()
+        .ok()
+        .map(|value| value.borrow().shared())
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

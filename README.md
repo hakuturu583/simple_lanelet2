@@ -15,9 +15,9 @@ right = LineString3d(getId(), [Point3d(getId(), 0, 1, 0), Point3d(getId(), 1, 1,
 lanelet = Lanelet(getId(), left, right)
 ```
 
-> **Status: early.** The package layout, the bug-compatibility switch and the
-> verification harness are in place; the API surface is being filled in phase by
-> phase. Run `just coverage` to see how much of the reference API is implemented.
+**Status.** All seven submodules are implemented. The library exposes **100% of
+the reference's public API** — 633 names across every module and class — and
+upstream's own test suite passes against it **unmodified**, in both modes.
 
 ## Bug-compatibility mode
 
@@ -51,11 +51,26 @@ the places listed in `tests/compat_matrix.toml` — no more, and no fewer, so ne
 an accidental behaviour change nor an unwired repair can slip through.
 
 ```bash
-just venvs      # create both virtualenvs
-just build      # build and install into .venv
-just diff       # run the harness
-just coverage   # API-surface burn-down
+just venvs           # create both virtualenvs
+just build           # build and install into .venv
+just diff            # run the harness
+just upstream-tests  # upstream's own tests, unmodified, in both modes
+just test-rust       # the Rust unit tests
 ```
+
+What the harness checks, beyond "it runs":
+
+- the 594 KB example map from the Lanelet2 repository loads, and writing it back
+  reproduces the reference's file **byte for byte** — every node, way, relation and
+  tag, in the same order — and a second pass is identical again;
+- every lanelet's full centerline matches, on that map and on forty procedurally
+  generated shapes chosen to exercise the parts of the algorithm a rectangular
+  lanelet never reaches;
+- the projections agree with GeographicLib to **7e-15 m** across zone edges, the
+  Norway and Svalbard zone irregularities, both hemispheres and the antimeridian;
+- the traffic-rule tables are swept exhaustively — every participant against every
+  way subtype, both directions, both locations — rather than spot-checked;
+- the routing graph's whole edge list is compared before any query is.
 
 ## Licence
 

@@ -172,12 +172,19 @@ impl RoutingGraph {
                 let changeable = rules.can_change_lane(lanelet, candidate);
                 for (cost_id, model) in costs.iter().enumerate() {
                     let (relation, value) = if changeable {
-                        let change =
-                            model.cost_lane_change(&rules, &[lanelet.clone()], &[candidate.clone()]);
+                        let change = model.cost_lane_change(
+                            &rules,
+                            &[lanelet.clone()],
+                            &[candidate.clone()],
+                        );
                         if change.is_finite() {
                             // A change that is affordable is a real lane change.
                             (
-                                if to_the_left { RelationType::LEFT } else { RelationType::RIGHT },
+                                if to_the_left {
+                                    RelationType::LEFT
+                                } else {
+                                    RelationType::RIGHT
+                                },
                                 change,
                             )
                         } else {
@@ -263,7 +270,12 @@ impl RoutingGraph {
     }
 
     /// Neighbours reachable by one edge of any of the given relations.
-    fn neighbours(&self, lanelet: &Lanelet, relations: RelationType, cost_id: usize) -> Vec<LaneletRelation> {
+    fn neighbours(
+        &self,
+        lanelet: &Lanelet,
+        relations: RelationType,
+        cost_id: usize,
+    ) -> Vec<LaneletRelation> {
         let Some(index) = self.index_of(lanelet) else {
             return Vec::new();
         };
@@ -278,7 +290,12 @@ impl RoutingGraph {
             .collect()
     }
 
-    fn predecessors(&self, lanelet: &Lanelet, relations: RelationType, cost_id: usize) -> Vec<LaneletRelation> {
+    fn predecessors(
+        &self,
+        lanelet: &Lanelet,
+        relations: RelationType,
+        cost_id: usize,
+    ) -> Vec<LaneletRelation> {
         let Some(index) = self.index_of(lanelet) else {
             return Vec::new();
         };
@@ -310,7 +327,11 @@ impl RoutingGraph {
             .collect()
     }
 
-    pub fn following_relations(&self, lanelet: &Lanelet, with_lane_changes: bool) -> Vec<LaneletRelation> {
+    pub fn following_relations(
+        &self,
+        lanelet: &Lanelet,
+        with_lane_changes: bool,
+    ) -> Vec<LaneletRelation> {
         self.neighbours(lanelet, Self::drivable(with_lane_changes), 0)
     }
 
@@ -321,7 +342,11 @@ impl RoutingGraph {
             .collect()
     }
 
-    pub fn previous_relations(&self, lanelet: &Lanelet, with_lane_changes: bool) -> Vec<LaneletRelation> {
+    pub fn previous_relations(
+        &self,
+        lanelet: &Lanelet,
+        with_lane_changes: bool,
+    ) -> Vec<LaneletRelation> {
         self.predecessors(lanelet, Self::drivable(with_lane_changes), 0)
     }
 
@@ -401,7 +426,12 @@ impl RoutingGraph {
     }
 
     /// Alternating runs of lane-changeable and merely-adjacent neighbours.
-    fn side_relations(&self, lanelet: &Lanelet, cost_id: usize, left: bool) -> Vec<LaneletRelation> {
+    fn side_relations(
+        &self,
+        lanelet: &Lanelet,
+        cost_id: usize,
+        left: bool,
+    ) -> Vec<LaneletRelation> {
         let (changeable, adjacent) = if left {
             (RelationType::LEFT, RelationType::ADJACENT_LEFT)
         } else {
@@ -493,7 +523,11 @@ impl RoutingGraph {
         let (start, goal) = (self.index_of(from)?, self.index_of(to)?);
         let relations = Self::drivable(with_lane_changes);
         let path = self.graph.shortest_path(start, goal, relations, cost_id)?;
-        Some(path.into_iter().map(|index| self.lanelet_at(index)).collect())
+        Some(
+            path.into_iter()
+                .map(|index| self.lanelet_at(index))
+                .collect(),
+        )
     }
 
     /// A route through intermediate lanelets, one leg at a time.
@@ -577,9 +611,21 @@ impl RoutingGraph {
         };
         let relations = Self::drivable(allow_lane_changes);
         self.graph
-            .possible_paths(start, max_cost, min_elements, relations, cost_id, include_shorter, false)
+            .possible_paths(
+                start,
+                max_cost,
+                min_elements,
+                relations,
+                cost_id,
+                include_shorter,
+                false,
+            )
             .into_iter()
-            .map(|path| path.into_iter().map(|index| self.lanelet_at(index)).collect())
+            .map(|path| {
+                path.into_iter()
+                    .map(|index| self.lanelet_at(index))
+                    .collect()
+            })
             .collect()
     }
 
@@ -597,9 +643,22 @@ impl RoutingGraph {
         };
         let relations = Self::drivable(allow_lane_changes);
         self.graph
-            .possible_paths(goal, max_cost, min_elements, relations, cost_id, include_shorter, true)
+            .possible_paths(
+                goal,
+                max_cost,
+                min_elements,
+                relations,
+                cost_id,
+                include_shorter,
+                true,
+            )
             .into_iter()
-            .map(|path| path.into_iter().rev().map(|index| self.lanelet_at(index)).collect())
+            .map(|path| {
+                path.into_iter()
+                    .rev()
+                    .map(|index| self.lanelet_at(index))
+                    .collect()
+            })
             .collect()
     }
 
@@ -681,7 +740,10 @@ impl RoutingGraph {
                     errors.push(format!(
                         "More than one neighboring lanelet to {} with this relation: {:?}",
                         lanelet.id(),
-                        changeables.iter().map(|r| r.lanelet.id()).collect::<Vec<_>>()
+                        changeables
+                            .iter()
+                            .map(|r| r.lanelet.id())
+                            .collect::<Vec<_>>()
                     ));
                 }
             }
@@ -745,20 +807,29 @@ mod tests {
         assert_eq!(following.len(), 1);
         assert_eq!(following[0].id(), lanelets[1].id());
         assert!(graph.following(&lanelets[2], false).is_empty());
-        assert_eq!(graph.previous(&lanelets[1], false)[0].id(), lanelets[0].id());
+        assert_eq!(
+            graph.previous(&lanelets[1], false)[0].id(),
+            lanelets[0].id()
+        );
     }
 
     #[test]
     fn the_shortest_path_runs_the_length_of_the_chain() {
         let (map, lanelets) = chain_map(4);
         let graph = build(&map);
-        let path = graph.shortest_path(&lanelets[0], &lanelets[3], 0, false).unwrap();
+        let path = graph
+            .shortest_path(&lanelets[0], &lanelets[3], 0, false)
+            .unwrap();
         assert_eq!(
             path.iter().map(|l| l.id()).collect::<Vec<_>>(),
             [1, 2, 3, 4]
         );
         // Backwards there is no path at all.
-        assert!(graph.shortest_path(&lanelets[3], &lanelets[0], 0, false).is_none());
+        assert!(
+            graph
+                .shortest_path(&lanelets[3], &lanelets[0], 0, false)
+                .is_none()
+        );
     }
 
     #[test]
@@ -799,7 +870,11 @@ mod tests {
         let graph = build(&map);
         // The cost limit is a target: nothing here costs 1000, so nothing
         // qualifies unless shorter paths are asked for.
-        assert!(graph.possible_paths(&lanelets[0], Some(1000.0), None, 0, false, false).is_empty());
+        assert!(
+            graph
+                .possible_paths(&lanelets[0], Some(1000.0), None, 0, false, false)
+                .is_empty()
+        );
         let paths = graph.possible_paths(&lanelets[0], Some(1000.0), None, 0, false, true);
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].len(), 3);
@@ -812,7 +887,10 @@ mod tests {
         let path = graph
             .shortest_path_via(&lanelets[0], &[lanelets[2].clone()], &lanelets[3], 0, false)
             .unwrap();
-        assert_eq!(path.iter().map(|l| l.id()).collect::<Vec<_>>(), [1, 2, 3, 4]);
+        assert_eq!(
+            path.iter().map(|l| l.id()).collect::<Vec<_>>(),
+            [1, 2, 3, 4]
+        );
     }
 
     #[test]

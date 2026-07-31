@@ -39,7 +39,10 @@ fn matches_reference_output_for_every_captured_vector() {
         checked += 1;
     }
 
-    assert!(checked > 1000, "fixture looks truncated: only {checked} vectors");
+    assert!(
+        checked > 1000,
+        "fixture looks truncated: only {checked} vectors"
+    );
     assert!(
         failures.is_empty(),
         "{} of {checked} vectors mismatched:\n{}",

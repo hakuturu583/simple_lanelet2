@@ -62,9 +62,7 @@ pub const LENGTH: &[&str] = &[
 ];
 
 /// Types `area` is registered for.
-pub const AREA: &[&str] = &[
-    "HybridPolygon2d",
-];
+pub const AREA: &[&str] = &["HybridPolygon2d"];
 
 /// Types `interpolatedPointAtDistance` is registered for.
 pub const INTERPOLATED_POINT_AT_DISTANCE: &[&str] = &[
@@ -181,45 +179,29 @@ pub const INTERSECTS_3D_WITH_TOLERANCE: &[(&str, &str)] = &[
 ];
 
 /// Type pairs `intersects3d` is registered for.
-pub const INTERSECTS_3D: &[(&str, &str)] = &[
-    ("BoundingBox3d", "BoundingBox3d"),
-    ("Lanelet", "Lanelet"),
-];
+pub const INTERSECTS_3D: &[(&str, &str)] =
+    &[("BoundingBox3d", "BoundingBox3d"), ("Lanelet", "Lanelet")];
 
 /// Type pairs `inside` is registered for.
-pub const INSIDE: &[(&str, &str)] = &[
-    ("Lanelet", "BasicPoint2d"),
-];
+pub const INSIDE: &[(&str, &str)] = &[("Lanelet", "BasicPoint2d")];
 
 /// Type pairs `overlaps2d` is registered for.
-pub const OVERLAPS_2D: &[(&str, &str)] = &[
-    ("Lanelet", "Lanelet"),
-];
+pub const OVERLAPS_2D: &[(&str, &str)] = &[("Lanelet", "Lanelet")];
 
 /// Type pairs `overlaps3d` is registered for.
-pub const OVERLAPS_3D: &[(&str, &str)] = &[
-    ("Lanelet", "Lanelet"),
-];
+pub const OVERLAPS_3D: &[(&str, &str)] = &[("Lanelet", "Lanelet")];
 
 /// Type pairs `leftOf` is registered for.
-pub const LEFT_OF: &[(&str, &str)] = &[
-    ("Lanelet", "Lanelet"),
-];
+pub const LEFT_OF: &[(&str, &str)] = &[("Lanelet", "Lanelet")];
 
 /// Type pairs `rightOf` is registered for.
-pub const RIGHT_OF: &[(&str, &str)] = &[
-    ("Lanelet", "Lanelet"),
-];
+pub const RIGHT_OF: &[(&str, &str)] = &[("Lanelet", "Lanelet")];
 
 /// Type pairs `follows` is registered for.
-pub const FOLLOWS: &[(&str, &str)] = &[
-    ("Lanelet", "Lanelet"),
-];
+pub const FOLLOWS: &[(&str, &str)] = &[("Lanelet", "Lanelet")];
 
 /// Type pairs `intersectCenterlines2d` is registered for.
-pub const INTERSECT_CENTERLINES_2D: &[(&str, &str)] = &[
-    ("Lanelet", "Lanelet"),
-];
+pub const INTERSECT_CENTERLINES_2D: &[(&str, &str)] = &[("Lanelet", "Lanelet")];
 
 /// Type pairs `intersection` is registered for.
 pub const INTERSECTION: &[(&str, &str)] = &[
@@ -243,14 +225,10 @@ pub const TO_ARC_COORDINATES: &[(&str, &str)] = &[
 ];
 
 /// Type pairs `distanceToCenterline2d` is registered for.
-pub const DISTANCE_TO_CENTERLINE_2D: &[(&str, &str)] = &[
-    ("Lanelet", "BasicPoint2d"),
-];
+pub const DISTANCE_TO_CENTERLINE_2D: &[(&str, &str)] = &[("Lanelet", "BasicPoint2d")];
 
 /// Type pairs `distanceToCenterline3d` is registered for.
-pub const DISTANCE_TO_CENTERLINE_3D: &[(&str, &str)] = &[
-    ("Lanelet", "BasicPoint3d"),
-];
+pub const DISTANCE_TO_CENTERLINE_3D: &[(&str, &str)] = &[("Lanelet", "BasicPoint3d")];
 
 /// Type pairs `projectedPoint3d` is registered for.
 pub const PROJECTED_POINT_3D: &[(&str, &str)] = &[
@@ -258,4 +236,3 @@ pub const PROJECTED_POINT_3D: &[(&str, &str)] = &[
     ("HybridLineString3d", "HybridLineString3d"),
     ("LineString3d", "LineString3d"),
 ];
-

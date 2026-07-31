@@ -88,5 +88,7 @@ impl PyGpsPoint {
 
 /// Reads a `GPSPoint` from Python.
 pub fn gps_point_of(obj: &Bound<'_, PyAny>) -> Option<GpsPoint> {
-    obj.cast::<PyGpsPoint>().ok().map(|value| value.borrow().point)
+    obj.cast::<PyGpsPoint>()
+        .ok()
+        .map(|value| value.borrow().point)
 }

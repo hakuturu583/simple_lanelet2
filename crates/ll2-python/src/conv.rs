@@ -61,5 +61,8 @@ pub fn attributes_repr_arg(py: Python<'_>, map: &AttributeMap) -> PyResult<Strin
     if map.is_empty() {
         return Ok(String::new());
     }
-    Ok(format!("AttributeMap({})", attribute_map_dict_repr(py, map)?))
+    Ok(format!(
+        "AttributeMap({})",
+        attribute_map_dict_repr(py, map)?
+    ))
 }

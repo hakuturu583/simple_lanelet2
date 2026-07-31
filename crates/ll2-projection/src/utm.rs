@@ -25,8 +25,7 @@ impl Utm {
         use_offset: bool,
         throw_in_padding_area: bool,
     ) -> Result<Self, ProjectionError> {
-        let (zone, northern, x, y) =
-            utmups::forward(origin.position.lat, origin.position.lon)?;
+        let (zone, northern, x, y) = utmups::forward(origin.position.lat, origin.position.lon)?;
         Ok(Utm {
             origin,
             zone,
@@ -105,7 +104,10 @@ mod tests {
     fn the_origin_maps_to_zero_when_offsetting() {
         let projector = Utm::new(karlsruhe(), true, false).unwrap();
         let projected = projector.forward(GpsPoint::new(49.0, 8.4, 0.0)).unwrap();
-        assert!(projected[0].abs() < 1e-6 && projected[1].abs() < 1e-6, "{projected:?}");
+        assert!(
+            projected[0].abs() < 1e-6 && projected[1].abs() < 1e-6,
+            "{projected:?}"
+        );
     }
 
     #[test]
@@ -114,8 +116,14 @@ mod tests {
         let projected = projector.forward(GpsPoint::new(49.0, 8.4, 0.0)).unwrap();
         assert_eq!(projector.zone(), 32);
         // These are the reference implementation's own values for Karlsruhe.
-        assert!((projected[0] - 456_114.595_862_260_5).abs() < 1e-6, "{projected:?}");
-        assert!((projected[1] - 5_427_629.203_924_715).abs() < 1e-6, "{projected:?}");
+        assert!(
+            (projected[0] - 456_114.595_862_260_5).abs() < 1e-6,
+            "{projected:?}"
+        );
+        assert!(
+            (projected[1] - 5_427_629.203_924_715).abs() < 1e-6,
+            "{projected:?}"
+        );
     }
 
     #[test]
@@ -138,7 +146,9 @@ mod tests {
     #[test]
     fn leaving_the_zone_is_an_error_when_asked_for() {
         let projector = Utm::new(karlsruhe(), true, true).unwrap();
-        let error = projector.forward(GpsPoint::new(49.0, 13.0, 0.0)).unwrap_err();
+        let error = projector
+            .forward(GpsPoint::new(49.0, 13.0, 0.0))
+            .unwrap_err();
         assert!(error.message().contains("left the UTM zone"), "{error}");
     }
 
@@ -149,7 +159,9 @@ mod tests {
         for lat in [46.0, 48.0, 49.0, 50.0, 54.0] {
             for lon in [6.5, 8.0, 8.4, 9.0, 11.5] {
                 let point = GpsPoint::new(lat, lon, 42.0);
-                let back = projector.reverse(projector.forward(point).unwrap()).unwrap();
+                let back = projector
+                    .reverse(projector.forward(point).unwrap())
+                    .unwrap();
                 worst = worst
                     .max((back.lat - point.lat).abs())
                     .max((back.lon - point.lon).abs());

@@ -25,12 +25,8 @@ use crate::err::{argument_error, runtime};
 fn primitive_to_py(py: Python<'_>, primitive: &Primitive) -> PyResult<Py<PyAny>> {
     Ok(match primitive {
         Primitive::Point(point) => Py::new(py, PyPoint3d::wrap(point.clone()))?.into_any(),
-        Primitive::LineString(line) => {
-            Py::new(py, PyLineString3d::wrap(line.clone()))?.into_any()
-        }
-        Primitive::Polygon(polygon) => {
-            Py::new(py, PyPolygon3d::wrap(polygon.clone()))?.into_any()
-        }
+        Primitive::LineString(line) => Py::new(py, PyLineString3d::wrap(line.clone()))?.into_any(),
+        Primitive::Polygon(polygon) => Py::new(py, PyPolygon3d::wrap(polygon.clone()))?.into_any(),
         Primitive::Lanelet(lanelet) => Py::new(py, PyLanelet::wrap(lanelet.clone()))?.into_any(),
         Primitive::Area(area) => Py::new(py, PyArea::wrap(area.clone()))?.into_any(),
         Primitive::RegulatoryElement(regelem) => {
@@ -65,10 +61,20 @@ pub fn primitive_from_any(obj: &Bound<'_, PyAny>) -> Option<Primitive> {
 ///
 /// They carry no members of their own, but they are part of the class hierarchy
 /// and show up in `__bases__`.
-#[pyclass(name = "PrimitiveLayerLanelet", module = "lanelet2.core", subclass, frozen)]
+#[pyclass(
+    name = "PrimitiveLayerLanelet",
+    module = "lanelet2.core",
+    subclass,
+    frozen
+)]
 pub struct PyPrimitiveLayerLanelet;
 
-#[pyclass(name = "PrimitiveLayerArea", module = "lanelet2.core", subclass, frozen)]
+#[pyclass(
+    name = "PrimitiveLayerArea",
+    module = "lanelet2.core",
+    subclass,
+    frozen
+)]
 pub struct PyPrimitiveLayerArea;
 
 macro_rules! layer_class {
@@ -191,7 +197,12 @@ macro_rules! layer_class {
 }
 
 layer_class!("PointLayer", PyPointLayer, LayerKind::Point, false);
-layer_class!("LineStringLayer", PyLineStringLayer, LayerKind::LineString, true);
+layer_class!(
+    "LineStringLayer",
+    PyLineStringLayer,
+    LayerKind::LineString,
+    true
+);
 layer_class!("PolygonLayer", PyPolygonLayer, LayerKind::Polygon, true);
 layer_class!("LaneletLayer", PyLaneletLayer, LayerKind::Lanelet, true,
              , extends = PyPrimitiveLayerLanelet);
@@ -273,14 +284,20 @@ macro_rules! map_class {
             fn lanelet_layer(&self, py: Python<'_>) -> PyResult<Py<PyLaneletLayer>> {
                 Py::new(
                     py,
-                    (PyLaneletLayer::wrap(self.map.clone()), PyPrimitiveLayerLanelet),
+                    (
+                        PyLaneletLayer::wrap(self.map.clone()),
+                        PyPrimitiveLayerLanelet,
+                    ),
                 )
             }
 
             #[getter]
             #[pyo3(name = "areaLayer")]
             fn area_layer(&self, py: Python<'_>) -> PyResult<Py<PyAreaLayer>> {
-                Py::new(py, (PyAreaLayer::wrap(self.map.clone()), PyPrimitiveLayerArea))
+                Py::new(
+                    py,
+                    (PyAreaLayer::wrap(self.map.clone()), PyPrimitiveLayerArea),
+                )
             }
 
             #[getter]
@@ -290,8 +307,8 @@ macro_rules! map_class {
             }
 
             fn add(&self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-                let primitive = primitive_from_any(value)
-                    .ok_or_else(|| argument_error($py_name, "add"))?;
+                let primitive =
+                    primitive_from_any(value).ok_or_else(|| argument_error($py_name, "add"))?;
                 self.map.add(primitive);
                 Ok(())
             }
@@ -324,14 +341,20 @@ impl PyLaneletMapLayers {
     fn lanelet_layer(&self, py: Python<'_>) -> PyResult<Py<PyLaneletLayer>> {
         Py::new(
             py,
-            (PyLaneletLayer::wrap(self.map.clone()), PyPrimitiveLayerLanelet),
+            (
+                PyLaneletLayer::wrap(self.map.clone()),
+                PyPrimitiveLayerLanelet,
+            ),
         )
     }
 
     #[getter]
     #[pyo3(name = "areaLayer")]
     fn area_layer(&self, py: Python<'_>) -> PyResult<Py<PyAreaLayer>> {
-        Py::new(py, (PyAreaLayer::wrap(self.map.clone()), PyPrimitiveLayerArea))
+        Py::new(
+            py,
+            (PyAreaLayer::wrap(self.map.clone()), PyPrimitiveLayerArea),
+        )
     }
 
     #[getter]

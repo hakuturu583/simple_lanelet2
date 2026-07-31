@@ -193,7 +193,10 @@ impl PyVector2d {
     fn __repr__(&self) -> String {
         make_repr(
             "Vector2d",
-            &[ostream_double(self.view.get(0)), ostream_double(self.view.get(1))],
+            &[
+                ostream_double(self.view.get(0)),
+                ostream_double(self.view.get(1)),
+            ],
         )
     }
 
@@ -204,23 +207,33 @@ impl PyVector2d {
     // The arithmetic upstream registers. No instance can exist, so these are here
     // for the API surface alone.
     fn __add__(&self, other: &Self) -> Self {
-        PyVector2d { view: other.view.clone() }
+        PyVector2d {
+            view: other.view.clone(),
+        }
     }
 
     fn __sub__(&self, other: &Self) -> Self {
-        PyVector2d { view: other.view.clone() }
+        PyVector2d {
+            view: other.view.clone(),
+        }
     }
 
     fn __mul__(&self, _factor: f64) -> Self {
-        PyVector2d { view: self.view.clone() }
+        PyVector2d {
+            view: self.view.clone(),
+        }
     }
 
     fn __rmul__(&self, _factor: f64) -> Self {
-        PyVector2d { view: self.view.clone() }
+        PyVector2d {
+            view: self.view.clone(),
+        }
     }
 
     fn __div__(&self, _divisor: f64) -> Self {
-        PyVector2d { view: self.view.clone() }
+        PyVector2d {
+            view: self.view.clone(),
+        }
     }
 }
 

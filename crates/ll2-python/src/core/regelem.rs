@@ -305,7 +305,11 @@ macro_rules! parameter_map {
                     }
                     dict.set_item(role, list)?;
                 }
-                Ok(format!("{}({})", $py_name, dict.repr()?.extract::<String>()?))
+                Ok(format!(
+                    "{}({})",
+                    $py_name,
+                    dict.repr()?.extract::<String>()?
+                ))
             }
         }
     };
@@ -447,8 +451,7 @@ fn linestrings_or_polygons(obj: &Bound<'_, PyAny>, class: &str) -> PyResult<Vec<
     let mut out = Vec::new();
     for item in obj.try_iter()? {
         let item = item?;
-        let (line, kind) =
-            linestring_of(&item).ok_or_else(|| argument_error(class, "__init__"))?;
+        let (line, kind) = linestring_of(&item).ok_or_else(|| argument_error(class, "__init__"))?;
         out.push(if kind.polygon {
             RuleParameter::Polygon(line)
         } else {
@@ -477,11 +480,7 @@ fn optional_linestring(obj: Option<&Bound<'_, PyAny>>) -> Option<LineString> {
 }
 
 /// Reads the writable primitives stored under a role.
-fn role_as_py(
-    py: Python<'_>,
-    regelem: &RegulatoryElement,
-    role: &str,
-) -> PyResult<Py<PyAny>> {
+fn role_as_py(py: Python<'_>, regelem: &RegulatoryElement, role: &str) -> PyResult<Py<PyAny>> {
     let list = PyList::empty(py);
     for value in regelem.parameters_for(role) {
         // A weak reference that no longer resolves is skipped, not reported as
@@ -526,9 +525,13 @@ impl PyTrafficLight {
         let mut parameters = RuleParameterMap::new();
         parameters.insert(roles::REFERS.into(), lights);
         if let Some(line) = optional_linestring(stopLine) {
-            parameters.insert(roles::REF_LINE.into(), vec![RuleParameter::LineString(line)]);
+            parameters.insert(
+                roles::REF_LINE.into(),
+                vec![RuleParameter::LineString(line)],
+            );
         }
-        let attributes = typed_attributes(optional_attribute_map(Some(attributes))?, "traffic_light");
+        let attributes =
+            typed_attributes(optional_attribute_map(Some(attributes))?, "traffic_light");
         Ok((
             PyTrafficLight,
             PyRegulatoryElement::wrap(RegulatoryElement::new(
@@ -559,10 +562,9 @@ impl PyTrafficLight {
         let regelem = &slf.as_super().regelem;
         match optional_linestring(Some(value)) {
             None => regelem.set_parameters_for(roles::REF_LINE, Vec::new()),
-            Some(line) => regelem.set_parameters_for(
-                roles::REF_LINE,
-                vec![RuleParameter::LineString(line)],
-            ),
+            Some(line) => {
+                regelem.set_parameters_for(roles::REF_LINE, vec![RuleParameter::LineString(line)])
+            }
         }
         Ok(())
     }
@@ -578,7 +580,9 @@ impl PyTrafficLight {
     fn add_traffic_light(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let parameter = rule_parameter_from_any(value)
             .ok_or_else(|| argument_error("TrafficLight", "addTrafficLight"))?;
-        slf.as_super().regelem.push_parameter(roles::REFERS, parameter);
+        slf.as_super()
+            .regelem
+            .push_parameter(roles::REFERS, parameter);
         Ok(())
     }
 
@@ -586,7 +590,10 @@ impl PyTrafficLight {
     fn remove_traffic_light(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
         let parameter = rule_parameter_from_any(value)
             .ok_or_else(|| argument_error("TrafficLight", "removeTrafficLight"))?;
-        Ok(slf.as_super().regelem.remove_parameter(roles::REFERS, &parameter))
+        Ok(slf
+            .as_super()
+            .regelem
+            .remove_parameter(roles::REFERS, &parameter))
     }
 }
 
@@ -625,9 +632,13 @@ impl PyRightOfWay {
         );
         parameters.insert(roles::YIELD.into(), lanelets(yieldLanelets, "RightOfWay")?);
         if let Some(line) = optional_linestring(stopLine) {
-            parameters.insert(roles::REF_LINE.into(), vec![RuleParameter::LineString(line)]);
+            parameters.insert(
+                roles::REF_LINE.into(),
+                vec![RuleParameter::LineString(line)],
+            );
         }
-        let attributes = typed_attributes(optional_attribute_map(Some(attributes))?, "right_of_way");
+        let attributes =
+            typed_attributes(optional_attribute_map(Some(attributes))?, "right_of_way");
         Ok((
             PyRightOfWay,
             PyRegulatoryElement::wrap(RegulatoryElement::new(
@@ -663,8 +674,9 @@ impl PyRightOfWay {
         let regelem = &slf.as_super().regelem;
         match optional_linestring(Some(value)) {
             None => regelem.set_parameters_for(roles::REF_LINE, Vec::new()),
-            Some(line) => regelem
-                .set_parameters_for(roles::REF_LINE, vec![RuleParameter::LineString(line)]),
+            Some(line) => {
+                regelem.set_parameters_for(roles::REF_LINE, vec![RuleParameter::LineString(line)])
+            }
         }
     }
 
@@ -679,9 +691,10 @@ impl PyRightOfWay {
     fn add_right_of_way(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let (lanelet, _) = lanelet_of(value)
             .ok_or_else(|| argument_error("RightOfWay", "addRightOfWayLanelet"))?;
-        slf.as_super()
-            .regelem
-            .push_parameter(roles::RIGHT_OF_WAY, RuleParameter::Lanelet(lanelet.downgrade()));
+        slf.as_super().regelem.push_parameter(
+            roles::RIGHT_OF_WAY,
+            RuleParameter::Lanelet(lanelet.downgrade()),
+        );
         Ok(())
     }
 
@@ -709,10 +722,10 @@ impl PyRightOfWay {
     fn remove_yield(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
         let (lanelet, _) =
             lanelet_of(value).ok_or_else(|| argument_error("RightOfWay", "removeYieldLanelet"))?;
-        Ok(slf.as_super().regelem.remove_parameter(
-            roles::YIELD,
-            &RuleParameter::Lanelet(lanelet.downgrade()),
-        ))
+        Ok(slf
+            .as_super()
+            .regelem
+            .remove_parameter(roles::YIELD, &RuleParameter::Lanelet(lanelet.downgrade())))
     }
 
     /// Which manoeuvre this element prescribes for a lanelet: right of way, yield,
@@ -830,7 +843,11 @@ fn traffic_sign_parameters(
     let cancelling = match cancellingTrafficSigns {
         None => Vec::new(),
         Some(value) if value.is_none() => Vec::new(),
-        Some(value) => value.cast::<PyTrafficSignsWithType>()?.borrow().signs.clone(),
+        Some(value) => value
+            .cast::<PyTrafficSignsWithType>()?
+            .borrow()
+            .signs
+            .clone(),
     };
     let lines = |obj: Option<&Bound<'_, PyAny>>| -> PyResult<Vec<RuleParameter>> {
         match obj {
@@ -862,13 +879,10 @@ impl PyTrafficSign {
         refLines: Option<&Bound<'_, PyAny>>,
         cancelLines: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(Self, PyRegulatoryElement)> {
-        let (parameters, _) = traffic_sign_parameters(
-            trafficSigns,
-            cancellingTrafficSigns,
-            refLines,
-            cancelLines,
-        )?;
-        let attributes = typed_attributes(optional_attribute_map(Some(attributes))?, "traffic_sign");
+        let (parameters, _) =
+            traffic_sign_parameters(trafficSigns, cancellingTrafficSigns, refLines, cancelLines)?;
+        let attributes =
+            typed_attributes(optional_attribute_map(Some(attributes))?, "traffic_sign");
         Ok((
             PyTrafficSign,
             PyRegulatoryElement::wrap(RegulatoryElement::new(
@@ -911,9 +925,11 @@ impl PyTrafficSign {
         let regelem = &slf.as_super().regelem;
         if let Some(first) = regelem.parameters_for(roles::REFERS).first() {
             let subtype = match first {
-                RuleParameter::LineString(line) | RuleParameter::Polygon(line) => {
-                    line.attributes().read().get("subtype").map(|a| a.value().to_owned())
-                }
+                RuleParameter::LineString(line) | RuleParameter::Polygon(line) => line
+                    .attributes()
+                    .read()
+                    .get("subtype")
+                    .map(|a| a.value().to_owned()),
                 _ => None,
             };
             return subtype.ok_or_else(|| runtime("Traffic sign has no 'subtype' attribute!"));
@@ -938,12 +954,22 @@ impl PyTrafficSign {
 
     #[pyo3(name = "addCancellingTrafficSign")]
     fn add_cancelling(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        push_role(slf.as_super(), roles::CANCELS, value, "addCancellingTrafficSign")
+        push_role(
+            slf.as_super(),
+            roles::CANCELS,
+            value,
+            "addCancellingTrafficSign",
+        )
     }
 
     #[pyo3(name = "removeCancellingTrafficSign")]
     fn remove_cancelling(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-        drop_role(slf.as_super(), roles::CANCELS, value, "removeCancellingTrafficSign")
+        drop_role(
+            slf.as_super(),
+            roles::CANCELS,
+            value,
+            "removeCancellingTrafficSign",
+        )
     }
 
     #[pyo3(name = "addRefLine")]
@@ -958,12 +984,22 @@ impl PyTrafficSign {
 
     #[pyo3(name = "addCancellingRefLine")]
     fn add_cancel_line(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        push_role(slf.as_super(), roles::CANCEL_LINE, value, "addCancellingRefLine")
+        push_role(
+            slf.as_super(),
+            roles::CANCEL_LINE,
+            value,
+            "addCancellingRefLine",
+        )
     }
 
     #[pyo3(name = "removeCancellingRefLine")]
     fn remove_cancel_line(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-        drop_role(slf.as_super(), roles::CANCEL_LINE, value, "removeCancellingRefLine")
+        drop_role(
+            slf.as_super(),
+            roles::CANCEL_LINE,
+            value,
+            "removeCancellingRefLine",
+        )
     }
 
     /// The distinct `subtype`s of the cancelling signs, sorted.
@@ -975,9 +1011,11 @@ impl PyTrafficSign {
             .parameters_for(roles::CANCELS)
             .iter()
             .filter_map(|parameter| match parameter {
-                RuleParameter::LineString(line) | RuleParameter::Polygon(line) => {
-                    line.attributes().read().get("subtype").map(|a| a.value().to_owned())
-                }
+                RuleParameter::LineString(line) | RuleParameter::Polygon(line) => line
+                    .attributes()
+                    .read()
+                    .get("subtype")
+                    .map(|a| a.value().to_owned()),
                 _ => None,
             })
             .collect();
@@ -1005,12 +1043,8 @@ impl PySpeedLimit {
         refLines: Option<&Bound<'_, PyAny>>,
         cancelLines: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let (parameters, _) = traffic_sign_parameters(
-            trafficSigns,
-            cancellingTrafficSigns,
-            refLines,
-            cancelLines,
-        )?;
+        let (parameters, _) =
+            traffic_sign_parameters(trafficSigns, cancellingTrafficSigns, refLines, cancelLines)?;
         // Upstream binds SpeedLimit's constructor to TrafficSign::make, so the
         // element it builds is tagged `traffic_sign` rather than `speed_limit`.
         let subtype = if compat::speed_limit_ctor_makes_traffic_sign() {
@@ -1044,8 +1078,8 @@ impl PyLaneletWithStopLine {
     #[pyo3(signature = (lanelet, stopLine = None))]
     #[allow(non_snake_case)]
     fn new(lanelet: &Bound<'_, PyAny>, stopLine: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
-        let (lanelet, _) = lanelet_of(lanelet)
-            .ok_or_else(|| argument_error("LaneletWithStopLine", "__init__"))?;
+        let (lanelet, _) =
+            lanelet_of(lanelet).ok_or_else(|| argument_error("LaneletWithStopLine", "__init__"))?;
         Ok(PyLaneletWithStopLine {
             lanelet,
             stop_line: optional_linestring(stopLine),
@@ -1059,8 +1093,8 @@ impl PyLaneletWithStopLine {
 
     #[setter(lanelet)]
     fn set_lanelet(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let (lanelet, _) = lanelet_of(value)
-            .ok_or_else(|| argument_error("LaneletWithStopLine", "lanelet"))?;
+        let (lanelet, _) =
+            lanelet_of(value).ok_or_else(|| argument_error("LaneletWithStopLine", "lanelet"))?;
         self.lanelet = lanelet;
         Ok(())
     }
@@ -1175,7 +1209,8 @@ impl PyAllWayStop {
         parameters.insert(roles::YIELD.into(), lanelet_params);
         parameters.insert(roles::REF_LINE.into(), stop_lines);
         parameters.insert(roles::REFERS.into(), signs);
-        let attributes = typed_attributes(optional_attribute_map(Some(attributes))?, "all_way_stop");
+        let attributes =
+            typed_attributes(optional_attribute_map(Some(attributes))?, "all_way_stop");
         Ok((
             PyAllWayStop,
             PyRegulatoryElement::wrap(RegulatoryElement::new(
@@ -1210,7 +1245,9 @@ impl PyAllWayStop {
     fn add_traffic_sign(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let parameter = rule_parameter_from_any(value)
             .ok_or_else(|| argument_error("AllWayStop", "addTrafficSign"))?;
-        slf.as_super().regelem.push_parameter(roles::REFERS, parameter);
+        slf.as_super()
+            .regelem
+            .push_parameter(roles::REFERS, parameter);
         Ok(())
     }
 
@@ -1218,14 +1255,20 @@ impl PyAllWayStop {
     fn remove_traffic_sign(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
         let parameter = rule_parameter_from_any(value)
             .ok_or_else(|| argument_error("AllWayStop", "removeTrafficSign"))?;
-        Ok(slf.as_super().regelem.remove_parameter(roles::REFERS, &parameter))
+        Ok(slf
+            .as_super()
+            .regelem
+            .remove_parameter(roles::REFERS, &parameter))
     }
 
     #[pyo3(name = "addLanelet")]
     fn add_lanelet(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let pair = value.cast::<PyLaneletWithStopLine>()?.borrow();
         let regelem = &slf.as_super().regelem;
-        regelem.push_parameter(roles::YIELD, RuleParameter::Lanelet(pair.lanelet.downgrade()));
+        regelem.push_parameter(
+            roles::YIELD,
+            RuleParameter::Lanelet(pair.lanelet.downgrade()),
+        );
         if let Some(line) = &pair.stop_line {
             regelem.push_parameter(roles::REF_LINE, RuleParameter::LineString(line.clone()));
         }
@@ -1236,10 +1279,10 @@ impl PyAllWayStop {
     fn remove_lanelet(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
         let (lanelet, _) =
             lanelet_of(value).ok_or_else(|| argument_error("AllWayStop", "removeLanelet"))?;
-        Ok(slf.as_super().regelem.remove_parameter(
-            roles::YIELD,
-            &RuleParameter::Lanelet(lanelet.downgrade()),
-        ))
+        Ok(slf
+            .as_super()
+            .regelem
+            .remove_parameter(roles::YIELD, &RuleParameter::Lanelet(lanelet.downgrade())))
     }
 }
 

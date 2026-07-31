@@ -179,10 +179,7 @@ mod tests {
 
     #[test]
     fn a_polygons_closing_segment_counts() {
-        let compound = CompoundLineString::new(vec![line(
-            10,
-            vec![point(1), point(2), point(3)],
-        )]);
+        let compound = CompoundLineString::new(vec![line(10, vec![point(1), point(2), point(3)])]);
         assert_eq!(compound.num_segments(), 2);
         assert_eq!(compound.num_polygon_segments(), 3);
         assert_eq!(

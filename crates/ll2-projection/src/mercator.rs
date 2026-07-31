@@ -79,7 +79,9 @@ mod tests {
         for lat in (-80..=80).step_by(7) {
             for lon in (-180..=180).step_by(13) {
                 let point = GpsPoint::new(lat as f64, lon as f64, 12.5);
-                let back = projector.reverse(projector.forward(point).unwrap()).unwrap();
+                let back = projector
+                    .reverse(projector.forward(point).unwrap())
+                    .unwrap();
                 worst = worst
                     .max((back.lat - point.lat).abs())
                     .max((back.lon - point.lon).abs())

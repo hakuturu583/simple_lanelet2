@@ -94,7 +94,9 @@ fn construct(
     let Some(id) = arg(0, "id")? else {
         return Err(argument_error(class, "__init__"));
     };
-    let id: i64 = id.extract().map_err(|_| argument_error(class, "__init__"))?;
+    let id: i64 = id
+        .extract()
+        .map_err(|_| argument_error(class, "__init__"))?;
 
     let Some(second) = arg(1, "x")?.or(keyword("point")?) else {
         return Err(argument_error(class, "__init__"));
@@ -113,14 +115,18 @@ fn construct(
     }
 
     // `(id, x, y, z=0.0, attributes=AttributeMap())`.
-    let x: f64 = second.extract().map_err(|_| argument_error(class, "__init__"))?;
+    let x: f64 = second
+        .extract()
+        .map_err(|_| argument_error(class, "__init__"))?;
     let y: f64 = arg(2, "y")?
         .ok_or_else(|| argument_error(class, "__init__"))?
         .extract()
         .map_err(|_| argument_error(class, "__init__"))?;
     let z: f64 = match arg(3, "z")? {
         None => 0.0,
-        Some(value) => value.extract().map_err(|_| argument_error(class, "__init__"))?,
+        Some(value) => value
+            .extract()
+            .map_err(|_| argument_error(class, "__init__"))?,
     };
     let attributes = optional_attribute_map(arg(4, "attributes")?.as_ref())?;
     Ok(Point::new(id, x, y, z, attributes))
@@ -270,25 +276,61 @@ macro_rules! point_class {
     };
 }
 
-point_class!("Point3d", PyPoint3d, Dimension::Three, Dimension::Two, true, true, PyBasicPoint3d, {
-    #[getter]
-    fn z(&self) -> f64 {
-        self.point.z()
+point_class!(
+    "Point3d",
+    PyPoint3d,
+    Dimension::Three,
+    Dimension::Two,
+    true,
+    true,
+    PyBasicPoint3d,
+    {
+        #[getter]
+        fn z(&self) -> f64 {
+            self.point.z()
+        }
+
+        #[setter(z)]
+        fn set_z(&self, value: f64) {
+            self.point.set_z(value);
+        }
     }
+);
 
-    #[setter(z)]
-    fn set_z(&self, value: f64) {
-        self.point.set_z(value);
+point_class!(
+    "Point2d",
+    PyPoint2d,
+    Dimension::Two,
+    Dimension::Three,
+    false,
+    true,
+    PyBasicPoint2d,
+    {}
+);
+
+point_class!(
+    "ConstPoint3d",
+    PyConstPoint3d,
+    Dimension::Three,
+    Dimension::Two,
+    true,
+    false,
+    PyBasicPoint3d,
+    {
+        #[getter]
+        fn z(&self) -> f64 {
+            self.point.z()
+        }
     }
-});
+);
 
-point_class!("Point2d", PyPoint2d, Dimension::Two, Dimension::Three, false, true, PyBasicPoint2d, {});
-
-point_class!("ConstPoint3d", PyConstPoint3d, Dimension::Three, Dimension::Two, true, false, PyBasicPoint3d, {
-    #[getter]
-    fn z(&self) -> f64 {
-        self.point.z()
-    }
-});
-
-point_class!("ConstPoint2d", PyConstPoint2d, Dimension::Two, Dimension::Three, false, false, PyBasicPoint2d, {});
+point_class!(
+    "ConstPoint2d",
+    PyConstPoint2d,
+    Dimension::Two,
+    Dimension::Three,
+    false,
+    false,
+    PyBasicPoint2d,
+    {}
+);

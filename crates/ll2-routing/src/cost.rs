@@ -150,21 +150,31 @@ mod tests {
         let cost = RoutingCostDistance::new(10.0, 0.0);
         let value = cost.cost_succeeding(&rules(), &lanelet(10.0, "road"), &lanelet(20.0, "road"));
         assert!((value - 15.0).abs() < 1e-9, "{value}");
-        assert_eq!(cost.cost_lane_change(&rules(), &[lanelet(1.0, "road")], &[]), 10.0);
+        assert_eq!(
+            cost.cost_lane_change(&rules(), &[lanelet(1.0, "road")], &[]),
+            10.0
+        );
     }
 
     #[test]
     fn a_lane_change_that_is_too_short_costs_infinity() {
         let cost = RoutingCostDistance::new(10.0, 50.0);
-        assert!(cost.cost_lane_change(&rules(), &[lanelet(10.0, "road")], &[]).is_infinite());
-        assert_eq!(cost.cost_lane_change(&rules(), &[lanelet(60.0, "road")], &[]), 10.0);
+        assert!(
+            cost.cost_lane_change(&rules(), &[lanelet(10.0, "road")], &[])
+                .is_infinite()
+        );
+        assert_eq!(
+            cost.cost_lane_change(&rules(), &[lanelet(60.0, "road")], &[]),
+            10.0
+        );
     }
 
     #[test]
     fn travel_time_uses_the_speed_limit() {
         let cost = RoutingCostTravelTime::new(5.0, 0.0);
         // 100 m of urban road at 50 km/h is 7.2 s; the mean of two such is the same.
-        let value = cost.cost_succeeding(&rules(), &lanelet(100.0, "road"), &lanelet(100.0, "road"));
+        let value =
+            cost.cost_succeeding(&rules(), &lanelet(100.0, "road"), &lanelet(100.0, "road"));
         assert!((value - 7.2).abs() < 1e-9, "{value}");
     }
 
@@ -172,7 +182,11 @@ mod tests {
     fn an_unknown_speed_limit_costs_no_time() {
         let cost = RoutingCostTravelTime::new(5.0, 0.0);
         // `parking` has no limit, so the zero sentinel becomes infinite speed.
-        let value = cost.cost_succeeding(&rules(), &lanelet(100.0, "parking"), &lanelet(100.0, "parking"));
+        let value = cost.cost_succeeding(
+            &rules(),
+            &lanelet(100.0, "parking"),
+            &lanelet(100.0, "parking"),
+        );
         assert!(value < 1e-300, "{value}");
     }
 

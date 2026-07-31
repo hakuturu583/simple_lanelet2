@@ -85,7 +85,9 @@ impl PyOrigin {
         let number = |value: Option<Bound<'_, PyAny>>| -> PyResult<f64> {
             match value {
                 None => Ok(0.0),
-                Some(value) => value.extract().map_err(|_| argument_error("Origin", "__init__")),
+                Some(value) => value
+                    .extract()
+                    .map_err(|_| argument_error("Origin", "__init__")),
             }
         };
 
@@ -166,7 +168,9 @@ fn write_params(params: Option<&Bound<'_, PyAny>>) -> PyResult<WriteParams> {
             None => false,
             Some(value) => {
                 let text: String = value.cast::<PyString>()?.extract()?;
-                ll2_core::attribute::Attribute::new(text).as_bool().unwrap_or(false)
+                ll2_core::attribute::Attribute::new(text)
+                    .as_bool()
+                    .unwrap_or(false)
             }
         })
     };
@@ -204,7 +208,10 @@ fn load_robust<'py>(
     let projector = resolve_projector(projector)?;
     let (map, errors) = ll2_io::load_robust(Path::new(filename), projector.as_ref())
         .map_err(|error| runtime(error.message()))?;
-    let result = (Py::new(py, PyLaneletMap::wrap(map))?, PyList::new(py, errors)?);
+    let result = (
+        Py::new(py, PyLaneletMap::wrap(map))?,
+        PyList::new(py, errors)?,
+    );
     Ok(result.into_pyobject(py)?.into_any())
 }
 

@@ -80,11 +80,13 @@ impl BoundingBox2d {
     pub fn intersects(&self, other: &BoundingBox2d) -> bool {
         !self.is_empty()
             && !other.is_empty()
-            && (0..2).all(|axis| self.min[axis] <= other.max[axis] && other.min[axis] <= self.max[axis])
+            && (0..2)
+                .all(|axis| self.min[axis] <= other.max[axis] && other.min[axis] <= self.max[axis])
     }
 
     pub fn contains(&self, point: [f64; 2]) -> bool {
-        !self.is_empty() && (0..2).all(|axis| point[axis] >= self.min[axis] && point[axis] <= self.max[axis])
+        !self.is_empty()
+            && (0..2).all(|axis| point[axis] >= self.min[axis] && point[axis] <= self.max[axis])
     }
 
     /// Distance from a point to the box, zero when inside.
@@ -92,7 +94,11 @@ impl BoundingBox2d {
         if self.is_empty() {
             return f64::INFINITY;
         }
-        let axis_gap = |axis: usize| (self.min[axis] - point[axis]).max(point[axis] - self.max[axis]).max(0.0);
+        let axis_gap = |axis: usize| {
+            (self.min[axis] - point[axis])
+                .max(point[axis] - self.max[axis])
+                .max(0.0)
+        };
         f64::hypot(axis_gap(0), axis_gap(1))
     }
 }
@@ -127,7 +133,8 @@ impl BoundingBox3d {
     pub fn intersects(&self, other: &BoundingBox3d) -> bool {
         !self.is_empty()
             && !other.is_empty()
-            && (0..3).all(|axis| self.min[axis] <= other.max[axis] && other.min[axis] <= self.max[axis])
+            && (0..3)
+                .all(|axis| self.min[axis] <= other.max[axis] && other.min[axis] <= self.max[axis])
     }
 
     pub fn to_2d(&self) -> BoundingBox2d {

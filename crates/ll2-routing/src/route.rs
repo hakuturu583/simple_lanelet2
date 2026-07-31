@@ -29,7 +29,12 @@ pub struct Route {
 
 impl Route {
     /// Grows the corridor outwards from a path until nothing more can be added.
-    pub fn build(graph: &RoutingGraph, path: Vec<Lanelet>, goal: &Lanelet, cost_id: usize) -> Route {
+    pub fn build(
+        graph: &RoutingGraph,
+        path: Vec<Lanelet>,
+        goal: &Lanelet,
+        cost_id: usize,
+    ) -> Route {
         let mut lanelets = path.clone();
 
         // Anything reachable sideways that can still get to the goal belongs to the
@@ -249,11 +254,7 @@ impl Route {
 fn assign_lane_ids(graph: &RoutingGraph, lanelets: &[Lanelet], _cost_id: usize) -> Vec<Id> {
     let mut ids = vec![0 as Id; lanelets.len()];
     let mut next = FIRST_LANE_ID;
-    let position = |lanelet: &Lanelet| {
-        lanelets
-            .iter()
-            .position(|held| held.is_same_view(lanelet))
-    };
+    let position = |lanelet: &Lanelet| lanelets.iter().position(|held| held.is_same_view(lanelet));
 
     for index in 0..lanelets.len() {
         if ids[index] != 0 {

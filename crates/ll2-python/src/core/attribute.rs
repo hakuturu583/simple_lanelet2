@@ -18,7 +18,11 @@ use crate::conv::{attribute_map_dict_repr, attribute_map_from_any};
 ///
 /// Boost.Python's `map_indexing_suite` exports this helper class under exactly this
 /// name, with `key()`/`data()` accessors and a `(key, value)` string form.
-#[pyclass(name = "map_indexing_suite_AttributeMap_entry", module = "lanelet2.core", frozen)]
+#[pyclass(
+    name = "map_indexing_suite_AttributeMap_entry",
+    module = "lanelet2.core",
+    frozen
+)]
 pub struct PyAttributeMapEntry {
     key: String,
     data: String,
@@ -70,7 +74,9 @@ impl PyAttributeMap {
     #[pyo3(signature = (attributes = None))]
     fn new(attributes: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         Ok(match attributes {
-            None => PyAttributeMap { cell: empty_attrs() },
+            None => PyAttributeMap {
+                cell: empty_attrs(),
+            },
             Some(obj) => PyAttributeMap {
                 cell: attrs(attribute_map_from_any(obj)?),
             },

@@ -21,7 +21,7 @@ pub mod regelem;
 
 pub use area::Area;
 pub use attribute::{Attribute, AttributeMap};
-pub use id::{Id, INVAL_ID, get_id, register_id};
+pub use id::{INVAL_ID, Id, get_id, register_id};
 pub use lanelet::Lanelet;
 pub use linestring::LineString;
 pub use point::Point;

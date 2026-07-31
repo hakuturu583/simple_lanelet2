@@ -55,9 +55,8 @@ fn points_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Vec<Point>> {
     let mut out = Vec::new();
     for item in obj.try_iter()? {
         let item = item?;
-        let (point, _) = point_of(&item).ok_or_else(|| {
-            crate::err::argument_error("LineString", "__init__")
-        })?;
+        let (point, _) =
+            point_of(&item).ok_or_else(|| crate::err::argument_error("LineString", "__init__"))?;
         out.push(point);
     }
     Ok(out)
@@ -112,7 +111,9 @@ fn construct(
 
     let id: i64 = match arg(0, "id")? {
         None => 0,
-        Some(value) => value.extract().map_err(|_| argument_error(class, "__init__"))?,
+        Some(value) => value
+            .extract()
+            .map_err(|_| argument_error(class, "__init__"))?,
     };
     let points = match arg(1, "points")? {
         None => Vec::new(),
@@ -407,4 +408,3 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyConstHybridPolygon3d>()?;
     Ok(())
 }
-

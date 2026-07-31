@@ -161,7 +161,8 @@ impl TrafficRules {
             participants::BICYCLE,
         ];
         let known = location == locations::GERMANY
-            && (registered.contains(&participant) || participant.starts_with(participants::VEHICLE));
+            && (registered.contains(&participant)
+                || participant.starts_with(participants::VEHICLE));
         if !known {
             return Err(NoSuchRules(format!(
                 "No matching traffic rules found for location {location}, participant {participant}"
@@ -295,7 +296,11 @@ impl TrafficRules {
     ///
     /// Attributes on the boundary win over its type. A boundary read backwards has
     /// its left and right swapped, which is applied last.
-    pub fn lane_change_type(&self, boundary: &LineString, virtual_is_passable: bool) -> LaneChangeType {
+    pub fn lane_change_type(
+        &self,
+        boundary: &LineString,
+        virtual_is_passable: bool,
+    ) -> LaneChangeType {
         let attributes = boundary.attributes().read();
         let truthy = |key: &str| {
             attributes
@@ -361,7 +366,11 @@ impl TrafficRules {
         } else {
             return false;
         };
-        let boundary = if is_left { from.right_bound() } else { from.left_bound() };
+        let boundary = if is_left {
+            from.right_bound()
+        } else {
+            from.left_bound()
+        };
         let kind = self.lane_change_type(&boundary, false);
         if is_left {
             kind.allows_right()
@@ -391,7 +400,11 @@ impl TrafficRules {
 
 impl std::fmt::Display for TrafficRules {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "location: {}, participant: {}", self.location, self.participant)
+        write!(
+            f,
+            "location: {}, participant: {}",
+            self.location, self.participant
+        )
     }
 }
 
@@ -460,11 +473,18 @@ mod tests {
     #[test]
     fn the_participant_hierarchy_matches_by_prefix() {
         let car = TrafficRules::create(locations::GERMANY, participants::VEHICLE_CAR).unwrap();
-        assert_eq!(car.participant(), "vehicle:car", "the requested name is kept");
+        assert_eq!(
+            car.participant(),
+            "vehicle:car",
+            "the requested name is kept"
+        );
         assert!(car.can_pass(&lanelet(&[("subtype", "road")])));
 
         // An override written for `vehicle` applies to `vehicle:car`.
-        assert!(!car.can_pass(&lanelet(&[("subtype", "road"), ("participant:vehicle", "no")])));
+        assert!(!car.can_pass(&lanelet(&[
+            ("subtype", "road"),
+            ("participant:vehicle", "no")
+        ])));
     }
 
     #[test]
@@ -483,7 +503,11 @@ mod tests {
         assert!((kmh(&[("subtype", "road")]) - 50.0).abs() < 1e-9);
         assert!((kmh(&[("subtype", "road"), ("location", "nonurban")]) - 100.0).abs() < 1e-9);
         assert!((kmh(&[("subtype", "highway")]) - 130.0).abs() < 1e-9);
-        assert!(!rules.speed_limit(&lanelet(&[("subtype", "highway")])).is_mandatory);
+        assert!(
+            !rules
+                .speed_limit(&lanelet(&[("subtype", "highway")]))
+                .is_mandatory
+        );
         assert!((kmh(&[("subtype", "play_street")]) - 7.0).abs() < 1e-9);
         // The shipped wheel treats a bus lane like a road, though the newer source
         // in the cloned repository does not.
@@ -497,12 +521,13 @@ mod tests {
         let rules = vehicle();
         let kmh = |attributes: &[(&str, &str)]| rules.speed_limit(&lanelet(attributes)).as_kmh();
         assert!((kmh(&[("subtype", "road"), ("speed_limit", "30")]) - 30.0).abs() < 1e-9);
-        assert!(
-            (kmh(&[("subtype", "road"), ("speed_limit", "30 mph")]) - 48.28032).abs() < 1e-5
-        );
+        assert!((kmh(&[("subtype", "road"), ("speed_limit", "30 mph")]) - 48.28032).abs() < 1e-5);
         assert!(
             !rules
-                .speed_limit(&lanelet(&[("subtype", "road"), ("speed_limit_mandatory", "false")]))
+                .speed_limit(&lanelet(&[
+                    ("subtype", "road"),
+                    ("speed_limit_mandatory", "false")
+                ]))
                 .is_mandatory
         );
     }
@@ -537,7 +562,11 @@ mod tests {
         );
         // An explicit attribute overrides the markings.
         assert_eq!(
-            kind(&[("type", "line_thin"), ("subtype", "solid"), ("lane_change", "yes")]),
+            kind(&[
+                ("type", "line_thin"),
+                ("subtype", "solid"),
+                ("lane_change", "yes")
+            ]),
             LaneChangeType::Both
         );
     }

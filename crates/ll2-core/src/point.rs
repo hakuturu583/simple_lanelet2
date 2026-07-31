@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::attribute::AttributeMap;
 use crate::fmt::{make_repr, ostream_double};
-use crate::id::{Id, INVAL_ID};
+use crate::id::{INVAL_ID, Id};
 use crate::refs::{Attrs, CoordView, Coords, attrs, coords};
 
 /// The storage behind every handle to one point.

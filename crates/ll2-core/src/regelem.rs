@@ -345,16 +345,23 @@ mod tests {
     #[test]
     fn removing_the_last_entry_leaves_the_role_in_place() {
         let regelem = traffic_light();
-        let target = RuleParameter::LineString(match regelem.parameters_for(roles::REF_LINE)
-            .into_iter()
-            .next()
-            .unwrap()
-        {
-            RuleParameter::LineString(line) => line,
-            _ => unreachable!(),
-        });
+        let target = RuleParameter::LineString(
+            match regelem
+                .parameters_for(roles::REF_LINE)
+                .into_iter()
+                .next()
+                .unwrap()
+            {
+                RuleParameter::LineString(line) => line,
+                _ => unreachable!(),
+            },
+        );
         assert!(regelem.remove_parameter(roles::REF_LINE, &target));
-        assert_eq!(regelem.roles(), ["ref_line", "refers"], "an emptied role is kept");
+        assert_eq!(
+            regelem.roles(),
+            ["ref_line", "refers"],
+            "an emptied role is kept"
+        );
         assert!(regelem.parameters_for(roles::REF_LINE).is_empty());
         assert!(!regelem.remove_parameter(roles::REF_LINE, &target));
     }

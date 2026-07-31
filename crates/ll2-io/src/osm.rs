@@ -172,7 +172,11 @@ impl Document {
         let mut out = String::with_capacity(64 * 1024);
         out.push_str("<?xml version=\"1.0\"?>\n<osm");
         write_attribute(&mut out, "version", "0.6");
-        write_attribute(&mut out, "upload", if params.josm_upload { "true" } else { "false" });
+        write_attribute(
+            &mut out,
+            "upload",
+            if params.josm_upload { "true" } else { "false" },
+        );
         write_attribute(&mut out, "generator", "lanelet2");
         out.push_str(">\n");
 
@@ -183,8 +187,8 @@ impl Document {
             write_attribute(&mut out, "lon", &josm_style(node.lon, false));
 
             // The elevation tag comes first, and only when there is one.
-            let elevation = (node.ele != 0.0)
-                .then(|| josm_style(node.ele, params.josm_format_elevation));
+            let elevation =
+                (node.ele != 0.0).then(|| josm_style(node.ele, params.josm_format_elevation));
             if elevation.is_none() && node.tags.is_empty() {
                 out.push_str(" />\n");
                 continue;

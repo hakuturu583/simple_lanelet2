@@ -101,7 +101,9 @@ impl PyPositionCovariance2d {
 }
 
 fn hull_from_any(obj: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<[f64; 2]>> {
-    let Some(obj) = obj else { return Ok(Vec::new()) };
+    let Some(obj) = obj else {
+        return Ok(Vec::new());
+    };
     if obj.is_none() {
         return Ok(Vec::new());
     }
@@ -289,7 +291,11 @@ macro_rules! match_class {
 }
 
 match_class!("ConstLaneletMatch", PyConstLaneletMatch, false);
-match_class!("ConstLaneletMatchProbabilistic", PyConstLaneletMatchProbabilistic, true);
+match_class!(
+    "ConstLaneletMatchProbabilistic",
+    PyConstLaneletMatchProbabilistic,
+    true
+);
 
 #[pyfunction]
 #[pyo3(name = "getDeterministicMatches", signature = (map, obj, maxDist))]
@@ -321,8 +327,8 @@ fn get_probabilistic_matches<'py>(
         position_covariance: obj.covariance,
         von_mises_kappa: obj.von_mises_kappa,
     };
-    let found = probabilistic_matches(map.inner(), &object, maxDist)
-        .map_err(|error| runtime(error.0))?;
+    let found =
+        probabilistic_matches(map.inner(), &object, maxDist).map_err(|error| runtime(error.0))?;
     PyList::new(
         py,
         found

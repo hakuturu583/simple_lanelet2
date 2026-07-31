@@ -281,8 +281,18 @@ mod tests {
     #[test]
     fn adjacency_is_identity_not_coordinates() {
         let shared = line(100, &[(0.0, 0.0), (10.0, 0.0)]);
-        let upper = Lanelet::new(1, line(101, &[(0.0, 2.0), (10.0, 2.0)]), shared.clone(), AttributeMap::new());
-        let lower = Lanelet::new(2, shared, line(102, &[(0.0, -2.0), (10.0, -2.0)]), AttributeMap::new());
+        let upper = Lanelet::new(
+            1,
+            line(101, &[(0.0, 2.0), (10.0, 2.0)]),
+            shared.clone(),
+            AttributeMap::new(),
+        );
+        let lower = Lanelet::new(
+            2,
+            shared,
+            line(102, &[(0.0, -2.0), (10.0, -2.0)]),
+            AttributeMap::new(),
+        );
         assert!(left_of(&upper, &lower));
         assert!(right_of(&lower, &upper));
 
@@ -302,14 +312,26 @@ mod tests {
         let mid_right = Point::new(0, 10.0, -1.0, 0.0, AttributeMap::new());
         let make = |id: i64, first: bool| {
             let left = if first {
-                vec![Point::new(0, 0.0, 1.0, 0.0, AttributeMap::new()), mid_left.clone()]
+                vec![
+                    Point::new(0, 0.0, 1.0, 0.0, AttributeMap::new()),
+                    mid_left.clone(),
+                ]
             } else {
-                vec![mid_left.clone(), Point::new(0, 20.0, 1.0, 0.0, AttributeMap::new())]
+                vec![
+                    mid_left.clone(),
+                    Point::new(0, 20.0, 1.0, 0.0, AttributeMap::new()),
+                ]
             };
             let right = if first {
-                vec![Point::new(0, 0.0, -1.0, 0.0, AttributeMap::new()), mid_right.clone()]
+                vec![
+                    Point::new(0, 0.0, -1.0, 0.0, AttributeMap::new()),
+                    mid_right.clone(),
+                ]
             } else {
-                vec![mid_right.clone(), Point::new(0, 20.0, -1.0, 0.0, AttributeMap::new())]
+                vec![
+                    mid_right.clone(),
+                    Point::new(0, 20.0, -1.0, 0.0, AttributeMap::new()),
+                ]
             };
             Lanelet::new(
                 id,
@@ -322,14 +344,27 @@ mod tests {
         let second = make(2, false);
         assert!(follows(&first, &second));
         assert!(!follows(&second, &first));
-        assert!(!follows(&first, &corridor(9, 10.0, 20.0)), "coincident but distinct");
+        assert!(
+            !follows(&first, &corridor(9, 10.0, 20.0)),
+            "coincident but distinct"
+        );
     }
 
     #[test]
     fn neighbours_and_successors_do_not_count_as_overlapping() {
         let shared = line(100, &[(0.0, 0.0), (10.0, 0.0)]);
-        let upper = Lanelet::new(1, line(101, &[(0.0, 2.0), (10.0, 2.0)]), shared.clone(), AttributeMap::new());
-        let lower = Lanelet::new(2, shared, line(102, &[(0.0, -2.0), (10.0, -2.0)]), AttributeMap::new());
+        let upper = Lanelet::new(
+            1,
+            line(101, &[(0.0, 2.0), (10.0, 2.0)]),
+            shared.clone(),
+            AttributeMap::new(),
+        );
+        let lower = Lanelet::new(
+            2,
+            shared,
+            line(102, &[(0.0, -2.0), (10.0, -2.0)]),
+            AttributeMap::new(),
+        );
         assert!(!overlaps_2d(&upper, &lower));
         assert!(overlaps_2d(&upper, &upper), "a lanelet overlaps itself");
     }

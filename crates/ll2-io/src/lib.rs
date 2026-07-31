@@ -86,10 +86,7 @@ pub fn load_robust(
 }
 
 /// Loads a map, failing if anything went wrong.
-pub fn load(
-    path: &Path,
-    projector: &dyn Projector,
-) -> Result<std::sync::Arc<LaneletMap>, IoError> {
+pub fn load(path: &Path, projector: &dyn Projector) -> Result<std::sync::Arc<LaneletMap>, IoError> {
     let (map, errors) = load_robust(path, projector)?;
     if errors.is_empty() {
         return Ok(map);

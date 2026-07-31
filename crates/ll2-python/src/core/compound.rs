@@ -188,10 +188,30 @@ macro_rules! compound_hybrid {
     (@coords 3, $item:ident, $x:expr, $y:expr, $z:expr) => { $item::free([$x, $y, $z]) };
 }
 
-compound_hybrid!("CompoundHybridLineString3d", PyCompoundHybridLineString3d, PyBasicPoint3d, 3);
-compound_hybrid!("CompoundHybridLineString2d", PyCompoundHybridLineString2d, PyBasicPoint2d, 2);
-compound_hybrid!("CompoundHybridPolygon3d", PyCompoundHybridPolygon3d, PyBasicPoint3d, 3);
-compound_hybrid!("CompoundHybridPolygon2d", PyCompoundHybridPolygon2d, PyBasicPoint2d, 2);
+compound_hybrid!(
+    "CompoundHybridLineString3d",
+    PyCompoundHybridLineString3d,
+    PyBasicPoint3d,
+    3
+);
+compound_hybrid!(
+    "CompoundHybridLineString2d",
+    PyCompoundHybridLineString2d,
+    PyBasicPoint2d,
+    2
+);
+compound_hybrid!(
+    "CompoundHybridPolygon3d",
+    PyCompoundHybridPolygon3d,
+    PyBasicPoint3d,
+    3
+);
+compound_hybrid!(
+    "CompoundHybridPolygon2d",
+    PyCompoundHybridPolygon2d,
+    PyBasicPoint2d,
+    2
+);
 
 /// Extracts the compound behind any compound-shaped object.
 pub fn compound_of(obj: &Bound<'_, PyAny>) -> Option<CompoundLineString> {
@@ -228,4 +248,3 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCompoundHybridPolygon3d>()?;
     Ok(())
 }
-

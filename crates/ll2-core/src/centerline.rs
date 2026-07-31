@@ -160,8 +160,7 @@ impl BoundChecker {
     }
 
     fn crosses_entry(&self, seg: Segment) -> bool {
-        segments_intersect(seg, self.entry)
-            && point_is_left_of(self.entry.0, self.entry.1, seg.1)
+        segments_intersect(seg, self.entry) && point_is_left_of(self.entry.0, self.entry.1, seg.1)
     }
 
     fn crosses_exit(&self, seg: Segment) -> bool {
@@ -228,7 +227,11 @@ fn closest_nonintersecting_point(
         ];
         let centerline_candidate: Segment = (last_centerline_point, midpoint);
 
-        let other_side = if side == Side::Left { Side::Right } else { Side::Left };
+        let other_side = if side == Side::Left {
+            Side::Right
+        } else {
+            Side::Left
+        };
         if !bounds.intersects(centerline_candidate)
             && !bounds.second_crosses_bounds(bound_connection, side)
             && !bounds.second_crosses_bounds(inverse_connection, other_side)
@@ -415,6 +418,11 @@ mod tests {
             ],
             AttributeMap::new(),
         );
-        assert!(calculate(&left, &right).points().iter().all(|p| p.z() == 2.0));
+        assert!(
+            calculate(&left, &right)
+                .points()
+                .iter()
+                .all(|p| p.z() == 2.0)
+        );
     }
 }

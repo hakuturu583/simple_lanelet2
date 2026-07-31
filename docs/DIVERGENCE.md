@@ -27,11 +27,12 @@ time and re-reading `os.environ` afterwards has no effect.
 
 | # | Upstream behaviour | Default (repaired) | Kind |
 | --- | --- | --- | --- |
-| 1 | `Origin`'s third keyword argument is named `lon`, so `Origin(lat=…, lon=…, alt=…)` raises `TypeError` | named `alt` | registration |
+| 1 | `Origin`'s keywords are registered as `(lat, lon, lon)`: the third is misnamed, so `lon=` silently fills the *altitude* as well and `alt=` is accepted and ignored — `Origin(lat=49, lon=8.4)` ends up 8.4 m above the ellipsoid | third keyword named `alt` | registration |
 | 2 | Only `__div__` is registered on basic points; Python 3 never calls it, so `p / 2` raises `TypeError` | `__truediv__` implemented | registration |
-| 3 | `SpeedLimitInformation`'s first parameter is named `speedLimitMPS` but is interpreted as km/h | renamed `speedLimitKmH`; the positional meaning is unchanged | registration |
+| 3 | `SpeedLimitInformation`'s first parameter is named `speedLimitMPS` but is interpreted as km/h, and the two-argument constructor is unreachable | only the no-argument form exists, so the confusion cannot arise | registration |
 | 4 | `reachableSet`'s third keyword argument is spelled `RoutingCostId` | `routingCostId` | registration |
 | 5 | The cost-limit overload of `possiblePaths` declares a fifth keyword argument the function does not accept | removed | registration |
+| 5a | `TrafficSignsWithType.trafficSigns` raises `TypeError`: no Python class is registered for the vector behind it, so the property is unusable | returns the list of signs | runtime |
 | 6 | `repr(ConstArea(...))` claims to be an `Area` | `ConstArea(...)` | runtime |
 | 7 | `SpeedLimit.__init__` is bound to `TrafficSign::make`, so it constructs a `TrafficSign` | constructs a `SpeedLimit` | runtime |
 | 8 | The `withoutConflicting` edge filter computes `allRelations() \| ~Conflicting` = `0xFF`, matching every relation — it does nothing | conflicting edges are actually excluded | runtime |
@@ -50,7 +51,9 @@ Not implemented in either mode. Listed with reasons in `tests/divergence.toml`.
 - **`.bin` I/O.** Upstream's binary format is a Boost.Serialization archive, whose
   layout depends on the compiler and Boost version. There is nothing stable to
   target. `load`/`write` on a `.bin` path raise `RuntimeError`.
-- **`exportGraphML` / `exportGraphViz`.**
+- **`exportGraphML` / `exportGraphViz`.** Reproducing them means reproducing
+  Boost's GraphML and GraphViz writers byte for byte, which buys nothing for map
+  handling.
 - **Python-subclassable `RoutingCost`.** `RoutingCostDistance` and
   `RoutingCostTravelTime` are provided; deriving your own cost model in Python is
   not supported.
@@ -62,6 +65,23 @@ Not implemented in either mode. Listed with reasons in `tests/divergence.toml`.
 
 - **`lanelet2.BUG_COMPAT`** (`bool`) — whether bug-compatibility mode is active in
   this process. Upstream has no such attribute.
+- **`RoutingGraph.edges()`** — the whole edge list as
+  `(fromId, fromInverted, toId, toInverted, relation, costId, cost)`. Not part of
+  upstream's surface; it exists so that the graph *builder* can be tested directly
+  rather than through a query's view of it.
+- **`TrafficRules.laneChangeType(boundary, virtualIsPassable=False)`** — the
+  boundary rule the routing graph consults, exposed because it is cheap and makes
+  the lane-change tables inspectable.
+
+## 3a. A note on versions
+
+The Lanelet2 source checked out for reference is **not the same version as the
+`lanelet2==1.2.3` wheel** this library is compatible with, and the two disagree on
+real behaviour: in the wheel a `bus_lane` carries a road's speed limit, while the
+newer source has no such entry and yields zero. Where they differ, the wheel wins,
+because the wheel is what compatibility is measured against. Several tables in
+`ll2-traffic-rules` and the whole acceptance matrix in `accept.rs` were therefore
+*measured* against the wheel rather than transcribed from the C++.
 
 ## 4. Reproduced in both modes
 

@@ -31,7 +31,12 @@ fn parse_flag(value: &str) -> bool {
 ///
 /// Reads `LANELET2_BUG_COMPAT` on first call and caches the result forever.
 pub fn bug_compat() -> bool {
-    *BUG_COMPAT.get_or_init(|| std::env::var(ENV_VAR).as_deref().map(parse_flag).unwrap_or(false))
+    *BUG_COMPAT.get_or_init(|| {
+        std::env::var(ENV_VAR)
+            .as_deref()
+            .map(parse_flag)
+            .unwrap_or(false)
+    })
 }
 
 /// Force the flag to a specific value. Only useful in tests; the first call wins,

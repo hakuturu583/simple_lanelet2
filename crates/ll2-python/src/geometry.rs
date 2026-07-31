@@ -12,12 +12,13 @@
 //! Ground truth: `lanelet2_python/python_api/geometry.cpp`.
 
 use ll2_core::fmt::to_string_double;
-use ll2_core::geometry::{bbox, distance as dist, lanelet as llgeom, linestring as lsgeom};
 use ll2_core::geometry::linestring::{ArcCoordinates, Point2, Point3};
+use ll2_core::geometry::{bbox, distance as dist, lanelet as llgeom, linestring as lsgeom};
 use ll2_core::map::Primitive;
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyModule, PyTuple};
 
+use crate::accept;
 use crate::core::area::area_of;
 use crate::core::basic::{PyBasicPoint2d, PyBasicPoint3d, PyBoundingBox2d, PyBoundingBox3d};
 use crate::core::compound::compound_of;
@@ -25,7 +26,6 @@ use crate::core::lanelet::lanelet_of;
 use crate::core::linestring::linestring_of;
 use crate::core::map::primitive_from_any;
 use crate::core::point::point_of;
-use crate::accept;
 use crate::err::{argument_error, runtime};
 
 // ---------------------------------------------------------------------------
@@ -59,15 +59,34 @@ pub enum Shape {
 /// object, along with whether it is closed.
 fn polyline_3d(obj: &Bound<'_, PyAny>) -> Option<(Vec<Point3>, Shape)> {
     if let Some((line, kind)) = linestring_of(obj) {
-        let points = line.points().iter().map(ll2_core::point::Point::xyz).collect();
-        return Some((points, if kind.polygon { Shape::Ring } else { Shape::Open }));
+        let points = line
+            .points()
+            .iter()
+            .map(ll2_core::point::Point::xyz)
+            .collect();
+        return Some((
+            points,
+            if kind.polygon {
+                Shape::Ring
+            } else {
+                Shape::Open
+            },
+        ));
     }
     if let Some(compound) = compound_of(obj) {
-        let points = compound.points().iter().map(ll2_core::point::Point::xyz).collect();
+        let points = compound
+            .points()
+            .iter()
+            .map(ll2_core::point::Point::xyz)
+            .collect();
         // A compound polygon and a compound linestring are separate Python classes
         // but share this core type, so the class name is what tells them apart.
         let name = obj.get_type().name().ok()?.to_string();
-        let shape = if name.contains("Polygon") { Shape::Ring } else { Shape::Open };
+        let shape = if name.contains("Polygon") {
+            Shape::Ring
+        } else {
+            Shape::Open
+        };
         return Some((points, shape));
     }
     // A plain list of basic points is accepted wherever a linestring is.
@@ -80,9 +99,8 @@ fn polyline_3d(obj: &Bound<'_, PyAny>) -> Option<(Vec<Point3>, Shape)> {
 }
 
 fn polyline_2d(obj: &Bound<'_, PyAny>) -> Option<(Vec<Point2>, Shape)> {
-    polyline_3d(obj).map(|(points, shape)| {
-        (points.into_iter().map(|[x, y, _]| [x, y]).collect(), shape)
-    })
+    polyline_3d(obj)
+        .map(|(points, shape)| (points.into_iter().map(|[x, y, _]| [x, y]).collect(), shape))
 }
 
 /// A polyline in whichever form the caller supplied, plus its shape.
@@ -340,7 +358,11 @@ fn require_binary(
 /// Whether an object carries a meaningful third coordinate.
 fn is_3d(obj: &Bound<'_, PyAny>) -> bool {
     let name = class_name(obj);
-    name.ends_with("3d") || matches!(name.as_str(), "Lanelet" | "ConstLanelet" | "Area" | "ConstArea")
+    name.ends_with("3d")
+        || matches!(
+            name.as_str(),
+            "Lanelet" | "ConstLanelet" | "Area" | "ConstArea"
+        )
 }
 
 /// `distanceToLines(point, lines)` — the smallest distance to any of them.
@@ -384,8 +406,8 @@ fn bounding_box_2d(obj: &Bound<'_, PyAny>) -> PyResult<PyBoundingBox2d> {
     let box2d = match primitive {
         Some(primitive) => primitive.bounding_box_2d(),
         None => {
-            let (line, _) = polyline_2d(obj)
-                .ok_or_else(|| argument_error("geometry", "boundingBox2d"))?;
+            let (line, _) =
+                polyline_2d(obj).ok_or_else(|| argument_error("geometry", "boundingBox2d"))?;
             let mut box2d = bbox::BoundingBox2d::empty();
             for point in line {
                 box2d.extend_point(point);
@@ -411,8 +433,8 @@ fn bounding_box_3d(obj: &Bound<'_, PyAny>) -> PyResult<PyBoundingBox3d> {
         Some(Primitive::Lanelet(lanelet)) => bbox::of_lanelet_3d(&lanelet),
         Some(Primitive::Area(area)) => bbox::of_area_3d(&area),
         _ => {
-            let (line, _) = polyline_3d(obj)
-                .ok_or_else(|| argument_error("geometry", "boundingBox3d"))?;
+            let (line, _) =
+                polyline_3d(obj).ok_or_else(|| argument_error("geometry", "boundingBox3d"))?;
             let mut box3d = bbox::BoundingBox3d::empty();
             for point in line {
                 box3d.extend_point(point);
@@ -445,7 +467,11 @@ fn interpolated_point_at_distance<'py>(
     obj: &Bound<'py, PyAny>,
     distance: f64,
 ) -> PyResult<Bound<'py, PyAny>> {
-    require_unary(obj, accept::INTERPOLATED_POINT_AT_DISTANCE, "interpolatedPointAtDistance")?;
+    require_unary(
+        obj,
+        accept::INTERPOLATED_POINT_AT_DISTANCE,
+        "interpolatedPointAtDistance",
+    )?;
     let (line, _) = polyline_3d(obj)
         .ok_or_else(|| argument_error("geometry", "interpolatedPointAtDistance"))?;
     if is_3d(obj) {
@@ -465,9 +491,13 @@ fn nearest_point_at_distance<'py>(
     obj: &Bound<'py, PyAny>,
     distance: f64,
 ) -> PyResult<Bound<'py, PyAny>> {
-    require_unary(obj, accept::NEAREST_POINT_AT_DISTANCE, "nearestPointAtDistance")?;
-    let (flat, _) = polyline_2d(obj)
-        .ok_or_else(|| argument_error("geometry", "nearestPointAtDistance"))?;
+    require_unary(
+        obj,
+        accept::NEAREST_POINT_AT_DISTANCE,
+        "nearestPointAtDistance",
+    )?;
+    let (flat, _) =
+        polyline_2d(obj).ok_or_else(|| argument_error("geometry", "nearestPointAtDistance"))?;
     let index = lsgeom::nearest_index_at_distance_2d(&flat, distance)
         .ok_or_else(|| runtime("Empty line string"))?;
     // The result is an existing vertex, so hand back the primitive itself.
@@ -506,10 +536,7 @@ fn projected_point_3d<'py>(
     let (lb, _) = polyline_3d(b).ok_or_else(|| argument_error("geometry", "projectedPoint3d"))?;
     let (pa, pb) =
         lsgeom::projected_point_3d(&la, &lb).ok_or_else(|| runtime("Empty line string"))?;
-    PyTuple::new(
-        py,
-        [PyBasicPoint3d::free(pa), PyBasicPoint3d::free(pb)],
-    )
+    PyTuple::new(py, [PyBasicPoint3d::free(pa), PyBasicPoint3d::free(pb)])
 }
 
 // ---------------------------------------------------------------------------
@@ -537,7 +564,11 @@ fn from_arc_coordinates(
     obj: &Bound<'_, PyAny>,
     arc: &PyArcCoordinates,
 ) -> PyResult<PyBasicPoint2d> {
-    require_unary(obj, &["LineString2d", "CompoundLineString2d"], "fromArcCoordinates")?;
+    require_unary(
+        obj,
+        &["LineString2d", "CompoundLineString2d"],
+        "fromArcCoordinates",
+    )?;
     let (line, _) =
         polyline_2d(obj).ok_or_else(|| argument_error("geometry", "fromArcCoordinates"))?;
     let point = lsgeom::from_arc_coordinates(&line, arc.arc).map_err(|e| runtime(e.0))?;
@@ -572,9 +603,8 @@ fn three_points(
     p3: &Bound<'_, PyAny>,
     method: &str,
 ) -> PyResult<[Point2; 3]> {
-    let read = |obj: &Bound<'_, PyAny>| {
-        coords_2d(obj).ok_or_else(|| argument_error("geometry", method))
-    };
+    let read =
+        |obj: &Bound<'_, PyAny>| coords_2d(obj).ok_or_else(|| argument_error("geometry", method));
     Ok([read(p1)?, read(p2)?, read(p3)?])
 }
 
@@ -674,12 +704,24 @@ macro_rules! lanelet_metric {
 
 lanelet_metric!("length2d", length_2d_fn, llgeom::length_2d);
 lanelet_metric!("length3d", length_3d_fn, llgeom::length_3d);
-lanelet_metric!("approximatedLength2d", approximated_length_2d_fn, llgeom::approximated_length_2d);
+lanelet_metric!(
+    "approximatedLength2d",
+    approximated_length_2d_fn,
+    llgeom::approximated_length_2d
+);
 
 #[pyfunction]
 #[pyo3(name = "distanceToCenterline2d")]
-fn distance_to_centerline_2d(lanelet: &Bound<'_, PyAny>, point: &Bound<'_, PyAny>) -> PyResult<f64> {
-    require_binary(lanelet, point, accept::DISTANCE_TO_CENTERLINE_2D, "distanceToCenterline2d")?;
+fn distance_to_centerline_2d(
+    lanelet: &Bound<'_, PyAny>,
+    point: &Bound<'_, PyAny>,
+) -> PyResult<f64> {
+    require_binary(
+        lanelet,
+        point,
+        accept::DISTANCE_TO_CENTERLINE_2D,
+        "distanceToCenterline2d",
+    )?;
     let (lanelet, _) =
         lanelet_of(lanelet).ok_or_else(|| argument_error("geometry", "distanceToCenterline2d"))?;
     let point =
@@ -689,8 +731,16 @@ fn distance_to_centerline_2d(lanelet: &Bound<'_, PyAny>, point: &Bound<'_, PyAny
 
 #[pyfunction]
 #[pyo3(name = "distanceToCenterline3d")]
-fn distance_to_centerline_3d(lanelet: &Bound<'_, PyAny>, point: &Bound<'_, PyAny>) -> PyResult<f64> {
-    require_binary(lanelet, point, accept::DISTANCE_TO_CENTERLINE_3D, "distanceToCenterline3d")?;
+fn distance_to_centerline_3d(
+    lanelet: &Bound<'_, PyAny>,
+    point: &Bound<'_, PyAny>,
+) -> PyResult<f64> {
+    require_binary(
+        lanelet,
+        point,
+        accept::DISTANCE_TO_CENTERLINE_3D,
+        "distanceToCenterline3d",
+    )?;
     let (lanelet, _) =
         lanelet_of(lanelet).ok_or_else(|| argument_error("geometry", "distanceToCenterline3d"))?;
     let point =
@@ -800,7 +850,15 @@ fn find_nearest<'py>(
     scored.sort_by(|a, b| a.0.total_cmp(&b.0));
     let pairs: Vec<Bound<'py, PyTuple>> = scored
         .into_iter()
-        .map(|(distance, object)| PyTuple::new(py, [distance.into_pyobject(py).unwrap().into_any().unbind(), object]))
+        .map(|(distance, object)| {
+            PyTuple::new(
+                py,
+                [
+                    distance.into_pyobject(py).unwrap().into_any().unbind(),
+                    object,
+                ],
+            )
+        })
         .collect::<PyResult<_>>()?;
     PyList::new(py, pairs)
 }
@@ -832,7 +890,13 @@ macro_rules! find_within {
             let pairs: Vec<Bound<'py, PyTuple>> = scored
                 .into_iter()
                 .map(|(distance, object)| {
-                    PyTuple::new(py, [distance.into_pyobject(py).unwrap().into_any().unbind(), object])
+                    PyTuple::new(
+                        py,
+                        [
+                            distance.into_pyobject(py).unwrap().into_any().unbind(),
+                            object,
+                        ],
+                    )
                 })
                 .collect::<PyResult<_>>()?;
             PyList::new(py, pairs)

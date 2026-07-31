@@ -10,9 +10,7 @@ use ll2_core::lanelet::Lanelet;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
-use crate::core::compound::{
-    PyCompoundLineString3d, PyCompoundPolygon2d, PyCompoundPolygon3d,
-};
+use crate::core::compound::{PyCompoundLineString3d, PyCompoundPolygon2d, PyCompoundPolygon3d};
 use crate::core::lanelet::{PyConstLanelet, lanelet_of};
 use crate::err::{argument_error, resolve_index};
 
@@ -40,7 +38,10 @@ impl PyLaneletSequence {
         }
     }
 
-    fn compound(&self, pick: fn(&Lanelet) -> ll2_core::linestring::LineString) -> CompoundLineString {
+    fn compound(
+        &self,
+        pick: fn(&Lanelet) -> ll2_core::linestring::LineString,
+    ) -> CompoundLineString {
         CompoundLineString::new(self.members().iter().map(pick).collect())
     }
 }
@@ -53,8 +54,8 @@ impl PyLaneletSequence {
         let mut members = Vec::new();
         for item in lanelets.try_iter()? {
             let item = item?;
-            let (lanelet, _) = lanelet_of(&item)
-                .ok_or_else(|| argument_error("LaneletSequence", "__init__"))?;
+            let (lanelet, _) =
+                lanelet_of(&item).ok_or_else(|| argument_error("LaneletSequence", "__init__"))?;
             members.push(lanelet);
         }
         Ok(PyLaneletSequence::wrap(members))
@@ -78,7 +79,10 @@ impl PyLaneletSequence {
     }
 
     fn lanelets(&self) -> Vec<PyConstLanelet> {
-        self.members().into_iter().map(PyConstLanelet::wrap).collect()
+        self.members()
+            .into_iter()
+            .map(PyConstLanelet::wrap)
+            .collect()
     }
 
     fn invert(&self) -> Self {

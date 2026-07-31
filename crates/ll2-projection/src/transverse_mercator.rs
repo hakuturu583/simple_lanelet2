@@ -79,33 +79,75 @@ const B1_COEFF: [f64; 5] = [1.0, 4.0, 64.0, 256.0, 256.0];
 /// polynomial in `n` followed by its denominator.
 const ALP_COEFF: [f64; 27] = [
     // alp[1]/n^1, order 5
-    31564.0, -66675.0, 34440.0, 47250.0, -100800.0, 75600.0, 151200.0,
+    31564.0,
+    -66675.0,
+    34440.0,
+    47250.0,
+    -100800.0,
+    75600.0,
+    151200.0,
     // alp[2]/n^2, order 4
-    -1983433.0, 863232.0, 748608.0, -1161216.0, 524160.0, 1935360.0,
+    -1983433.0,
+    863232.0,
+    748608.0,
+    -1161216.0,
+    524160.0,
+    1935360.0,
     // alp[3]/n^3, order 3
-    670412.0, 406647.0, -533952.0, 184464.0, 725760.0,
+    670412.0,
+    406647.0,
+    -533952.0,
+    184464.0,
+    725760.0,
     // alp[4]/n^4, order 2
-    6601661.0, -7732800.0, 2230245.0, 7257600.0,
+    6601661.0,
+    -7732800.0,
+    2230245.0,
+    7257600.0,
     // alp[5]/n^5, order 1
-    -13675556.0, 3438171.0, 7983360.0,
+    -13675556.0,
+    3438171.0,
+    7983360.0,
     // alp[6]/n^6, order 0
-    212378941.0, 319334400.0,
+    212378941.0,
+    319334400.0,
 ];
 
 /// The reverse-series coefficients, same layout.
 const BET_COEFF: [f64; 27] = [
     // bet[1]/n^1, order 5
-    384796.0, -382725.0, -6720.0, 932400.0, -1612800.0, 1209600.0, 2419200.0,
+    384796.0,
+    -382725.0,
+    -6720.0,
+    932400.0,
+    -1612800.0,
+    1209600.0,
+    2419200.0,
     // bet[2]/n^2, order 4
-    -1118711.0, 1695744.0, -1174656.0, 258048.0, 80640.0, 3870720.0,
+    -1118711.0,
+    1695744.0,
+    -1174656.0,
+    258048.0,
+    80640.0,
+    3870720.0,
     // bet[3]/n^3, order 3
-    22276.0, -16929.0, -15984.0, 12852.0, 362880.0,
+    22276.0,
+    -16929.0,
+    -15984.0,
+    12852.0,
+    362880.0,
     // bet[4]/n^4, order 2
-    -830251.0, -158400.0, 197865.0, 7257600.0,
+    -830251.0,
+    -158400.0,
+    197865.0,
+    7257600.0,
     // bet[5]/n^5, order 1
-    -435388.0, 453717.0, 15966720.0,
+    -435388.0,
+    453717.0,
+    15966720.0,
     // bet[6]/n^6, order 0
-    20648693.0, 638668800.0,
+    20648693.0,
+    638668800.0,
 ];
 
 /// Transverse Mercator on the WGS84 ellipsoid.
@@ -186,7 +228,13 @@ impl TransverseMercator {
             d *= n;
         }
 
-        TransverseMercator { k0, es, a1, alp, bet }
+        TransverseMercator {
+            k0,
+            es,
+            a1,
+            alp,
+            bet,
+        }
     }
 
     /// Projects a geodetic position relative to the central meridian `lon0`.
@@ -229,7 +277,11 @@ impl TransverseMercator {
         let a = Complex::new(2.0 * c0 * ch0, -2.0 * s0 * sh0);
 
         let mut n = MAXPOW;
-        let mut y0 = if n & 1 == 1 { Complex::real(self.alp[n]) } else { Complex::ZERO };
+        let mut y0 = if n & 1 == 1 {
+            Complex::real(self.alp[n])
+        } else {
+            Complex::ZERO
+        };
         let mut y1 = Complex::ZERO;
         if n & 1 == 1 {
             n -= 1;
@@ -244,7 +296,13 @@ impl TransverseMercator {
         let half = Complex::new(s0 * ch0, c0 * sh0);
         let result = Complex::new(xip, etap).add(half.mul(y0));
 
-        let y = self.a1 * self.k0 * (if backside { std::f64::consts::PI - result.re } else { result.re })
+        let y = self.a1
+            * self.k0
+            * (if backside {
+                std::f64::consts::PI - result.re
+            } else {
+                result.re
+            })
             * latsign;
         let x = self.a1 * self.k0 * result.im * lonsign;
         (x, y)
@@ -271,7 +329,11 @@ impl TransverseMercator {
         let a = Complex::new(2.0 * c0 * ch0, -2.0 * s0 * sh0);
 
         let mut n = MAXPOW;
-        let mut y0 = if n & 1 == 1 { Complex::real(-self.bet[n]) } else { Complex::ZERO };
+        let mut y0 = if n & 1 == 1 {
+            Complex::real(-self.bet[n])
+        } else {
+            Complex::ZERO
+        };
         let mut y1 = Complex::ZERO;
         if n & 1 == 1 {
             n -= 1;

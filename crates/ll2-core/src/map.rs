@@ -16,7 +16,7 @@ use parking_lot::RwLock;
 use crate::area::Area;
 use crate::geometry::bbox::{self, BoundingBox2d};
 use crate::geometry::distance;
-use crate::id::{Id, INVAL_ID, get_id, register_id};
+use crate::id::{INVAL_ID, Id, get_id, register_id};
 use crate::lanelet::Lanelet;
 use crate::linestring::LineString;
 use crate::point::Point;
@@ -187,7 +187,10 @@ impl Layer {
     /// some of those handles are inverted views of linestrings the map already
     /// holds the right way round.
     pub fn insert(&self, primitive: Primitive) {
-        self.items.write().entry(primitive.id()).or_insert(primitive);
+        self.items
+            .write()
+            .entry(primitive.id())
+            .or_insert(primitive);
     }
 
     /// A fresh id. Upstream simply draws from the global counter.
@@ -459,7 +462,10 @@ mod tests {
         assert_eq!(submap.lanelets.len(), 1);
         assert_eq!(submap.line_strings.len(), 0);
         assert_eq!(submap.points.len(), 0);
-        assert!(submap.lanelets.all()[0].id() != INVAL_ID, "but it still gets an id");
+        assert!(
+            submap.lanelets.all()[0].id() != INVAL_ID,
+            "but it still gets an id"
+        );
     }
 
     #[test]

@@ -108,7 +108,9 @@ mod tests {
             for lon in [7.0, 8.4, 10.0, -170.0, 100.0] {
                 for ele in [-100.0, 0.0, 2000.0] {
                     let point = GpsPoint::new(lat, lon, ele);
-                    let back = projector.reverse(projector.forward(point).unwrap()).unwrap();
+                    let back = projector
+                        .reverse(projector.forward(point).unwrap())
+                        .unwrap();
                     worst = worst
                         .max((back.lat - point.lat).abs())
                         .max((back.lon - point.lon).abs())

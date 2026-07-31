@@ -39,7 +39,9 @@ pub fn lanelet_of(obj: &Bound<'_, PyAny>) -> Option<(Lanelet, bool)> {
 /// PyO3 needs the subclass initializer, so the mapping from kind to class is
 /// spelled out rather than inferred.
 pub fn regelems_to_py(py: Python<'_>, regelems: &[RegulatoryElement]) -> PyResult<Py<PyAny>> {
-    use crate::core::regelem::{PyAllWayStop, PyRightOfWay, PySpeedLimit, PyTrafficLight, PyTrafficSign};
+    use crate::core::regelem::{
+        PyAllWayStop, PyRightOfWay, PySpeedLimit, PyTrafficLight, PyTrafficSign,
+    };
 
     let list = PyList::empty(py);
     for regelem in regelems {
@@ -77,11 +79,7 @@ pub fn regelems_repr_arg(py: Python<'_>, regelems: &[RegulatoryElement]) -> PyRe
 }
 
 /// Filters the attached elements down to one kind, for `trafficLights()` and friends.
-fn regelems_of_kind(
-    py: Python<'_>,
-    lanelet: &Lanelet,
-    kind: RegElemKind,
-) -> PyResult<Py<PyAny>> {
+fn regelems_of_kind(py: Python<'_>, lanelet: &Lanelet, kind: RegElemKind) -> PyResult<Py<PyAny>> {
     let matching: Vec<RegulatoryElement> = lanelet
         .regulatory_elements()
         .into_iter()
@@ -141,8 +139,7 @@ fn construct(
         if !regelems.is_none() {
             for item in regelems.try_iter()? {
                 let item = item?;
-                let regelem = regelem_of(&item)
-                    .ok_or_else(|| argument_error(class, "__init__"))?;
+                let regelem = regelem_of(&item).ok_or_else(|| argument_error(class, "__init__"))?;
                 lanelet.add_regulatory_element(regelem);
             }
         }
@@ -172,7 +169,10 @@ macro_rules! lanelet_class {
         impl $rust {
             #[new]
             #[pyo3(signature = (*args, **kwargs))]
-            fn new(args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
+            fn new(
+                args: &Bound<'_, PyTuple>,
+                kwargs: Option<&Bound<'_, PyDict>>,
+            ) -> PyResult<Self> {
                 Ok($rust {
                     lanelet: construct($py_name, args, kwargs)?,
                 })
@@ -217,7 +217,8 @@ macro_rules! lanelet_class {
                 if !$mutable {
                     return Err(PyAttributeError::new_err("can't set attribute"));
                 }
-                self.lanelet.set_left_bound(linestring_arg(value, $py_name)?);
+                self.lanelet
+                    .set_left_bound(linestring_arg(value, $py_name)?);
                 Ok(())
             }
 
@@ -232,7 +233,8 @@ macro_rules! lanelet_class {
                 if !$mutable {
                     return Err(PyAttributeError::new_err("can't set attribute"));
                 }
-                self.lanelet.set_right_bound(linestring_arg(value, $py_name)?);
+                self.lanelet
+                    .set_right_bound(linestring_arg(value, $py_name)?);
                 Ok(())
             }
 
@@ -248,7 +250,8 @@ macro_rules! lanelet_class {
                 if !$mutable {
                     return Err(PyAttributeError::new_err("can't set attribute"));
                 }
-                self.lanelet.set_centerline(linestring_arg(value, $py_name)?);
+                self.lanelet
+                    .set_centerline(linestring_arg(value, $py_name)?);
                 Ok(())
             }
 
@@ -339,7 +342,9 @@ macro_rules! lanelet_class {
                 let left = $bound::wrap(self.lanelet.left_bound()).__repr__(py)?;
                 let right = $bound::wrap(self.lanelet.right_bound()).__repr__(py)?;
                 let regelems = regelems_repr_arg(py, &self.lanelet.regulatory_elements())?;
-                Ok(self.lanelet.repr($py_name, &left, &right, &attributes, &regelems))
+                Ok(self
+                    .lanelet
+                    .repr($py_name, &left, &right, &attributes, &regelems))
             }
         }
     };
@@ -352,8 +357,8 @@ lanelet_class!("ConstLanelet", PyConstLanelet, false, PyConstLineString3d);
 impl PyLanelet {
     #[pyo3(name = "addRegulatoryElement")]
     fn add_regulatory_element(&self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let regelem = regelem_of(value)
-            .ok_or_else(|| argument_error("Lanelet", "addRegulatoryElement"))?;
+        let regelem =
+            regelem_of(value).ok_or_else(|| argument_error("Lanelet", "addRegulatoryElement"))?;
         self.lanelet.add_regulatory_element(regelem);
         Ok(())
     }

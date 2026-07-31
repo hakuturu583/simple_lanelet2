@@ -74,12 +74,16 @@ macro_rules! cost_class {
             /// construction, and Python cannot subclass these.
             #[pyo3(name = "getCostSucceeding")]
             fn get_cost_succeeding(&self) -> PyResult<f64> {
-                Err(runtime("Routing costs are evaluated during graph construction"))
+                Err(runtime(
+                    "Routing costs are evaluated during graph construction",
+                ))
             }
 
             #[pyo3(name = "getCostLaneChange")]
             fn get_cost_lane_change(&self) -> PyResult<f64> {
-                Err(runtime("Routing costs are evaluated during graph construction"))
+                Err(runtime(
+                    "Routing costs are evaluated during graph construction",
+                ))
             }
         }
     };
@@ -107,15 +111,23 @@ impl PyRoutingCost {
     }
 }
 
-cost_class!("RoutingCostDistance", PyRoutingCostDistance, 10.0, |change, min| {
-    Arc::new(RoutingCostDistance::new(change, min))
-});
-cost_class!("RoutingCostTravelTime", PyRoutingCostTravelTime, 5.0, |change, min| {
-    Arc::new(RoutingCostTravelTime::new(change, min))
-});
+cost_class!(
+    "RoutingCostDistance",
+    PyRoutingCostDistance,
+    10.0,
+    |change, min| { Arc::new(RoutingCostDistance::new(change, min)) }
+);
+cost_class!(
+    "RoutingCostTravelTime",
+    PyRoutingCostTravelTime,
+    5.0,
+    |change, min| { Arc::new(RoutingCostTravelTime::new(change, min)) }
+);
 
 fn costs_from_any(obj: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<Box<dyn RoutingCost>>> {
-    let Some(obj) = obj else { return Ok(default_costs()) };
+    let Some(obj) = obj else {
+        return Ok(default_costs());
+    };
     if obj.is_none() {
         return Ok(default_costs());
     }
@@ -255,8 +267,8 @@ impl PyLaneletPath {
     /// The stretch from `lanelet` onwards that continues without a lane change.
     #[pyo3(name = "getRemainingLane")]
     fn get_remaining_lane(&self, lanelet: &Bound<'_, PyAny>) -> PyResult<Vec<PyConstLanelet>> {
-        let (lanelet, _) = lanelet_of(lanelet)
-            .ok_or_else(|| argument_error("LaneletPath", "getRemainingLane"))?;
+        let (lanelet, _) =
+            lanelet_of(lanelet).ok_or_else(|| argument_error("LaneletPath", "getRemainingLane"))?;
         let Some(start) = self
             .lanelets
             .iter()
@@ -359,7 +371,10 @@ impl PyRoutingGraph {
         withLaneChanges: bool,
     ) -> PyResult<Bound<'py, PyList>> {
         let lanelet = self.lanelet(lanelet, "followingRelations")?;
-        self.relations(py, self.graph.following_relations(&lanelet, withLaneChanges))
+        self.relations(
+            py,
+            self.graph.following_relations(&lanelet, withLaneChanges),
+        )
     }
 
     #[pyo3(signature = (lanelet, withLaneChanges = false))]
@@ -855,7 +870,12 @@ side_query!("rights", rights, rights, false);
 side_query!("adjacentLefts", adjacent_lefts, adjacent_lefts, false);
 side_query!("adjacentRights", adjacent_rights, adjacent_rights, false);
 side_query!("leftRelations", left_relations, left_relations, relations);
-side_query!("rightRelations", right_relations, right_relations, relations);
+side_query!(
+    "rightRelations",
+    right_relations,
+    right_relations,
+    relations
+);
 
 impl PyRoutingGraph {
     fn lanelet(&self, obj: &Bound<'_, PyAny>, method: &str) -> PyResult<Lanelet> {
@@ -979,7 +999,9 @@ impl PyRoute {
     #[pyo3(name = "remainingShortestPath")]
     fn remaining_shortest_path(&self, lanelet: &Bound<'_, PyAny>) -> PyResult<PyLaneletPath> {
         let lanelet = self.lanelet(lanelet, "remainingShortestPath")?;
-        Ok(PyLaneletPath::wrap(self.route.remaining_shortest_path(&lanelet)))
+        Ok(PyLaneletPath::wrap(
+            self.route.remaining_shortest_path(&lanelet),
+        ))
     }
 
     #[pyo3(name = "remainingLane")]
@@ -1036,7 +1058,11 @@ impl PyRoute {
         lanelet: &Bound<'_, PyAny>,
     ) -> PyResult<Bound<'py, PyList>> {
         let lanelet = self.lanelet(lanelet, "followingRelations")?;
-        self.wrap_relations(py, self.route.relations(&self.graph, &lanelet, RelationType::SUCCESSOR, true))
+        self.wrap_relations(
+            py,
+            self.route
+                .relations(&self.graph, &lanelet, RelationType::SUCCESSOR, true),
+        )
     }
 
     #[pyo3(name = "previousRelations")]
@@ -1046,7 +1072,11 @@ impl PyRoute {
         lanelet: &Bound<'_, PyAny>,
     ) -> PyResult<Bound<'py, PyList>> {
         let lanelet = self.lanelet(lanelet, "previousRelations")?;
-        self.wrap_relations(py, self.route.relations(&self.graph, &lanelet, RelationType::SUCCESSOR, false))
+        self.wrap_relations(
+            py,
+            self.route
+                .relations(&self.graph, &lanelet, RelationType::SUCCESSOR, false),
+        )
     }
 
     #[pyo3(name = "leftRelation")]
@@ -1117,13 +1147,23 @@ impl PyRoute {
     }
 
     #[pyo3(name = "forEachSuccessor")]
-    fn for_each_successor(&self, py: Python<'_>, lanelet: &Bound<'_, PyAny>, func: &Bound<'_, PyAny>) -> PyResult<()> {
+    fn for_each_successor(
+        &self,
+        py: Python<'_>,
+        lanelet: &Bound<'_, PyAny>,
+        func: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
         let lanelet = self.lanelet(lanelet, "forEachSuccessor")?;
         visit(py, &self.graph, &lanelet, func, true, Some(&self.route))
     }
 
     #[pyo3(name = "forEachPredecessor")]
-    fn for_each_predecessor(&self, py: Python<'_>, lanelet: &Bound<'_, PyAny>, func: &Bound<'_, PyAny>) -> PyResult<()> {
+    fn for_each_predecessor(
+        &self,
+        py: Python<'_>,
+        lanelet: &Bound<'_, PyAny>,
+        func: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
         let lanelet = self.lanelet(lanelet, "forEachPredecessor")?;
         visit(py, &self.graph, &lanelet, func, false, Some(&self.route))
     }
@@ -1277,7 +1317,13 @@ fn debug_map(py: Python<'_>, lanelets: &[Lanelet]) -> PyResult<Py<PyLaneletMap>>
         let [x, y, z] = first.xyz();
         let mut attributes = AttributeMap::new();
         attributes.insert("id".into(), Attribute::new(lanelet.id().to_string()));
-        map.add(Primitive::Point(Point::new(lanelet.id(), x, y, z, attributes)));
+        map.add(Primitive::Point(Point::new(
+            lanelet.id(),
+            x,
+            y,
+            z,
+            attributes,
+        )));
     }
     Py::new(py, PyLaneletMap::wrap(map))
 }

@@ -243,13 +243,22 @@ mod tests {
     #[test]
     fn signed_distance_is_positive_to_the_left_of_travel() {
         let eastward = [[0.0, 0.0], [10.0, 0.0]];
-        assert!(signed_distance_2d(&eastward, [5.0, 3.0]) > 0.0, "north is left");
-        assert!(signed_distance_2d(&eastward, [5.0, -3.0]) < 0.0, "south is right");
+        assert!(
+            signed_distance_2d(&eastward, [5.0, 3.0]) > 0.0,
+            "north is left"
+        );
+        assert!(
+            signed_distance_2d(&eastward, [5.0, -3.0]) < 0.0,
+            "south is right"
+        );
         assert_eq!(signed_distance_2d(&eastward, [5.0, 3.0]), 3.0);
         assert_eq!(signed_distance_2d(&eastward, [5.0, -3.0]), -3.0);
 
         let westward = [[10.0, 0.0], [0.0, 0.0]];
-        assert!(signed_distance_2d(&westward, [5.0, 3.0]) < 0.0, "reversing flips the sign");
+        assert!(
+            signed_distance_2d(&westward, [5.0, 3.0]) < 0.0,
+            "reversing flips the sign"
+        );
     }
 
     #[test]

@@ -36,7 +36,9 @@ pub fn length_2d(line: &[Point2]) -> f64 {
 
 /// Total length of a 3D polyline.
 pub fn length_3d(line: &[Point3]) -> f64 {
-    line.windows(2).map(|pair| distance_3d(pair[0], pair[1])).sum()
+    line.windows(2)
+        .map(|pair| distance_3d(pair[0], pair[1]))
+        .sum()
 }
 
 /// Each segment's share of the total length.
@@ -139,7 +141,13 @@ pub fn nearest_index_at_distance_2d(line: &[Point2], dist: f64) -> Option<usize>
         line.to_vec()
     };
 
-    let unmap = |index: usize| if inverted { line.len() - 1 - index } else { index };
+    let unmap = |index: usize| {
+        if inverted {
+            line.len() - 1 - index
+        } else {
+            index
+        }
+    };
 
     let mut cumulative = 0.0;
     for (index, pair) in walked.windows(2).enumerate() {
@@ -147,7 +155,11 @@ pub fn nearest_index_at_distance_2d(line: &[Point2], dist: f64) -> Option<usize>
         cumulative += segment;
         if cumulative >= dist {
             let remaining = dist - (cumulative - segment);
-            return Some(unmap(if remaining > segment / 2.0 { index + 1 } else { index }));
+            return Some(unmap(if remaining > segment / 2.0 {
+                index + 1
+            } else {
+                index
+            }));
         }
     }
     Some(unmap(walked.len() - 1))
@@ -233,7 +245,12 @@ pub fn projected_point_3d(a: &[Point3], b: &[Point3]) -> Option<(Point3, Point3)
 ///
 /// The `geomalgorithms.com/a07` routine, with the degenerate-parallel case handled
 /// by falling back to a parameter of zero.
-fn closest_points_between_segments(a0: Point3, a1: Point3, b0: Point3, b1: Point3) -> (Point3, Point3) {
+fn closest_points_between_segments(
+    a0: Point3,
+    a1: Point3,
+    b0: Point3,
+    b1: Point3,
+) -> (Point3, Point3) {
     let sub = |p: Point3, q: Point3| [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
     let dot = |p: [f64; 3], q: [f64; 3]| p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
 
@@ -329,7 +346,11 @@ pub fn to_arc_coordinates(line: &[Point2], p: Point2) -> ArcCoordinates {
         };
     };
     let raw = distance_2d_point_point(p, projected);
-    let signed = if is_left_of(line, p, index, projected) { raw } else { -raw };
+    let signed = if is_left_of(line, p, index, projected) {
+        raw
+    } else {
+        -raw
+    };
 
     let mut length = 0.0;
     for pair in line[..=index].windows(2) {
@@ -443,7 +464,10 @@ pub fn segments_intersect_2d(a0: Point2, a1: Point2, b0: Point2, b1: Point2) -> 
         }
     };
     let on = |a: Point2, b: Point2, q: Point2| {
-        q[0] >= a[0].min(b[0]) && q[0] <= a[0].max(b[0]) && q[1] >= a[1].min(b[1]) && q[1] <= a[1].max(b[1])
+        q[0] >= a[0].min(b[0])
+            && q[0] <= a[0].max(b[0])
+            && q[1] >= a[1].min(b[1])
+            && q[1] <= a[1].max(b[1])
     };
     let (o1, o2) = (orientation(a0, a1, b0), orientation(a0, a1, b1));
     let (o3, o4) = (orientation(b0, b1, a0), orientation(b0, b1, a1));
@@ -458,8 +482,10 @@ pub fn segments_intersect_2d(a0: Point2, a1: Point2, b0: Point2, b1: Point2) -> 
 
 /// Whether two polylines meet anywhere.
 pub fn polylines_intersect_2d(a: &[Point2], b: &[Point2]) -> bool {
-    a.windows(2)
-        .any(|sa| b.windows(2).any(|sb| segments_intersect_2d(sa[0], sa[1], sb[0], sb[1])))
+    a.windows(2).any(|sa| {
+        b.windows(2)
+            .any(|sb| segments_intersect_2d(sa[0], sa[1], sb[0], sb[1]))
+    })
 }
 
 /// Where two polylines cross, ordered along the first.
@@ -572,11 +598,23 @@ mod tests {
     #[test]
     fn interpolation_lands_on_vertices_exactly_and_clamps_past_the_end() {
         assert_eq!(interpolated_point_at_distance_2d(&L, 5.0), Some([5.0, 0.0]));
-        assert_eq!(interpolated_point_at_distance_2d(&L, 10.0), Some([10.0, 0.0]));
-        assert_eq!(interpolated_point_at_distance_2d(&L, 15.0), Some([10.0, 5.0]));
-        assert_eq!(interpolated_point_at_distance_2d(&L, 99.0), Some([10.0, 10.0]));
+        assert_eq!(
+            interpolated_point_at_distance_2d(&L, 10.0),
+            Some([10.0, 0.0])
+        );
+        assert_eq!(
+            interpolated_point_at_distance_2d(&L, 15.0),
+            Some([10.0, 5.0])
+        );
+        assert_eq!(
+            interpolated_point_at_distance_2d(&L, 99.0),
+            Some([10.0, 10.0])
+        );
         // A negative distance measures from the far end.
-        assert_eq!(interpolated_point_at_distance_2d(&L, -5.0), Some([10.0, 5.0]));
+        assert_eq!(
+            interpolated_point_at_distance_2d(&L, -5.0),
+            Some([10.0, 5.0])
+        );
     }
 
     #[test]
@@ -614,8 +652,14 @@ mod tests {
         // A unit circle's curvature is 1.
         let k = curvature_2d([1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]);
         assert!((k - 1.0).abs() < 1e-12, "{k}");
-        assert!(signed_curvature_2d([1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]) > 0.0, "left turn");
-        assert!(signed_curvature_2d([-1.0, 0.0], [0.0, 1.0], [1.0, 0.0]) < 0.0, "right turn");
+        assert!(
+            signed_curvature_2d([1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]) > 0.0,
+            "left turn"
+        );
+        assert!(
+            signed_curvature_2d([-1.0, 0.0], [0.0, 1.0], [1.0, 0.0]) < 0.0,
+            "right turn"
+        );
         // Collinear but distinct points have zero curvature; only a *coincident*
         // pair makes the product vanish and the result infinite.
         assert_eq!(curvature_2d([0.0, 0.0], [1.0, 0.0], [2.0, 0.0]), 0.0);
@@ -645,7 +689,14 @@ mod tests {
         let corner = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]];
         assert_eq!(
             polyline_intersections_2d(&corner, &corner),
-            [[0.0, 0.0], [1.0, 0.0], [1.0, 0.0], [1.0, 0.0], [1.0, 0.0], [1.0, 1.0]]
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [1.0, 0.0],
+                [1.0, 0.0],
+                [1.0, 0.0],
+                [1.0, 1.0]
+            ]
         );
         assert_eq!(
             polyline_intersections_2d(&[[0.0, 0.0], [2.0, 0.0]], &[[1.0, 0.0], [3.0, 0.0]]),
@@ -655,7 +706,10 @@ mod tests {
         // A zero-length segment is a point, and intersects whatever passes
         // through it.
         let degenerate = [[0.0, 0.0], [0.0, 0.0]];
-        assert_eq!(polyline_intersections_2d(&degenerate, &degenerate), [[0.0, 0.0]]);
+        assert_eq!(
+            polyline_intersections_2d(&degenerate, &degenerate),
+            [[0.0, 0.0]]
+        );
         assert!(polyline_intersections_2d(&degenerate, &[[1.0, 1.0], [2.0, 2.0]]).is_empty());
     }
 
@@ -685,7 +739,10 @@ mod tests {
             })
             .collect();
         let approximate = approximated_length_2d(&arc);
-        assert!((approximate - 15.691_348_766_645_977).abs() < 1e-12, "{approximate}");
+        assert!(
+            (approximate - 15.691_348_766_645_977).abs() < 1e-12,
+            "{approximate}"
+        );
         assert!((length_2d(&arc) - 15.706_043_112_158_007).abs() < 1e-12);
     }
 }

@@ -40,10 +40,13 @@ pub fn not_instantiable() -> PyErr {
 /// Resolves a possibly-negative index against `len`, the way Boost.Python's
 /// indexing suite does, or raises `IndexError: index out of range`.
 pub fn resolve_index(index: isize, len: usize) -> PyResult<usize> {
-    let resolved = if index < 0 { index + len as isize } else { index };
+    let resolved = if index < 0 {
+        index + len as isize
+    } else {
+        index
+    };
     if resolved < 0 || resolved as usize >= len {
         return Err(PyIndexError::new_err("index out of range"));
     }
     Ok(resolved as usize)
 }
-

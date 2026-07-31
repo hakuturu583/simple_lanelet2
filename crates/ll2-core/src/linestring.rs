@@ -19,7 +19,7 @@ use parking_lot::RwLock;
 
 use crate::attribute::AttributeMap;
 use crate::fmt::make_repr;
-use crate::id::{Id, INVAL_ID};
+use crate::id::{INVAL_ID, Id};
 use crate::point::Point;
 use crate::refs::{Attrs, attrs};
 
@@ -95,7 +95,11 @@ impl LineString {
 
     /// Maps a view index onto the underlying storage index.
     fn storage_index(&self, index: usize, len: usize) -> usize {
-        if self.inverted { len - 1 - index } else { index }
+        if self.inverted {
+            len - 1 - index
+        } else {
+            index
+        }
     }
 
     /// The point at a view index, or `None` if out of range.
@@ -266,7 +270,11 @@ mod tests {
             ls.invert()
                 .set_at(0, Point::new(7, 7.0, 0.0, 0.0, AttributeMap::new()))
         );
-        assert_eq!(ids(&ls), [1, 2, 7], "index 0 of the inverse is the last point");
+        assert_eq!(
+            ids(&ls),
+            [1, 2, 7],
+            "index 0 of the inverse is the last point"
+        );
 
         let ls = line(&[1, 2, 3]);
         assert!(ls.invert().remove_at(0));

@@ -63,9 +63,15 @@ pub fn forward(lat: f64, lon: f64) -> Result<(i32, bool, f64, f64), ProjectionEr
 }
 
 /// Projects into a specific zone, which may not be the natural one.
-pub fn forward_into(lat: f64, lon: f64, zone: i32) -> Result<(i32, bool, f64, f64), ProjectionError> {
+pub fn forward_into(
+    lat: f64,
+    lon: f64,
+    zone: i32,
+) -> Result<(i32, bool, f64, f64), ProjectionError> {
     if !(1..=60).contains(&zone) {
-        return Err(ProjectionError::Forward(format!("Zone {zone} is out of range")));
+        return Err(ProjectionError::Forward(format!(
+            "Zone {zone} is out of range"
+        )));
     }
     let northp = lat >= 0.0;
     let (x, y) = TransverseMercator::utm().forward(central_meridian(zone), lat, lon);
@@ -80,7 +86,9 @@ pub fn forward_into(lat: f64, lon: f64, zone: i32) -> Result<(i32, bool, f64, f6
 /// Recovers a geodetic position from zone-relative coordinates.
 pub fn reverse(zone: i32, northp: bool, x: f64, y: f64) -> Result<(f64, f64), ProjectionError> {
     if !(1..=60).contains(&zone) {
-        return Err(ProjectionError::Reverse(format!("Zone {zone} is out of range")));
+        return Err(ProjectionError::Reverse(format!(
+            "Zone {zone} is out of range"
+        )));
     }
     let (lat, lon) = TransverseMercator::utm().reverse(
         central_meridian(zone),
@@ -112,7 +120,11 @@ pub fn transfer(
     if northp != northp_out {
         // Crossing the equator inside a fixed zone: re-apply the caller's false
         // northing so the result stays continuous.
-        let shift = if northp_out { -FALSE_NORTHING_SOUTH } else { FALSE_NORTHING_SOUTH };
+        let shift = if northp_out {
+            -FALSE_NORTHING_SOUTH
+        } else {
+            FALSE_NORTHING_SOUTH
+        };
         return Ok((x, y + shift, zone));
     }
     Ok((x, y, zone))
@@ -138,7 +150,11 @@ mod tests {
         // Band 7 is 56..64 degrees north.
         assert_eq!(standard_zone(60.0, 3.0).unwrap(), 32);
         assert_eq!(standard_zone(60.0, 5.0).unwrap(), 32);
-        assert_eq!(standard_zone(60.0, 2.9).unwrap(), 31, "west of the exception");
+        assert_eq!(
+            standard_zone(60.0, 2.9).unwrap(),
+            31,
+            "west of the exception"
+        );
         assert_eq!(standard_zone(55.0, 5.0).unwrap(), 31, "south of the band");
         assert_eq!(standard_zone(64.0, 5.0).unwrap(), 31, "north of the band");
     }
@@ -151,7 +167,11 @@ mod tests {
         assert_eq!(standard_zone(78.0, 20.0).unwrap(), 33);
         assert_eq!(standard_zone(78.0, 25.0).unwrap(), 35);
         assert_eq!(standard_zone(78.0, 35.0).unwrap(), 37);
-        assert_eq!(standard_zone(78.0, -5.0).unwrap(), 30, "west of the exception");
+        assert_eq!(
+            standard_zone(78.0, -5.0).unwrap(),
+            30,
+            "west of the exception"
+        );
     }
 
     #[test]
@@ -169,7 +189,10 @@ mod tests {
 
         let (_, northp, _, y) = forward(-33.0, 151.0).unwrap();
         assert!(!northp);
-        assert!(y > 6_000_000.0, "southern northings count down from 10,000 km");
+        assert!(
+            y > 6_000_000.0,
+            "southern northings count down from 10,000 km"
+        );
     }
 
     #[test]

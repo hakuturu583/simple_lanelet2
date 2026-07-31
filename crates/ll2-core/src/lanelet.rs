@@ -18,11 +18,11 @@ use parking_lot::RwLock;
 use crate::attribute::AttributeMap;
 use crate::centerline;
 use crate::compound::CompoundLineString;
-use crate::regelem::RegulatoryElement;
 use crate::fmt::make_repr;
-use crate::id::{Id, INVAL_ID};
+use crate::id::{INVAL_ID, Id};
 use crate::linestring::LineString;
 use crate::refs::{Attrs, attrs};
+use crate::regelem::RegulatoryElement;
 
 pub struct LaneletData {
     id: AtomicI64,
@@ -145,7 +145,10 @@ impl Lanelet {
             None => {
                 // Compute without holding the cache lock: the calculation reads the
                 // bounds and their points, and must not be nested inside a write.
-                let (left, right) = (self.data.left.read().clone(), self.data.right.read().clone());
+                let (left, right) = (
+                    self.data.left.read().clone(),
+                    self.data.right.read().clone(),
+                );
                 let computed = centerline::calculate(&left, &right);
                 let mut slot = self.data.centerline.write();
                 slot.get_or_insert(computed).clone()
@@ -231,7 +234,13 @@ impl Lanelet {
     /// `[id: 1, inverted, left id: 2 (inverted), right id: 3 (inverted)]`.
     pub fn to_display_string(&self) -> String {
         let (left, right) = (self.left_bound(), self.right_bound());
-        let mark = |line: &LineString| if line.is_inverted() { " (inverted)" } else { "" };
+        let mark = |line: &LineString| {
+            if line.is_inverted() {
+                " (inverted)"
+            } else {
+                ""
+            }
+        };
         format!(
             "[id: {}{}, left id: {}{}, right id: {}{}]",
             self.id(),
@@ -351,11 +360,17 @@ mod tests {
     fn the_centerline_is_cached_and_reset_when_a_bound_changes() {
         let ll = lanelet();
         let first = ll.centerline();
-        assert!(ll.centerline().is_same_data(&first), "second call is cached");
+        assert!(
+            ll.centerline().is_same_data(&first),
+            "second call is cached"
+        );
         assert!(!ll.has_custom_centerline());
 
         ll.set_left_bound(line(4, &[(0.0, 3.0), (1.0, 3.0)]));
-        assert!(!ll.centerline().is_same_data(&first), "cache was invalidated");
+        assert!(
+            !ll.centerline().is_same_data(&first),
+            "cache was invalidated"
+        );
     }
 
     #[test]
@@ -385,17 +400,20 @@ mod tests {
     fn the_centerline_of_an_inverted_lanelet_runs_backwards() {
         let ll = lanelet();
         let forward: Vec<f64> = ll.centerline().points().iter().map(|p| p.x()).collect();
-        let backward: Vec<f64> = ll.invert().centerline().points().iter().map(|p| p.x()).collect();
+        let backward: Vec<f64> = ll
+            .invert()
+            .centerline()
+            .points()
+            .iter()
+            .map(|p| p.x())
+            .collect();
         assert_eq!(backward, forward.iter().rev().copied().collect::<Vec<_>>());
     }
 
     #[test]
     fn text_format_marks_every_inversion() {
         let ll = lanelet();
-        assert_eq!(
-            ll.to_display_string(),
-            "[id: 1, left id: 2, right id: 3]"
-        );
+        assert_eq!(ll.to_display_string(), "[id: 1, left id: 2, right id: 3]");
         assert_eq!(
             ll.invert().to_display_string(),
             "[id: 1, inverted, left id: 3 (inverted), right id: 2 (inverted)]"

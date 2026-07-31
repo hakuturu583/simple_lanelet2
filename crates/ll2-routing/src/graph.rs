@@ -75,7 +75,12 @@ impl Graph {
     }
 
     /// Out-edges matching a relation mask and cost model, in insertion order.
-    pub fn out_edges(&self, from: VertexIndex, relations: RelationType, cost_id: usize) -> Vec<Edge> {
+    pub fn out_edges(
+        &self,
+        from: VertexIndex,
+        relations: RelationType,
+        cost_id: usize,
+    ) -> Vec<Edge> {
         self.out
             .get(from)
             .map(|indices| {
@@ -336,17 +341,34 @@ mod tests {
     #[test]
     fn dijkstra_takes_the_cheaper_branch() {
         let graph = diamond();
-        let path = graph.shortest_path(0, 3, RelationType::SUCCESSOR, 0).unwrap();
+        let path = graph
+            .shortest_path(0, 3, RelationType::SUCCESSOR, 0)
+            .unwrap();
         assert_eq!(path, [0, 2, 3]);
-        assert_eq!(graph.shortest_path(0, 0, RelationType::SUCCESSOR, 0).unwrap(), [0]);
-        assert!(graph.shortest_path(3, 0, RelationType::SUCCESSOR, 0).is_none());
+        assert_eq!(
+            graph
+                .shortest_path(0, 0, RelationType::SUCCESSOR, 0)
+                .unwrap(),
+            [0]
+        );
+        assert!(
+            graph
+                .shortest_path(3, 0, RelationType::SUCCESSOR, 0)
+                .is_none()
+        );
     }
 
     #[test]
     fn reachability_is_inclusive_and_includes_the_start() {
         let graph = diamond();
-        assert_eq!(graph.reachable(0, 0.0, RelationType::SUCCESSOR, 0, false), [0]);
-        assert_eq!(graph.reachable(0, 1.0, RelationType::SUCCESSOR, 0, false), [0, 2]);
+        assert_eq!(
+            graph.reachable(0, 0.0, RelationType::SUCCESSOR, 0, false),
+            [0]
+        );
+        assert_eq!(
+            graph.reachable(0, 1.0, RelationType::SUCCESSOR, 0, false),
+            [0, 2]
+        );
         assert_eq!(
             graph.reachable(0, 5.0, RelationType::SUCCESSOR, 0, false),
             [0, 1, 2, 3]
@@ -367,25 +389,44 @@ mod tests {
     fn the_cost_limit_is_a_target_not_a_ceiling() {
         let graph = diamond();
         // Nothing in this graph costs 100, so nothing qualifies.
-        let paths = graph.possible_paths(0, Some(100.0), None, RelationType::SUCCESSOR, 0, false, false);
+        let paths = graph.possible_paths(
+            0,
+            Some(100.0),
+            None,
+            RelationType::SUCCESSOR,
+            0,
+            false,
+            false,
+        );
         assert!(paths.is_empty(), "{paths:?}");
 
         // Asking for the paths that reach a cost of 2 finds both branches, each
         // stopping as soon as it gets there.
-        let paths = graph.possible_paths(0, Some(2.0), None, RelationType::SUCCESSOR, 0, false, false);
+        let paths =
+            graph.possible_paths(0, Some(2.0), None, RelationType::SUCCESSOR, 0, false, false);
         assert_eq!(paths, vec![vec![0, 1], vec![0, 2, 3]]);
 
         // With include_shorter, the dead ends come back too.
-        let paths = graph.possible_paths(0, Some(100.0), None, RelationType::SUCCESSOR, 0, true, false);
+        let paths = graph.possible_paths(
+            0,
+            Some(100.0),
+            None,
+            RelationType::SUCCESSOR,
+            0,
+            true,
+            false,
+        );
         assert_eq!(paths, vec![vec![0, 1, 3], vec![0, 2, 3]]);
     }
 
     #[test]
     fn the_element_limit_is_a_target_too() {
         let graph = diamond();
-        let paths = graph.possible_paths(0, None, Some(2), RelationType::SUCCESSOR, 0, false, false);
+        let paths =
+            graph.possible_paths(0, None, Some(2), RelationType::SUCCESSOR, 0, false, false);
         assert_eq!(paths, vec![vec![0, 1], vec![0, 2]]);
-        let paths = graph.possible_paths(0, None, Some(3), RelationType::SUCCESSOR, 0, false, false);
+        let paths =
+            graph.possible_paths(0, None, Some(3), RelationType::SUCCESSOR, 0, false, false);
         assert_eq!(paths, vec![vec![0, 1, 3], vec![0, 2, 3]]);
     }
 
@@ -395,7 +436,8 @@ mod tests {
         graph.add_edge(0, 1, RelationType::SUCCESSOR, 0, 1.0);
         graph.add_edge(1, 2, RelationType::SUCCESSOR, 0, 1.0);
         graph.add_edge(2, 0, RelationType::SUCCESSOR, 0, 1.0);
-        let paths = graph.possible_paths(0, None, Some(3), RelationType::SUCCESSOR, 0, false, false);
+        let paths =
+            graph.possible_paths(0, None, Some(3), RelationType::SUCCESSOR, 0, false, false);
         assert_eq!(paths, vec![vec![0, 1, 2]]);
     }
 }

@@ -94,7 +94,11 @@ fn normalize_angle(angle: f64) -> f64 {
     let two_pi = std::f64::consts::TAU;
     let shifted = angle + std::f64::consts::PI;
     let remainder = shifted % two_pi;
-    let positive = if remainder > 0.0 { remainder } else { remainder + two_pi };
+    let positive = if remainder > 0.0 {
+        remainder
+    } else {
+        remainder + two_pi
+    };
     positive - std::f64::consts::PI
 }
 
@@ -139,17 +143,16 @@ pub fn mahalanobis_distance_sq(
 
     let at = linestring::interpolated_point_at_distance_2d(&centerline, arc.length)
         .ok_or_else(|| MatchingError("Centerline is empty".into()))?;
-    let before = linestring::interpolated_point_at_distance_2d(
-        &centerline,
-        (arc.length - 0.5).max(0.0),
-    )
-    .ok_or_else(|| MatchingError("Centerline is empty".into()))?;
+    let before =
+        linestring::interpolated_point_at_distance_2d(&centerline, (arc.length - 0.5).max(0.0))
+            .ok_or_else(|| MatchingError("Centerline is empty".into()))?;
     let after = linestring::interpolated_point_at_distance_2d(&centerline, arc.length + 0.5)
         .ok_or_else(|| MatchingError("Centerline is empty".into()))?;
 
     let heading = normalize_angle((after[1] - before[1]).atan2(after[0] - before[0]));
     let yaw_difference = normalize_angle(heading - normalize_angle(object.object.pose.yaw));
-    let heading_term = yaw_difference * yaw_difference * object.von_mises_kappa * object.von_mises_kappa;
+    let heading_term =
+        yaw_difference * yaw_difference * object.von_mises_kappa * object.von_mises_kappa;
 
     let offset = [position[0] - at[0], position[1] - at[1]];
     Ok(heading_term + object.position_covariance.quadratic_form(offset))
@@ -253,7 +256,10 @@ pub fn probabilistic_matches(
 /// Drops the matches the participant may not actually drive.
 ///
 /// Since both orientations were emitted, this is what removes the wrong-way ones.
-pub fn remove_non_rule_compliant(matches: Vec<LaneletMatch>, rules: &TrafficRules) -> Vec<LaneletMatch> {
+pub fn remove_non_rule_compliant(
+    matches: Vec<LaneletMatch>,
+    rules: &TrafficRules,
+) -> Vec<LaneletMatch> {
     matches
         .into_iter()
         .filter(|candidate| rules.can_pass(&candidate.lanelet))
@@ -320,7 +326,11 @@ mod tests {
     fn the_rule_filter_is_what_removes_the_wrong_way_match() {
         let map = map_with(vec![road(1, 0.0)]);
         let object = Object2d {
-            pose: Pose2d { x: 10.0, y: 0.0, yaw: 0.0 },
+            pose: Pose2d {
+                x: 10.0,
+                y: 0.0,
+                yaw: 0.0,
+            },
             ..Object2d::default()
         };
         let rules = TrafficRules::create("de", "vehicle").unwrap();
@@ -333,10 +343,18 @@ mod tests {
     fn distance_bounds_the_candidate_set() {
         let map = map_with(vec![road(1, 0.0), road(2, 10.0)]);
         let object = Object2d {
-            pose: Pose2d { x: 10.0, y: 0.0, yaw: 0.0 },
+            pose: Pose2d {
+                x: 10.0,
+                y: 0.0,
+                yaw: 0.0,
+            },
             ..Object2d::default()
         };
-        assert_eq!(deterministic_matches(&map, &object, 1.0).len(), 2, "one lanelet");
+        assert_eq!(
+            deterministic_matches(&map, &object, 1.0).len(),
+            2,
+            "one lanelet"
+        );
         assert_eq!(deterministic_matches(&map, &object, 20.0).len(), 4, "both");
     }
 
@@ -345,7 +363,11 @@ mod tests {
         let map = map_with(vec![road(1, 0.0)]);
         let object = ObjectWithCovariance2d {
             object: Object2d {
-                pose: Pose2d { x: 10.0, y: 0.0, yaw: 0.0 },
+                pose: Pose2d {
+                    x: 10.0,
+                    y: 0.0,
+                    yaw: 0.0,
+                },
                 ..Object2d::default()
             },
             position_covariance: PositionCovariance2d {
@@ -360,7 +382,10 @@ mod tests {
         // The object points along +x, so the forward orientation must rank first.
         assert!(!matches[0].lanelet.is_inverted());
         assert!(matches[0].mahalanobis_dist_sq < matches[1].mahalanobis_dist_sq);
-        assert!(matches[0].mahalanobis_dist_sq.abs() < 1e-9, "perfectly aligned");
+        assert!(
+            matches[0].mahalanobis_dist_sq.abs() < 1e-9,
+            "perfectly aligned"
+        );
     }
 
     #[test]
@@ -368,7 +393,11 @@ mod tests {
         let map = map_with(vec![road(1, 0.0)]);
         let mut object = ObjectWithCovariance2d {
             object: Object2d {
-                pose: Pose2d { x: 10.0, y: 0.0, yaw: 0.0 },
+                pose: Pose2d {
+                    x: 10.0,
+                    y: 0.0,
+                    yaw: 0.0,
+                },
                 ..Object2d::default()
             },
             position_covariance: PositionCovariance2d::default(),

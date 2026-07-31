@@ -4,7 +4,7 @@
 //! cloned repository: those are different versions and they disagree, most visibly
 //! on `bus_lane`, which the wheel treats like a road and the newer source does not.
 
-use crate::{SpeedLimit, LaneChangeType, participants};
+use crate::{LaneChangeType, SpeedLimit, participants};
 
 /// The speed limits a country defines for each kind of way.
 #[derive(Clone, Copy, Debug)]
@@ -173,14 +173,23 @@ mod tests {
 
     #[test]
     fn a_bicycle_falls_back_to_the_pedestrian_rules() {
-        assert_eq!(change_type("curbstone", "low", "bicycle"), LaneChangeType::Both);
-        assert_eq!(change_type("curbstone", "low", "vehicle"), LaneChangeType::None);
+        assert_eq!(
+            change_type("curbstone", "low", "bicycle"),
+            LaneChangeType::Both
+        );
+        assert_eq!(
+            change_type("curbstone", "low", "vehicle"),
+            LaneChangeType::None
+        );
         assert_eq!(
             change_type("line_thin", "dashed", "bicycle"),
             LaneChangeType::Both,
             "the vehicle rules are tried first"
         );
-        assert_eq!(change_type("line_thin", "dashed", "train"), LaneChangeType::None);
+        assert_eq!(
+            change_type("line_thin", "dashed", "train"),
+            LaneChangeType::None
+        );
     }
 
     #[test]

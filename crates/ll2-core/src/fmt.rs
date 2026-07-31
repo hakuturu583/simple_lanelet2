@@ -30,10 +30,18 @@ pub fn ostream_double(value: f64) -> String {
 fn format_g(value: f64, precision: usize) -> String {
     if value.is_nan() {
         // glibc distinguishes the sign of a NaN, and so does libstdc++.
-        return if value.is_sign_negative() { "-nan".into() } else { "nan".into() };
+        return if value.is_sign_negative() {
+            "-nan".into()
+        } else {
+            "nan".into()
+        };
     }
     if value.is_infinite() {
-        return if value < 0.0 { "-inf".into() } else { "inf".into() };
+        return if value < 0.0 {
+            "-inf".into()
+        } else {
+            "inf".into()
+        };
     }
 
     let p = precision.max(1);
@@ -47,7 +55,11 @@ fn format_g(value: f64, precision: usize) -> String {
     } else {
         let rendered = format!("{:.*e}", p - 1, value);
         let (mantissa, exp) = split_exponent(&rendered);
-        format!("{}e{}", strip_trailing_zeros(mantissa), format_exponent(exp))
+        format!(
+            "{}e{}",
+            strip_trailing_zeros(mantissa),
+            format_exponent(exp)
+        )
     }
 }
 
@@ -65,7 +77,9 @@ fn decimal_exponent(value: f64, p: usize) -> i32 {
 /// Rust writes `1.23456e6` / `1.23456e-7`; C writes `1.23456e+06` / `1.23456e-07`.
 fn split_exponent(rendered: &str) -> (&str, i32) {
     let at = rendered.rfind('e').expect("{:e} always emits an exponent");
-    let exp = rendered[at + 1..].parse().expect("{:e} emits a valid exponent");
+    let exp = rendered[at + 1..]
+        .parse()
+        .expect("{:e} emits a valid exponent");
     (&rendered[..at], exp)
 }
 
@@ -92,10 +106,18 @@ fn strip_trailing_zeros(text: &str) -> String {
 /// `std::to_string` instead of a stream.
 pub fn to_string_double(value: f64) -> String {
     if value.is_nan() {
-        return if value.is_sign_negative() { "-nan".into() } else { "nan".into() };
+        return if value.is_sign_negative() {
+            "-nan".into()
+        } else {
+            "nan".into()
+        };
     }
     if value.is_infinite() {
-        return if value < 0.0 { "-inf".into() } else { "inf".into() };
+        return if value < 0.0 {
+            "-inf".into()
+        } else {
+            "inf".into()
+        };
     }
     format!("{value:.6}")
 }

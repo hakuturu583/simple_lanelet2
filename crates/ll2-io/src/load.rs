@@ -72,10 +72,7 @@ fn align(left: LineString, right: LineString) -> (LineString, LineString) {
 /// Negative means clockwise in a standard x-right, y-up frame, which is the winding
 /// Lanelet2 requires of a boundary.
 fn signed_area_2x(ring: &[LineString]) -> f64 {
-    let points: Vec<[f64; 2]> = ring
-        .iter()
-        .flat_map(|line| flat(line))
-        .collect();
+    let points: Vec<[f64; 2]> = ring.iter().flat_map(|line| flat(line)).collect();
     if points.len() < 3 {
         return 0.0;
     }
@@ -264,12 +261,7 @@ pub fn to_map(document: &Document, projector: &dyn Projector) -> (Arc<LaneletMap
             continue;
         };
         let (left, right) = align(left, right);
-        let lanelet = Lanelet::new(
-            relation.id,
-            left,
-            right,
-            attributes_of(&relation.tags),
-        );
+        let lanelet = Lanelet::new(relation.id, left, right, attributes_of(&relation.tags));
         // A centerline in the file is an explicit one, and keeps its id, which is
         // what later marks it as user-supplied rather than computed.
         if let Some(centerline) = bound("centerline") {
@@ -328,7 +320,10 @@ pub fn to_map(document: &Document, projector: &dyn Projector) -> (Arc<LaneletMap
         let mut parameters = RuleParameterMap::new();
         for member in &relation.members {
             let parameter = match member.kind {
-                MemberType::Node => points.get(&member.reference).cloned().map(RuleParameter::Point),
+                MemberType::Node => points
+                    .get(&member.reference)
+                    .cloned()
+                    .map(RuleParameter::Point),
                 MemberType::Way => lines.get(&member.reference).cloned().map(|line| {
                     if polygon_ids.contains(&member.reference) {
                         RuleParameter::Polygon(line)
