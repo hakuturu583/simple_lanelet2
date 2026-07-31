@@ -8,7 +8,7 @@
 //! `lanelet2_core/src/LineStringGeometry.cpp`
 
 use crate::geometry::distance::{
-    closest_segment, distance_2d_point_point, project_onto_segment,
+    closest_segment, distance_2d_point_point, distance_2d_point_segment, project_onto_segment,
 };
 
 pub type Point2 = [f64; 2];
@@ -471,30 +471,61 @@ pub fn polyline_intersections_2d(a: &[Point2], b: &[Point2]) -> Vec<Point2> {
     let mut out: Vec<Point2> = Vec::new();
     for sa in a.windows(2) {
         for sb in b.windows(2) {
-            if let Some(point) = segment_intersection_point(sa[0], sa[1], sb[0], sb[1]) {
-                out.push(point);
-            }
+            out.extend(segment_intersection_points(sa[0], sa[1], sb[0], sb[1]));
         }
     }
     out
 }
 
-fn segment_intersection_point(a0: Point2, a1: Point2, b0: Point2, b1: Point2) -> Option<Point2> {
+/// Where two segments meet.
+///
+/// A crossing gives one point; a *collinear overlap* gives the two ends of the
+/// overlap, in the first segment's direction. Boost reports overlaps that way, and
+/// it is what makes `intersection(line, line)` on a line with itself return its own
+/// vertices rather than nothing.
+fn segment_intersection_points(a0: Point2, a1: Point2, b0: Point2, b1: Point2) -> Vec<Point2> {
     let d1 = [a1[0] - a0[0], a1[1] - a0[1]];
     let d2 = [b1[0] - b0[0], b1[1] - b0[1]];
     let denominator = d1[0] * d2[1] - d1[1] * d2[0];
+    let along = |t: f64| [a0[0] + t * d1[0], a0[1] + t * d1[1]];
+
     if denominator.abs() < 1e-15 {
-        // Parallel or collinear; a collinear overlap has no single crossing point.
-        return None;
+        // Parallel. Only a collinear pair can overlap.
+        let offset = [b0[0] - a0[0], b0[1] - a0[1]];
+        if (offset[0] * d1[1] - offset[1] * d1[0]).abs() > 1e-12 {
+            return Vec::new();
+        }
+        let squared = d1[0] * d1[0] + d1[1] * d1[1];
+        if squared == 0.0 {
+            // A zero-length first segment is a point; it intersects when the other
+            // segment passes through it.
+            return if distance_2d_point_segment(a0, b0, b1) == 0.0 {
+                vec![a0]
+            } else {
+                Vec::new()
+            };
+        }
+        let parameter = |p: Point2| ((p[0] - a0[0]) * d1[0] + (p[1] - a0[1]) * d1[1]) / squared;
+        let (t0, t1) = (parameter(b0), parameter(b1));
+        let low = t0.min(t1).max(0.0);
+        let high = t0.max(t1).min(1.0);
+        if low > high {
+            return Vec::new();
+        }
+        if low == high {
+            return vec![along(low)];
+        }
+        return vec![along(low), along(high)];
     }
+
     let dx = b0[0] - a0[0];
     let dy = b0[1] - a0[1];
     let t = (dx * d2[1] - dy * d2[0]) / denominator;
     let u = (dx * d1[1] - dy * d1[0]) / denominator;
     if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
-        return Some([a0[0] + t * d1[0], a0[1] + t * d1[1]]);
+        return vec![along(t)];
     }
-    None
+    Vec::new()
 }
 
 /// The length of a polyline, sampled rather than summed.
@@ -608,6 +639,24 @@ mod tests {
         assert!(polylines_intersect_2d(&a, &b));
         assert_eq!(polyline_intersections_2d(&a, &b), [[5.0, 0.0]]);
         assert!(!polylines_intersect_2d(&a, &[[0.0, 1.0], [10.0, 1.0]]));
+
+        // A collinear overlap reports both of its ends, so a line intersected with
+        // itself gives back its own vertices.
+        let corner = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]];
+        assert_eq!(
+            polyline_intersections_2d(&corner, &corner),
+            [[0.0, 0.0], [1.0, 0.0], [1.0, 0.0], [1.0, 0.0], [1.0, 0.0], [1.0, 1.0]]
+        );
+        assert_eq!(
+            polyline_intersections_2d(&[[0.0, 0.0], [2.0, 0.0]], &[[1.0, 0.0], [3.0, 0.0]]),
+            [[1.0, 0.0], [2.0, 0.0]]
+        );
+
+        // A zero-length segment is a point, and intersects whatever passes
+        // through it.
+        let degenerate = [[0.0, 0.0], [0.0, 0.0]];
+        assert_eq!(polyline_intersections_2d(&degenerate, &degenerate), [[0.0, 0.0]]);
+        assert!(polyline_intersections_2d(&degenerate, &[[1.0, 1.0], [2.0, 2.0]]).is_empty());
     }
 
     #[test]

@@ -17,3 +17,6 @@ Test fixtures under tests/data/ are vendored from the Lanelet2 repository
 
 tests/data/mapping_example.osm is vendored unchanged from
 lanelet2_maps/res/mapping_example.osm in the Lanelet2 repository.
+
+tests/upstream/ contains the Lanelet2 Python test files, vendored unchanged from
+lanelet2_python/test/.

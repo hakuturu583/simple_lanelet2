@@ -43,9 +43,11 @@ show CASE:
 test-rust:
     cargo test --workspace
 
-# Upstream's own test suite, run unmodified against our implementation.
+# Upstream's own test suite, run unmodified against our implementation, in both
+# modes. It passes either way: none of the repaired defects is one upstream tests.
 upstream-tests:
     LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream -q
+    ./.venv/bin/python -m pytest tests/upstream -q
 
 fmt:
     cargo fmt --all
