@@ -17,6 +17,8 @@ use parking_lot::RwLock;
 
 use crate::attribute::AttributeMap;
 use crate::centerline;
+use crate::compound::CompoundLineString;
+use crate::regelem::RegulatoryElement;
 use crate::fmt::make_repr;
 use crate::id::{Id, INVAL_ID};
 use crate::linestring::LineString;
@@ -27,6 +29,7 @@ pub struct LaneletData {
     left: RwLock<LineString>,
     right: RwLock<LineString>,
     attributes: Attrs,
+    regelems: RwLock<Vec<RegulatoryElement>>,
     /// Filled on first use, and cleared whenever a bound changes — unless the user
     /// set a centerline explicitly, which is detected purely by it having an id.
     centerline: RwLock<Option<LineString>>,
@@ -47,6 +50,7 @@ impl Lanelet {
                 left: RwLock::new(left),
                 right: RwLock::new(right),
                 attributes: attrs(attributes),
+                regelems: RwLock::new(Vec::new()),
                 centerline: RwLock::new(None),
             }),
             inverted: false,
@@ -173,8 +177,41 @@ impl Lanelet {
     }
 
     /// The lanelet outline: the left bound followed by the reversed right bound.
-    pub fn boundary(&self) -> Vec<LineString> {
-        vec![self.left_bound(), self.right_bound().invert()]
+    ///
+    /// Upstream: `LaneletData::polygon`, `Lanelet.cpp:281`
+    pub fn polygon(&self) -> CompoundLineString {
+        CompoundLineString::new(vec![self.left_bound(), self.right_bound().invert()])
+    }
+
+    /// The attached regulatory elements. Returned by value, as upstream does.
+    pub fn regulatory_elements(&self) -> Vec<RegulatoryElement> {
+        self.data.regelems.read().clone()
+    }
+
+    pub fn add_regulatory_element(&self, regelem: RegulatoryElement) {
+        self.data.regelems.write().push(regelem);
+    }
+
+    /// Removes the first attached element with the same storage, reporting whether
+    /// anything was removed.
+    pub fn remove_regulatory_element(&self, regelem: &RegulatoryElement) -> bool {
+        let mut regelems = self.data.regelems.write();
+        match regelems.iter().position(|held| held.is_same_data(regelem)) {
+            Some(index) => {
+                regelems.remove(index);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// A non-owning handle, for the reference a regulatory element keeps back to
+    /// the lanelets it governs. Owning both ways would leak the whole map.
+    pub fn downgrade(&self) -> WeakLanelet {
+        WeakLanelet {
+            data: Arc::downgrade(&self.data),
+            inverted: self.inverted,
+        }
     }
 
     pub fn is_same_data(&self, other: &Lanelet) -> bool {
@@ -225,6 +262,24 @@ impl Lanelet {
                 regelems_repr.to_owned(),
             ],
         )
+    }
+}
+
+/// A non-owning handle to a lanelet.
+#[derive(Clone)]
+pub struct WeakLanelet {
+    data: std::sync::Weak<LaneletData>,
+    inverted: bool,
+}
+
+impl WeakLanelet {
+    /// Returns `None` once the lanelet it refers to has been dropped. Upstream
+    /// throws in that case, which the binding layer reproduces.
+    pub fn upgrade(&self) -> Option<Lanelet> {
+        self.data.upgrade().map(|data| Lanelet {
+            data,
+            inverted: self.inverted,
+        })
     }
 }
 
