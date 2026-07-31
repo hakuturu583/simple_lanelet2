@@ -20,10 +20,18 @@ Upstream registers only __div__, which Python 3 never calls, so `p / 2` raises \
 TypeError on every basic point type. We implement __truediv__; in bug-compat mode \
 it returns NotImplemented so Python raises upstream's exact TypeError."""
 
+# Upstream's __hash__ hashes the id alone while __eq__ compares storage identity,
+# violating Python's hash/eq contract. We hash identity instead so the two agree.
+# Only the assertions that actually exercise the contradiction belong here --
+# `hash_matches_alias` compares two handles that share both id and storage, so it
+# agrees in either mode.
+
 [[entry]]
 case = "0120_point"
 key = "hash_matches_same_id"
-reason = """\
-Upstream's __hash__ hashes the id alone while __eq__ compares storage identity, \
-violating Python's hash/eq contract: two distinct points with the same id hash \
-equal. We hash identity instead so the two agree."""
+reason = "id-only hashing makes two distinct points with the same id hash equal"
+
+[[entry]]
+case = "0130_linestring"
+key = "hash_matches_inverse"
+reason = "id-only hashing makes a linestring and its inverse hash equal despite comparing unequal"

@@ -8,9 +8,11 @@ pub mod attribute;
 pub mod compat;
 pub mod fmt;
 pub mod id;
+pub mod linestring;
 pub mod point;
 pub mod refs;
 
 pub use attribute::{Attribute, AttributeMap};
 pub use id::{Id, INVAL_ID, get_id, register_id};
+pub use linestring::LineString;
 pub use point::Point;

@@ -145,7 +145,7 @@ macro_rules! basic_point {
                     .into_any()
             }
 
-            fn __repr__(&self) -> String {
+            pub fn __repr__(&self) -> String {
                 let args: Vec<String> =
                     self.values().iter().copied().map(ostream_double).collect();
                 make_repr($py_name, &args)
@@ -264,7 +264,7 @@ macro_rules! bounding_box {
                 *self.data.max.write() = value.view().xyz();
             }
 
-            fn __repr__(&self) -> String {
+            pub fn __repr__(&self) -> String {
                 make_repr($py_name, &[self.min().__repr__(), self.max().__repr__()])
             }
 

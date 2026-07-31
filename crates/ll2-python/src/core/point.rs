@@ -260,7 +260,7 @@ macro_rules! point_class {
                 }
             }
 
-            fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+            pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
                 let attributes = attributes_repr_arg(py, &self.point.attributes().read())?;
                 Ok(self.point.repr($py_name, $three_d, &attributes))
             }

@@ -7,6 +7,7 @@ use pyo3::types::PyModule;
 
 pub mod attribute;
 pub mod basic;
+pub mod linestring;
 pub mod point;
 
 /// `lanelet2.core.getId()` — a fresh globally unique id.
@@ -37,6 +38,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<point::PyPoint3d>()?;
     m.add_class::<point::PyConstPoint2d>()?;
     m.add_class::<point::PyConstPoint3d>()?;
+
+    linestring::register(m)?;
 
     m.add_function(wrap_pyfunction!(get_id, m)?)?;
     m.add_function(wrap_pyfunction!(register_id, m)?)?;
