@@ -1,0 +1,9 @@
+[package]
+name = "ll2-projection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Geodetic projections for a Lanelet2-compatible library"
+
+[dependencies]

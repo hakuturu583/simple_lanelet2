@@ -9,6 +9,7 @@ pub mod area;
 pub mod attribute;
 pub mod basic;
 pub mod compound;
+pub mod gps;
 pub mod lanelet;
 pub mod linestring;
 pub mod map;
@@ -39,6 +40,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<basic::PyVector2d>()?;
     m.add_class::<basic::PyBoundingBox2d>()?;
     m.add_class::<basic::PyBoundingBox3d>()?;
+    m.add_class::<gps::PyGpsPoint>()?;
 
     m.add_class::<point::PyPoint2d>()?;
     m.add_class::<point::PyPoint3d>()?;

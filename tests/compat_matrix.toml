@@ -63,3 +63,16 @@ key = "const_repr"
 reason = """\
 Upstream's makeAreaRepr takes a display name and then ignores it, hardcoding \
 "Area", so repr(ConstArea(...)) claims to be a mutable Area."""
+
+[[entry]]
+case = "0300_projection"
+key = "origin_alt_kwarg"
+reason = """\
+Upstream registers Origin's keywords as (lat, lon, lon): the third is misnamed, so \
+`lon=` fills the altitude as well and `alt=` is accepted and ignored. \
+Origin(lat=49, lon=8.4, alt=100) ends up 8.4 metres up instead of 100."""
+
+[[entry]]
+case = "0300_projection"
+key = "origin_lon_kwarg_only"
+reason = "same misnamed keyword: Origin(lat=49, lon=8.4) gets an altitude of 8.4 m"

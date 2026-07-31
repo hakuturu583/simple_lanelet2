@@ -81,10 +81,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ll2-projection"
+version = "0.1.0"
+
+[[package]]
 name = "ll2-python"
 version = "0.1.0"
 dependencies = [
  "ll2-core",
+ "ll2-projection",
  "pyo3",
 ]
 

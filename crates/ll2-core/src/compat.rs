@@ -118,11 +118,13 @@ pub fn traffic_signs_property_unreadable() -> bool {
 // These change method signatures, so they are consulted when classes are
 // registered rather than when methods are called.
 
-/// Upstream names `Origin`'s third keyword argument `lon` instead of `alt`, so
-/// `Origin(lat=.., lon=.., alt=..)` raises `TypeError`.
+/// Upstream registers `Origin`'s keywords as `(lat, lon, lon)` — the third is
+/// misnamed. The consequence is worse than a rejected call: `lon=` fills *both*
+/// the longitude and the altitude, and an `alt=` keyword is silently ignored. So
+/// `Origin(lat=49, lon=8.4)` yields an altitude of 8.4 metres.
 ///
 /// Upstream: `lanelet2_python/python_api/io.cpp:75`
-pub fn origin_third_kwarg_is_lon() -> bool {
+pub fn origin_alt_kwarg_is_named_lon() -> bool {
     bug_compat()
 }
 
