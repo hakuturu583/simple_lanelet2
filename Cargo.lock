@@ -100,7 +100,15 @@ dependencies = [
  "ll2-core",
  "ll2-io",
  "ll2-projection",
+ "ll2-traffic-rules",
  "pyo3",
+]
+
+[[package]]
+name = "ll2-traffic-rules"
+version = "0.1.0"
+dependencies = [
+ "ll2-core",
 ]
 
 [[package]]
