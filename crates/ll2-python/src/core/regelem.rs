@@ -244,6 +244,46 @@ macro_rules! parameter_map {
                 Ok(outer.into_any().unbind())
             }
 
+            /// Iterating yields entry objects, a `map_indexing_suite` convention.
+            fn __iter__(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
+                let py = slf.py();
+                let entries = PyList::empty(py);
+                for (role, values) in &slf.parameters {
+                    let list = PyList::empty(py);
+                    for value in values {
+                        list.append(rule_parameter_to_py(py, value, $is_const)?)?;
+                    }
+                    entries.append(Py::new(
+                        py,
+                        $entry {
+                            key: role.clone(),
+                            data: list.into_any().unbind(),
+                        },
+                    )?)?;
+                }
+                Ok(entries.try_iter()?.into())
+            }
+
+            fn __setitem__(&mut self, role: String, values: &Bound<'_, PyAny>) -> PyResult<()> {
+                let mut parsed = Vec::new();
+                for item in values.try_iter()? {
+                    let item = item?;
+                    parsed.push(
+                        rule_parameter_from_any(&item)
+                            .ok_or_else(|| argument_error($py_name, "__setitem__"))?,
+                    );
+                }
+                self.parameters.insert(role, parsed);
+                Ok(())
+            }
+
+            fn __delitem__(&mut self, role: &str) -> PyResult<()> {
+                self.parameters
+                    .remove(role)
+                    .map(|_| ())
+                    .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("Invalid key"))
+            }
+
             fn items(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
                 let outer = PyList::empty(py);
                 for (role, values) in &self.parameters {

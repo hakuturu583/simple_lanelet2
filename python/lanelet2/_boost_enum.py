@@ -14,7 +14,15 @@ __all__ = ["boost_enum"]
 
 
 class _BoostEnumBase(int):
-    """An enumeration member: an ``int`` that knows its own name."""
+    """An enumeration member: an ``int`` that knows its own name.
+
+    ``name`` is a property on the *class* rather than a per-instance attribute, so
+    that it shows up in ``dir(EnumClass)`` the way Boost's does.
+    """
+
+    @property
+    def name(self):
+        return self._member_name
 
     def __repr__(self):
         return "{}.{}.{}".format(type(self).__module__, type(self).__name__, self.name)
@@ -36,7 +44,7 @@ def boost_enum(name, module, members):
     values = {}
     for member_name, value in members:
         member = int.__new__(enum_class, value)
-        member.name = member_name
+        member._member_name = member_name
         setattr(enum_class, member_name, member)
         names[member_name] = member
         values[value] = member
