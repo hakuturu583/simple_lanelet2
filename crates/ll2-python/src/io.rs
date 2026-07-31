@@ -179,14 +179,18 @@ fn write_params(params: Option<&Bound<'_, PyAny>>) -> PyResult<WriteParams> {
 /// `lanelet2.io.load(filename, projector | origin)`.
 #[pyfunction]
 #[pyo3(signature = (filename, projector = None))]
-fn load(filename: &str, projector: Option<&Bound<'_, PyAny>>) -> PyResult<PyLaneletMap> {
+fn load(
+    py: Python<'_>,
+    filename: &str,
+    projector: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Py<PyLaneletMap>> {
     let projector = match projector {
         Some(value) => resolve_projector(value)?,
         None => Box::new(SphericalMercator::new(Origin::default_origin())),
     };
     let map = ll2_io::load(Path::new(filename), projector.as_ref())
         .map_err(|error| runtime(error.message()))?;
-    Ok(PyLaneletMap::wrap(map))
+    Py::new(py, PyLaneletMap::wrap(map))
 }
 
 /// `lanelet2.io.loadRobust(filename, projector)` — the map plus any problems found.
@@ -200,7 +204,7 @@ fn load_robust<'py>(
     let projector = resolve_projector(projector)?;
     let (map, errors) = ll2_io::load_robust(Path::new(filename), projector.as_ref())
         .map_err(|error| runtime(error.message()))?;
-    let result = (PyLaneletMap::wrap(map), PyList::new(py, errors)?);
+    let result = (Py::new(py, PyLaneletMap::wrap(map))?, PyList::new(py, errors)?);
     Ok(result.into_pyobject(py)?.into_any())
 }
 

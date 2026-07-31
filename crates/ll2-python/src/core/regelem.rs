@@ -175,7 +175,25 @@ impl ReprWrapper {
 // ---------------------------------------------------------------------------
 
 macro_rules! parameter_map {
-    ($py_name:literal, $rust:ident, $is_const:tt) => {
+    ($py_name:literal, $rust:ident, $is_const:tt, $entry:ident, $entry_name:literal) => {
+        #[doc = concat!("One entry of a `", $py_name, "`.")]
+        #[pyclass(name = $entry_name, module = "lanelet2.core")]
+        pub struct $entry {
+            key: String,
+            data: Py<PyAny>,
+        }
+
+        #[pymethods]
+        impl $entry {
+            fn key(&self) -> &str {
+                &self.key
+            }
+
+            fn data(&self, py: Python<'_>) -> Py<PyAny> {
+                self.data.clone_ref(py)
+            }
+        }
+
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
         #[pyclass(name = $py_name, module = "lanelet2.core")]
         pub struct $rust {
@@ -253,8 +271,20 @@ macro_rules! parameter_map {
     };
 }
 
-parameter_map!("RuleParameterMap", PyRuleParameterMap, false);
-parameter_map!("ConstRuleParameterMap", PyConstRuleParameterMap, true);
+parameter_map!(
+    "RuleParameterMap",
+    PyRuleParameterMap,
+    false,
+    PyRuleParameterMapEntry,
+    "map_indexing_suite_RuleParameterMap_entry"
+);
+parameter_map!(
+    "ConstRuleParameterMap",
+    PyConstRuleParameterMap,
+    true,
+    PyConstRuleParameterMapEntry,
+    "map_indexing_suite_ConstRuleParameterMap_entry"
+);
 
 // ---------------------------------------------------------------------------
 // the base class
@@ -520,29 +550,16 @@ impl PyTrafficLight {
     }
 }
 
-/// `lanelet2.core.ManeuverType`.
-#[pyclass(name = "ManeuverType", module = "lanelet2.core", eq, eq_int)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PyManeuverType {
-    Yield = 0,
-    RightOfWay = 1,
-    Unknown = 2,
-}
-
-#[pymethods]
-impl PyManeuverType {
-    /// Boost.Python enums stringify to the bare member name.
-    fn __str__(&self) -> &'static str {
-        match self {
-            PyManeuverType::Yield => "Yield",
-            PyManeuverType::RightOfWay => "RightOfWay",
-            PyManeuverType::Unknown => "Unknown",
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!("lanelet2.core.ManeuverType.{}", self.__str__())
-    }
+/// Looks up a `ManeuverType` member.
+///
+/// The enum is built in the Python shim rather than here, because Boost's derives
+/// from `int` and a PyO3 enum cannot.
+fn maneuver_type(py: Python<'_>, member: &str) -> PyResult<Py<PyAny>> {
+    Ok(py
+        .import("lanelet2.core")?
+        .getattr("ManeuverType")?
+        .getattr(member)?
+        .unbind())
 }
 
 /// `lanelet2.core.RightOfWay`.
@@ -661,7 +678,8 @@ impl PyRightOfWay {
     /// Which manoeuvre this element prescribes for a lanelet: right of way, yield,
     /// or unknown when the lanelet is not one of its own.
     #[pyo3(name = "getManeuver")]
-    fn get_maneuver(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<PyManeuverType> {
+    fn get_maneuver(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
         let (lanelet, _) =
             lanelet_of(value).ok_or_else(|| argument_error("RightOfWay", "getManeuver"))?;
         let regelem = &slf.as_super().regelem;
@@ -671,13 +689,16 @@ impl PyRightOfWay {
                     if weak.upgrade().is_some_and(|held| held.is_same_data(&lanelet)))
             })
         };
-        Ok(if holds(roles::RIGHT_OF_WAY) {
-            PyManeuverType::RightOfWay
-        } else if holds(roles::YIELD) {
-            PyManeuverType::Yield
-        } else {
-            PyManeuverType::Unknown
-        })
+        maneuver_type(
+            py,
+            if holds(roles::RIGHT_OF_WAY) {
+                "RightOfWay"
+            } else if holds(roles::YIELD) {
+                "Yield"
+            } else {
+                "Unknown"
+            },
+        )
     }
 }
 
@@ -728,6 +749,29 @@ impl PyTrafficSignsWithType {
     fn set_type(&mut self, value: String) {
         self.sign_type = value;
     }
+}
+
+fn push_role(
+    base: &PyRegulatoryElement,
+    role: &str,
+    value: &Bound<'_, PyAny>,
+    method: &str,
+) -> PyResult<()> {
+    let parameter =
+        rule_parameter_from_any(value).ok_or_else(|| argument_error("TrafficSign", method))?;
+    base.regelem.push_parameter(role, parameter);
+    Ok(())
+}
+
+fn drop_role(
+    base: &PyRegulatoryElement,
+    role: &str,
+    value: &Bound<'_, PyAny>,
+    method: &str,
+) -> PyResult<bool> {
+    let parameter =
+        rule_parameter_from_any(value).ok_or_else(|| argument_error("TrafficSign", method))?;
+    Ok(base.regelem.remove_parameter(role, &parameter))
 }
 
 /// `lanelet2.core.TrafficSign`.
@@ -842,6 +886,46 @@ impl PyTrafficSign {
             .ok_or_else(|| runtime("Regulatory element has no traffic sign and no 'sign_type'!"))
     }
 
+    #[pyo3(name = "addTrafficSign")]
+    fn add_traffic_sign(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        push_role(slf.as_super(), roles::REFERS, value, "addTrafficSign")
+    }
+
+    #[pyo3(name = "removeTrafficSign")]
+    fn remove_traffic_sign(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        drop_role(slf.as_super(), roles::REFERS, value, "removeTrafficSign")
+    }
+
+    #[pyo3(name = "addCancellingTrafficSign")]
+    fn add_cancelling(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        push_role(slf.as_super(), roles::CANCELS, value, "addCancellingTrafficSign")
+    }
+
+    #[pyo3(name = "removeCancellingTrafficSign")]
+    fn remove_cancelling(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        drop_role(slf.as_super(), roles::CANCELS, value, "removeCancellingTrafficSign")
+    }
+
+    #[pyo3(name = "addRefLine")]
+    fn add_ref_line(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        push_role(slf.as_super(), roles::REF_LINE, value, "addRefLine")
+    }
+
+    #[pyo3(name = "removeRefLine")]
+    fn remove_ref_line(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        drop_role(slf.as_super(), roles::REF_LINE, value, "removeRefLine")
+    }
+
+    #[pyo3(name = "addCancellingRefLine")]
+    fn add_cancel_line(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        push_role(slf.as_super(), roles::CANCEL_LINE, value, "addCancellingRefLine")
+    }
+
+    #[pyo3(name = "removeCancellingRefLine")]
+    fn remove_cancel_line(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        drop_role(slf.as_super(), roles::CANCEL_LINE, value, "removeCancellingRefLine")
+    }
+
     /// The distinct `subtype`s of the cancelling signs, sorted.
     #[pyo3(name = "cancelTypes")]
     fn cancel_types(slf: PyRef<'_, Self>) -> Vec<String> {
@@ -947,6 +1031,58 @@ impl PyLaneletWithStopLine {
         match &self.stop_line {
             None => Ok(py.None()),
             Some(line) => Ok(Py::new(py, PyLineString3d::wrap(line.clone()))?.into_any()),
+        }
+    }
+
+    #[setter(stopLine)]
+    fn set_stop_line(&mut self, value: &Bound<'_, PyAny>) {
+        self.stop_line = optional_linestring(Some(value));
+    }
+}
+
+/// `lanelet2.core.ConstLaneletWithStopLine`.
+///
+/// Despite the name, upstream's constructor takes a mutable `Lanelet` and its
+/// `stopLine` setter builds a `LineString3d`; only the accessors are const.
+#[pyclass(name = "ConstLaneletWithStopLine", module = "lanelet2.core")]
+pub struct PyConstLaneletWithStopLine {
+    lanelet: Lanelet,
+    stop_line: Option<LineString>,
+}
+
+#[pymethods]
+impl PyConstLaneletWithStopLine {
+    #[new]
+    #[pyo3(signature = (lanelet, stopLine = None))]
+    #[allow(non_snake_case)]
+    fn new(lanelet: &Bound<'_, PyAny>, stopLine: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let (lanelet, _) = lanelet_of(lanelet)
+            .ok_or_else(|| argument_error("ConstLaneletWithStopLine", "__init__"))?;
+        Ok(PyConstLaneletWithStopLine {
+            lanelet,
+            stop_line: optional_linestring(stopLine),
+        })
+    }
+
+    #[getter]
+    fn lanelet(&self) -> PyConstLanelet {
+        PyConstLanelet::wrap(self.lanelet.clone())
+    }
+
+    #[setter(lanelet)]
+    fn set_lanelet(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let (lanelet, _) = lanelet_of(value)
+            .ok_or_else(|| argument_error("ConstLaneletWithStopLine", "lanelet"))?;
+        self.lanelet = lanelet;
+        Ok(())
+    }
+
+    #[getter]
+    #[pyo3(name = "stopLine")]
+    fn stop_line(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match &self.stop_line {
+            None => Ok(py.None()),
+            Some(line) => Ok(Py::new(py, PyConstLineString3d::wrap(line.clone()))?.into_any()),
         }
     }
 
@@ -1073,12 +1209,16 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyConstRuleParameterMap>()?;
     m.add_class::<PyRegulatoryElement>()?;
     m.add_class::<PyTrafficLight>()?;
-    m.add_class::<PyManeuverType>()?;
+    // ManeuverType is installed by the Python shim; flag that it is wanted.
+    m.add("_needs_ManeuverType", true)?;
     m.add_class::<PyRightOfWay>()?;
     m.add_class::<PyTrafficSignsWithType>()?;
     m.add_class::<PyTrafficSign>()?;
     m.add_class::<PySpeedLimit>()?;
     m.add_class::<PyLaneletWithStopLine>()?;
+    m.add_class::<PyConstLaneletWithStopLine>()?;
+    m.add_class::<PyRuleParameterMapEntry>()?;
+    m.add_class::<PyConstRuleParameterMapEntry>()?;
     m.add_class::<PyAllWayStop>()?;
     Ok(())
 }

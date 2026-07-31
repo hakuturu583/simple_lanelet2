@@ -5,6 +5,9 @@
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-pub fn register(_m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // RelationType is installed by the Python shim, because Boost's enum derives
+    // from int and a PyO3 enum cannot.
+    m.add("_needs_RelationType", true)?;
     Ok(())
 }

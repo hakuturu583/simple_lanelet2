@@ -94,6 +94,19 @@ impl PyProjector {
     fn new() -> PyResult<Self> {
         Err(not_instantiable())
     }
+
+    // Present so the class advertises the interface, though no instance can exist.
+    fn forward(&self, _point: &Bound<'_, PyAny>) -> PyResult<()> {
+        Err(not_instantiable())
+    }
+
+    fn reverse(&self, _point: &Bound<'_, PyAny>) -> PyResult<()> {
+        Err(not_instantiable())
+    }
+
+    fn origin(&self) -> PyResult<()> {
+        Err(not_instantiable())
+    }
 }
 
 projector_class!("MercatorProjector", PyMercatorProjector);

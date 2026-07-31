@@ -61,10 +61,24 @@ pub fn primitive_from_any(obj: &Bound<'_, PyAny>) -> Option<Primitive> {
     point_of(obj).map(|(point, _)| Primitive::Point(point))
 }
 
+/// Empty base classes upstream gives the lanelet and area layers.
+///
+/// They carry no members of their own, but they are part of the class hierarchy
+/// and show up in `__bases__`.
+#[pyclass(name = "PrimitiveLayerLanelet", module = "lanelet2.core", subclass, frozen)]
+pub struct PyPrimitiveLayerLanelet;
+
+#[pyclass(name = "PrimitiveLayerArea", module = "lanelet2.core", subclass, frozen)]
+pub struct PyPrimitiveLayerArea;
+
 macro_rules! layer_class {
     ($py_name:literal, $rust:ident, $kind:expr, $usages:tt) => {
+        layer_class!($py_name, $rust, $kind, $usages, );
+    };
+
+    ($py_name:literal, $rust:ident, $kind:expr, $usages:tt, $($base:tt)*) => {
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.core", frozen)]
+        #[pyclass(name = $py_name, module = "lanelet2.core", frozen $($base)*)]
         pub struct $rust {
             map: Arc<LaneletMap>,
         }
@@ -179,8 +193,10 @@ macro_rules! layer_class {
 layer_class!("PointLayer", PyPointLayer, LayerKind::Point, false);
 layer_class!("LineStringLayer", PyLineStringLayer, LayerKind::LineString, true);
 layer_class!("PolygonLayer", PyPolygonLayer, LayerKind::Polygon, true);
-layer_class!("LaneletLayer", PyLaneletLayer, LayerKind::Lanelet, true);
-layer_class!("AreaLayer", PyAreaLayer, LayerKind::Area, true);
+layer_class!("LaneletLayer", PyLaneletLayer, LayerKind::Lanelet, true,
+             , extends = PyPrimitiveLayerLanelet);
+layer_class!("AreaLayer", PyAreaLayer, LayerKind::Area, true,
+             , extends = PyPrimitiveLayerArea);
 layer_class!(
     "RegulatoryElementLayer",
     PyRegulatoryElementLayer,
@@ -188,17 +204,29 @@ layer_class!(
     false
 );
 
+/// The six layers, shared by `LaneletMap` and `LaneletSubmap`.
+#[pyclass(name = "LaneletMapLayers", module = "lanelet2.core", subclass, frozen)]
+pub struct PyLaneletMapLayers {
+    map: Arc<LaneletMap>,
+}
+
+impl PyLaneletMapLayers {
+    fn wrap(map: Arc<LaneletMap>) -> Self {
+        PyLaneletMapLayers { map }
+    }
+}
+
 macro_rules! map_class {
     ($py_name:literal, $rust:ident, $recursive:tt) => {
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.core", frozen)]
+        #[pyclass(name = $py_name, module = "lanelet2.core", extends = PyLaneletMapLayers, frozen)]
         pub struct $rust {
             map: Arc<LaneletMap>,
         }
 
         impl $rust {
-            pub fn wrap(map: Arc<LaneletMap>) -> Self {
-                $rust { map }
+            pub fn wrap(map: Arc<LaneletMap>) -> (Self, PyLaneletMapLayers) {
+                ($rust { map: map.clone() }, PyLaneletMapLayers::wrap(map))
             }
 
             pub fn inner(&self) -> &LaneletMap {
@@ -209,14 +237,13 @@ macro_rules! map_class {
         #[pymethods]
         impl $rust {
             #[new]
-            fn new() -> Self {
-                $rust {
-                    map: if $recursive {
-                        LaneletMap::new_map()
-                    } else {
-                        LaneletMap::new_submap()
-                    },
-                }
+            fn new() -> (Self, PyLaneletMapLayers) {
+                let map = if $recursive {
+                    LaneletMap::new_map()
+                } else {
+                    LaneletMap::new_submap()
+                };
+                $rust::wrap(map)
             }
 
             #[getter]
@@ -239,14 +266,17 @@ macro_rules! map_class {
 
             #[getter]
             #[pyo3(name = "laneletLayer")]
-            fn lanelet_layer(&self) -> PyLaneletLayer {
-                PyLaneletLayer::wrap(self.map.clone())
+            fn lanelet_layer(&self, py: Python<'_>) -> PyResult<Py<PyLaneletLayer>> {
+                Py::new(
+                    py,
+                    (PyLaneletLayer::wrap(self.map.clone()), PyPrimitiveLayerLanelet),
+                )
             }
 
             #[getter]
             #[pyo3(name = "areaLayer")]
-            fn area_layer(&self) -> PyAreaLayer {
-                PyAreaLayer::wrap(self.map.clone())
+            fn area_layer(&self, py: Python<'_>) -> PyResult<Py<PyAreaLayer>> {
+                Py::new(py, (PyAreaLayer::wrap(self.map.clone()), PyPrimitiveLayerArea))
             }
 
             #[getter]
@@ -265,6 +295,48 @@ macro_rules! map_class {
     };
 }
 
+#[pymethods]
+impl PyLaneletMapLayers {
+    #[getter]
+    #[pyo3(name = "pointLayer")]
+    fn point_layer(&self) -> PyPointLayer {
+        PyPointLayer::wrap(self.map.clone())
+    }
+
+    #[getter]
+    #[pyo3(name = "lineStringLayer")]
+    fn line_string_layer(&self) -> PyLineStringLayer {
+        PyLineStringLayer::wrap(self.map.clone())
+    }
+
+    #[getter]
+    #[pyo3(name = "polygonLayer")]
+    fn polygon_layer(&self) -> PyPolygonLayer {
+        PyPolygonLayer::wrap(self.map.clone())
+    }
+
+    #[getter]
+    #[pyo3(name = "laneletLayer")]
+    fn lanelet_layer(&self, py: Python<'_>) -> PyResult<Py<PyLaneletLayer>> {
+        Py::new(
+            py,
+            (PyLaneletLayer::wrap(self.map.clone()), PyPrimitiveLayerLanelet),
+        )
+    }
+
+    #[getter]
+    #[pyo3(name = "areaLayer")]
+    fn area_layer(&self, py: Python<'_>) -> PyResult<Py<PyAreaLayer>> {
+        Py::new(py, (PyAreaLayer::wrap(self.map.clone()), PyPrimitiveLayerArea))
+    }
+
+    #[getter]
+    #[pyo3(name = "regulatoryElementLayer")]
+    fn regulatory_element_layer(&self) -> PyRegulatoryElementLayer {
+        PyRegulatoryElementLayer::wrap(self.map.clone())
+    }
+}
+
 map_class!("LaneletMap", PyLaneletMap, true);
 map_class!("LaneletSubmap", PyLaneletSubmap, false);
 
@@ -272,7 +344,7 @@ map_class!("LaneletSubmap", PyLaneletSubmap, false);
 #[pymethods]
 impl PyLaneletSubmap {
     #[pyo3(name = "laneletMap")]
-    fn lanelet_map(&self) -> PyLaneletMap {
+    fn lanelet_map(&self, py: Python<'_>) -> PyResult<Py<PyLaneletMap>> {
         let full = LaneletMap::new_map();
         for kind in [
             LayerKind::Point,
@@ -286,7 +358,7 @@ impl PyLaneletSubmap {
                 full.add(primitive);
             }
         }
-        PyLaneletMap::wrap(full)
+        Py::new(py, PyLaneletMap::wrap(full))
     }
 }
 
@@ -295,7 +367,7 @@ macro_rules! create_from {
     ($map_fn:ident, $submap_fn:ident, $map_name:literal, $submap_name:literal) => {
         #[pyfunction]
         #[pyo3(name = $map_name)]
-        fn $map_fn(values: &Bound<'_, PyAny>) -> PyResult<PyLaneletMap> {
+        fn $map_fn(py: Python<'_>, values: &Bound<'_, PyAny>) -> PyResult<Py<PyLaneletMap>> {
             let map = LaneletMap::new_map();
             for item in values.try_iter()? {
                 let item = item?;
@@ -303,12 +375,12 @@ macro_rules! create_from {
                     .ok_or_else(|| argument_error($map_name, "argument"))?;
                 map.add(primitive);
             }
-            Ok(PyLaneletMap::wrap(map))
+            Py::new(py, PyLaneletMap::wrap(map))
         }
 
         #[pyfunction]
         #[pyo3(name = $submap_name)]
-        fn $submap_fn(values: &Bound<'_, PyAny>) -> PyResult<PyLaneletSubmap> {
+        fn $submap_fn(py: Python<'_>, values: &Bound<'_, PyAny>) -> PyResult<Py<PyLaneletSubmap>> {
             let map = LaneletMap::new_submap();
             for item in values.try_iter()? {
                 let item = item?;
@@ -316,7 +388,7 @@ macro_rules! create_from {
                     .ok_or_else(|| argument_error($submap_name, "argument"))?;
                 map.add(primitive);
             }
-            Ok(PyLaneletSubmap::wrap(map))
+            Py::new(py, PyLaneletSubmap::wrap(map))
         }
     };
 }
@@ -359,6 +431,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLaneletLayer>()?;
     m.add_class::<PyAreaLayer>()?;
     m.add_class::<PyRegulatoryElementLayer>()?;
+    m.add_class::<PyPrimitiveLayerLanelet>()?;
+    m.add_class::<PyPrimitiveLayerArea>()?;
+    m.add_class::<PyLaneletMapLayers>()?;
     m.add_class::<PyLaneletMap>()?;
     m.add_class::<PyLaneletSubmap>()?;
 

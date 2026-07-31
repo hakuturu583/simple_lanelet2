@@ -37,4 +37,45 @@ for _name in __all__:
     _sys.modules[f"{__name__}.{_name}"] = _submodule
     globals()[_name] = _submodule
 
-del _name, _submodule, _sys
+del _name, _submodule
+
+
+def _install_enums():
+    """Adds the Boost-style enumerations the native module cannot express.
+
+    A PyO3 enum is an opaque type, while Boost's derives from ``int`` and carries
+    ``name``/``names``/``values``. Building them here keeps that exact shape, and
+    the members are also exported into their module's namespace the way
+    ``export_values()`` does.
+    """
+    from ._boost_enum import boost_enum
+
+    definitions = [
+        (core, "ManeuverType", [("Yield", 0), ("RightOfWay", 1), ("Unknown", 2)]),
+        (
+            routing,
+            "RelationType",
+            [
+                ("Successor", 1),
+                ("Left", 2),
+                ("Right", 4),
+                ("AdjacentLeft", 8),
+                ("AdjacentRight", 16),
+                ("Conflicting", 32),
+            ],
+        ),
+    ]
+    for module, name, members in definitions:
+        if not hasattr(module, "_needs_" + name):
+            continue
+        enum_class = boost_enum(name, module.__name__, members)
+        setattr(module, name, enum_class)
+        for member_name, _ in members:
+            # RightOfWay is also a class name in lanelet2.core; the enum member
+            # does not displace it there, matching upstream.
+            if not hasattr(module, member_name):
+                setattr(module, member_name, getattr(enum_class, member_name))
+
+
+_install_enums()
+del _install_enums, _sys
