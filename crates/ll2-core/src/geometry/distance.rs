@@ -154,6 +154,58 @@ pub fn distance_2d_point_to_area(p: Point2, area: &Area) -> f64 {
     0.0
 }
 
+/// The index of the segment of `line` closest to `p`, and the projected point on it.
+pub fn closest_segment(p: Point2, line: &[Point2]) -> Option<(usize, Point2)> {
+    if line.len() < 2 {
+        return None;
+    }
+    let mut best: Option<(usize, Point2, f64)> = None;
+    for (index, segment) in line.windows(2).enumerate() {
+        let projected = project_onto_segment(p, segment[0], segment[1]);
+        let distance = distance_2d_point_point(p, projected);
+        if best.as_ref().is_none_or(|(_, _, d)| distance < *d) {
+            best = Some((index, projected, distance));
+        }
+    }
+    best.map(|(index, projected, _)| (index, projected))
+}
+
+/// Distance from a polyline to a point, signed: positive when the point lies to the
+/// left of the line's direction of travel.
+///
+/// This is what decides which of a lanelet's two boundaries is the left one when a
+/// map is loaded, so the sign convention is load-bearing.
+///
+/// Upstream: `geometry::signedDistance`, `impl/LineString.h:128-137`
+pub fn signed_distance_2d(line: &[Point2], p: Point2) -> f64 {
+    let Some((index, projected)) = closest_segment(p, line) else {
+        return match line.first() {
+            Some(&only) => distance_2d_point_point(p, only),
+            None => f64::INFINITY,
+        };
+    };
+    let distance = distance_2d_point_point(p, projected);
+    let (a, b) = (line[index], line[index + 1]);
+    let cross = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+    if cross > 0.0 { distance } else { -distance }
+}
+
+/// The point a polyline's `align` heuristic compares against: its middle vertex, or
+/// the midpoint of its endpoints when it has only two.
+///
+/// Upstream: `geometry::align`, `impl/LineString.h:815-817`
+pub fn middle_point(line: &[Point2]) -> Option<Point2> {
+    match line.len() {
+        0 => None,
+        1 => Some(line[0]),
+        2 => Some([
+            (line[0][0] + line[1][0]) / 2.0,
+            (line[0][1] + line[1][1]) / 2.0,
+        ]),
+        n => Some(line[n / 2]),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,6 +238,28 @@ mod tests {
         assert!(covered_by_ring([0.0, 0.0], &square), "on a corner");
         assert!(!covered_by_ring([5.0, 2.0], &square));
         assert!(!covered_by_ring([2.0, 2.0], &[[0.0, 0.0], [1.0, 1.0]]));
+    }
+
+    #[test]
+    fn signed_distance_is_positive_to_the_left_of_travel() {
+        let eastward = [[0.0, 0.0], [10.0, 0.0]];
+        assert!(signed_distance_2d(&eastward, [5.0, 3.0]) > 0.0, "north is left");
+        assert!(signed_distance_2d(&eastward, [5.0, -3.0]) < 0.0, "south is right");
+        assert_eq!(signed_distance_2d(&eastward, [5.0, 3.0]), 3.0);
+        assert_eq!(signed_distance_2d(&eastward, [5.0, -3.0]), -3.0);
+
+        let westward = [[10.0, 0.0], [0.0, 0.0]];
+        assert!(signed_distance_2d(&westward, [5.0, 3.0]) < 0.0, "reversing flips the sign");
+    }
+
+    #[test]
+    fn the_middle_point_is_the_midpoint_only_for_a_two_point_line() {
+        assert_eq!(middle_point(&[[0.0, 0.0], [10.0, 4.0]]), Some([5.0, 2.0]));
+        assert_eq!(
+            middle_point(&[[0.0, 0.0], [3.0, 0.0], [10.0, 0.0]]),
+            Some([3.0, 0.0])
+        );
+        assert_eq!(middle_point(&[]), None);
     }
 
     #[test]

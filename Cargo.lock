@@ -81,6 +81,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ll2-io"
+version = "0.1.0"
+dependencies = [
+ "ll2-core",
+ "ll2-projection",
+ "quick-xml",
+]
+
+[[package]]
 name = "ll2-projection"
 version = "0.1.0"
 
@@ -89,6 +98,7 @@ name = "ll2-python"
 version = "0.1.0"
 dependencies = [
  "ll2-core",
+ "ll2-io",
  "ll2-projection",
  "pyo3",
 ]
@@ -101,6 +111,12 @@ checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
 dependencies = [
  "scopeguard",
 ]
+
+[[package]]
+name = "memchr"
+version = "2.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "num-traits"
@@ -212,6 +228,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

@@ -180,8 +180,14 @@ impl Layer {
         self.items.read().values().cloned().collect()
     }
 
+    /// Stores a primitive, keeping whatever is already under that id.
+    ///
+    /// Upstream uses `std::unordered_map::insert`, which does not overwrite. That
+    /// is load-bearing: adding a lanelet or an area re-offers its boundaries, and
+    /// some of those handles are inverted views of linestrings the map already
+    /// holds the right way round.
     pub fn insert(&self, primitive: Primitive) {
-        self.items.write().insert(primitive.id(), primitive);
+        self.items.write().entry(primitive.id()).or_insert(primitive);
     }
 
     /// A fresh id. Upstream simply draws from the global counter.
@@ -467,6 +473,18 @@ mod tests {
         assert!(map.points.get(7).is_ok());
         assert!(map.points.get(INVAL_ID).is_err());
         assert!(map.points.get(8).is_err());
+    }
+
+    #[test]
+    fn re_adding_an_id_keeps_the_first_primitive() {
+        let map = LaneletMap::new_map();
+        let first = point(7, 1.0, 0.0);
+        map.add(Primitive::Point(first.clone()));
+        map.add(Primitive::Point(point(7, 99.0, 0.0)));
+
+        let stored = map.points.get(7).unwrap();
+        assert_eq!(map.points.len(), 1);
+        assert!(as_point(&stored).unwrap().is_same_data(&first));
     }
 
     #[test]

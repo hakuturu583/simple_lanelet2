@@ -201,7 +201,7 @@ macro_rules! map_class {
                 $rust { map }
             }
 
-            pub fn inner(&self) -> &Arc<LaneletMap> {
+            pub fn inner(&self) -> &LaneletMap {
                 &self.map
             }
         }

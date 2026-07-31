@@ -2,13 +2,18 @@
 //!
 //! Ground truth: `lanelet2_python/python_api/io.cpp`.
 
+use std::path::Path;
+
 use ll2_core::compat;
-use ll2_projection::{GpsPoint, Origin};
+use ll2_io::WriteParams;
+use ll2_projection::{GpsPoint, Origin, Projector, SphericalMercator};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule, PyTuple};
+use pyo3::types::{PyDict, PyList, PyModule, PyString, PyTuple};
 
 use crate::core::gps::{PyGpsPoint, gps_point_of};
-use crate::err::argument_error;
+use crate::core::map::PyLaneletMap;
+use crate::err::{argument_error, runtime};
+use crate::projection::projector_of;
 
 /// `lanelet2.io.Origin`.
 ///
@@ -43,9 +48,13 @@ impl PyOrigin {
         let positional = args.len();
         let no_kwargs = kwargs.is_none_or(|d| d.is_empty());
 
+        // `Origin()` is *not* the flagged default origin: Boost.Python routes the
+        // no-argument call through the three-defaulted-arguments constructor, which
+        // clears the flag. Only omitting the projector argument entirely reaches a
+        // default-flagged origin, and only that makes the parser refuse.
         if positional == 0 && no_kwargs {
             return Ok(PyOrigin {
-                origin: Origin::default_origin(),
+                origin: Origin::new(GpsPoint::default()),
             });
         }
 
@@ -115,7 +124,137 @@ impl PyOrigin {
     }
 }
 
+/// Resolves the projector argument, which may be a projector or a bare origin.
+///
+/// An `Origin` selects the default projector, which upstream defines as spherical
+/// Mercator.
+fn resolve_projector(obj: &Bound<'_, PyAny>) -> PyResult<Box<dyn Projector + Send + Sync>> {
+    if let Some(shared) = projector_of(obj) {
+        return Ok(Box::new(shared));
+    }
+    if let Ok(origin) = obj.cast::<PyOrigin>() {
+        return Ok(Box::new(SphericalMercator::new(origin.borrow().inner())));
+    }
+    Err(argument_error("io", "load"))
+}
+
+impl Projector for crate::projection::SharedProjector {
+    fn forward(&self, point: GpsPoint) -> Result<[f64; 3], ll2_projection::ProjectionError> {
+        self.0.forward(point)
+    }
+
+    fn reverse(&self, point: [f64; 3]) -> Result<GpsPoint, ll2_projection::ProjectionError> {
+        self.0.reverse(point)
+    }
+
+    fn origin(&self) -> Origin {
+        self.0.origin()
+    }
+}
+
+/// Reads the optional `params` dictionary of writer options.
+fn write_params(params: Option<&Bound<'_, PyAny>>) -> PyResult<WriteParams> {
+    let Some(params) = params else {
+        return Ok(WriteParams::default());
+    };
+    if params.is_none() {
+        return Ok(WriteParams::default());
+    }
+    let dict = params.cast::<PyDict>()?;
+    let flag = |name: &str| -> PyResult<bool> {
+        Ok(match dict.get_item(name)? {
+            None => false,
+            Some(value) => {
+                let text: String = value.cast::<PyString>()?.extract()?;
+                ll2_core::attribute::Attribute::new(text).as_bool().unwrap_or(false)
+            }
+        })
+    };
+    Ok(WriteParams {
+        josm_upload: flag("josm_upload")?,
+        josm_format_elevation: flag("josm_format_elevation")?,
+    })
+}
+
+/// `lanelet2.io.load(filename, projector | origin)`.
+#[pyfunction]
+#[pyo3(signature = (filename, projector = None))]
+fn load(filename: &str, projector: Option<&Bound<'_, PyAny>>) -> PyResult<PyLaneletMap> {
+    let projector = match projector {
+        Some(value) => resolve_projector(value)?,
+        None => Box::new(SphericalMercator::new(Origin::default_origin())),
+    };
+    let map = ll2_io::load(Path::new(filename), projector.as_ref())
+        .map_err(|error| runtime(error.message()))?;
+    Ok(PyLaneletMap::wrap(map))
+}
+
+/// `lanelet2.io.loadRobust(filename, projector)` — the map plus any problems found.
+#[pyfunction]
+#[pyo3(name = "loadRobust", signature = (filename, projector))]
+fn load_robust<'py>(
+    py: Python<'py>,
+    filename: &str,
+    projector: &Bound<'_, PyAny>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let projector = resolve_projector(projector)?;
+    let (map, errors) = ll2_io::load_robust(Path::new(filename), projector.as_ref())
+        .map_err(|error| runtime(error.message()))?;
+    let result = (PyLaneletMap::wrap(map), PyList::new(py, errors)?);
+    Ok(result.into_pyobject(py)?.into_any())
+}
+
+/// `lanelet2.io.write(filename, map, projector | origin, params=None)`.
+#[pyfunction]
+#[pyo3(signature = (filename, map, projector = None, params = None))]
+fn write(
+    filename: &str,
+    map: &PyLaneletMap,
+    projector: Option<&Bound<'_, PyAny>>,
+    params: Option<&Bound<'_, PyAny>>,
+) -> PyResult<()> {
+    let projector = match projector {
+        Some(value) => resolve_projector(value)?,
+        None => Box::new(SphericalMercator::new(Origin::default_origin())),
+    };
+    ll2_io::write(
+        Path::new(filename),
+        map.inner(),
+        projector.as_ref(),
+        write_params(params)?,
+    )
+    .map_err(|error| runtime(error.message()))
+}
+
+/// `lanelet2.io.writeRobust(...)` — returns the problems instead of raising.
+#[pyfunction]
+#[pyo3(name = "writeRobust", signature = (filename, map, projector = None, params = None))]
+fn write_robust<'py>(
+    py: Python<'py>,
+    filename: &str,
+    map: &PyLaneletMap,
+    projector: Option<&Bound<'_, PyAny>>,
+    params: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Bound<'py, PyList>> {
+    let projector = match projector {
+        Some(value) => resolve_projector(value)?,
+        None => Box::new(SphericalMercator::new(Origin::default_origin())),
+    };
+    let errors = ll2_io::write_robust(
+        Path::new(filename),
+        map.inner(),
+        projector.as_ref(),
+        write_params(params)?,
+    )
+    .map_err(|error| runtime(error.message()))?;
+    PyList::new(py, errors)
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOrigin>()?;
+    m.add_function(wrap_pyfunction!(load, m)?)?;
+    m.add_function(wrap_pyfunction!(load_robust, m)?)?;
+    m.add_function(wrap_pyfunction!(write, m)?)?;
+    m.add_function(wrap_pyfunction!(write_robust, m)?)?;
     Ok(())
 }

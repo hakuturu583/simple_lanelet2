@@ -14,3 +14,6 @@ upstream file and line in their doc comments.
 
 Test fixtures under tests/data/ are vendored from the Lanelet2 repository
 (lanelet2_maps/res/) and remain under the BSD 3-Clause License.
+
+tests/data/mapping_example.osm is vendored unchanged from
+lanelet2_maps/res/mapping_example.osm in the Lanelet2 repository.

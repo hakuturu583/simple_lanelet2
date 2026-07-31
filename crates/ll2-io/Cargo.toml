@@ -1,0 +1,12 @@
+[package]
+name = "ll2-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "OSM map reading and writing for a Lanelet2-compatible library"
+
+[dependencies]
+ll2-core.workspace = true
+ll2-projection.workspace = true
+quick-xml.workspace = true

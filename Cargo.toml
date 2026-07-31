@@ -10,9 +10,10 @@ repository = "https://github.com/masaya/simple_lanelet2"
 rust-version = "1.85"
 
 [workspace.dependencies]
-# Sibling crates are added as their phases land: ll2-io, ll2-traffic-rules,
-# ll2-routing, ll2-matching.
+# Sibling crates are added as their phases land: ll2-traffic-rules, ll2-routing,
+# ll2-matching.
 ll2-core = { path = "crates/ll2-core" }
+ll2-io = { path = "crates/ll2-io" }
 ll2-projection = { path = "crates/ll2-projection" }
 
 parking_lot = "0.12"
