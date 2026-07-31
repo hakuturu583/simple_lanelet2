@@ -1,0 +1,18 @@
+# Machine-readable index of every upstream defect we repair by default.
+#
+# Each entry names a case/key where COMPAT (LANELET2_BUG_COMPAT=1, reproducing
+# upstream) and FIXED (default) are *expected* to disagree. The runner checks the
+# table in both directions:
+#
+#   * a difference at a key that is NOT listed here fails -- an unintended
+#     behaviour change slipped in;
+#   * a listed key where COMPAT and FIXED agree also fails -- the repair is not
+#     actually wired up, or the case no longer exercises it.
+#
+# `case` and `key` are fnmatch patterns. Keep `reason` in sync with
+# docs/DIVERGENCE.md and the predicate names in crates/ll2-core/src/compat.rs.
+
+# [[entry]]
+# case = "0110_basic_point"
+# key = "truediv"
+# reason = "upstream registers __div__ only, so `p / 2` raises TypeError on Python 3"

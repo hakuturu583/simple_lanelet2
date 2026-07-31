@@ -1,0 +1,16 @@
+simple_lanelet2
+Copyright (c) 2026
+
+This product is a reimplementation of the Python API of Lanelet2:
+
+  Lanelet2
+  Copyright (c) 2018, FZI Forschungszentrum Informatik
+  Licensed under the BSD 3-Clause License
+  https://github.com/fzi-forschungszentrum-informatik/Lanelet2
+
+The API shape, semantics and several algorithms in this project are ports of the
+Lanelet2 C++ sources. Ported algorithms carry a reference to the originating
+upstream file and line in their doc comments.
+
+Test fixtures under tests/data/ are vendored from the Lanelet2 repository
+(lanelet2_maps/res/) and remain under the BSD 3-Clause License.

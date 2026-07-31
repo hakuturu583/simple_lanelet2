@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "BSD-3-Clause"
+repository = "https://github.com/masaya/simple_lanelet2"
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Sibling crates are added as their phases land: ll2-projection, ll2-io,
+# ll2-traffic-rules, ll2-routing, ll2-matching.
+ll2-core = { path = "crates/ll2-core" }
+
+parking_lot = "0.12"
+rstar = "0.13"
+quick-xml = "0.41"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

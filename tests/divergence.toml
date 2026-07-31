@@ -1,0 +1,17 @@
+# Accepted differences between the reference implementation and ours in
+# LANELET2_BUG_COMPAT=1 mode.
+#
+# This file is NOT for upstream bugs -- those are repaired by default and listed in
+# compat_matrix.toml, and bug-compat mode reproduces them exactly. What belongs here
+# is only functionality we have deliberately declined to implement.
+#
+# Every entry needs a reason. `case` and `key` are fnmatch patterns. The runner fails
+# if an entry stops firing, so the list cannot rot.
+
+[[allow]]
+case = "0000_import"
+key = "bug_compat_attr"
+reason = """\
+Deliberate addition, not a divergence in behaviour: lanelet2.BUG_COMPAT reports \
+whether upstream-bug-compatible mode is active. Upstream has no such attribute, so \
+the reference emits null here."""
