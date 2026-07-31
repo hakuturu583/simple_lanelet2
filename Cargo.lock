@@ -90,6 +90,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ll2-matching"
+version = "0.1.0"
+dependencies = [
+ "ll2-core",
+ "ll2-traffic-rules",
+]
+
+[[package]]
 name = "ll2-projection"
 version = "0.1.0"
 
@@ -99,6 +107,7 @@ version = "0.1.0"
 dependencies = [
  "ll2-core",
  "ll2-io",
+ "ll2-matching",
  "ll2-projection",
  "ll2-traffic-rules",
  "pyo3",
