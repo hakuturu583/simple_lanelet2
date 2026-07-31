@@ -232,6 +232,10 @@ macro_rules! map_class {
             pub fn inner(&self) -> &LaneletMap {
                 &self.map
             }
+
+            pub fn inner_arc(&self) -> Arc<LaneletMap> {
+                self.map.clone()
+            }
         }
 
         #[pymethods]

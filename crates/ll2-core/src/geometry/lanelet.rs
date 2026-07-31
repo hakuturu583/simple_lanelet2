@@ -181,38 +181,51 @@ fn rings_intersect(a: &[Point2], b: &[Point2]) -> bool {
 
 /// Whether two rings share interior area, rather than merely touching.
 ///
-/// This is Boost's `T********` DE-9IM mask. Sampling interior points is enough
-/// here: an overlap of positive area always contains a vertex of one ring or a
-/// midpoint of a crossing edge.
+/// This is Boost's `T********` DE-9IM mask. Two criteria settle it:
+///
+/// * any pair of edges that *properly* crosses — the crossing point strictly
+///   inside both segments rather than at an endpoint — means the rings pass
+///   through each other, and a positive-area overlap follows;
+/// * otherwise, one ring may lie wholly within the other, which shows up as a
+///   vertex strictly inside.
+///
+/// Sampling edge midpoints, which an earlier version did, is not enough: a thin
+/// overlap can leave every sampled point outside.
 fn interiors_intersect(a: &[Point2], b: &[Point2]) -> bool {
     if a.len() < 3 || b.len() < 3 {
         return false;
     }
-    let strictly_inside = |p: Point2, ring: &[Point2]| {
-        covered_by_ring(p, ring) && !on_boundary(p, ring)
-    };
-    if a.iter().any(|&p| strictly_inside(p, b)) || b.iter().any(|&p| strictly_inside(p, a)) {
-        return true;
-    }
-    // Two rings can overlap with every vertex outside the other; test the midpoint
-    // of each pair of crossing edges.
     for index in 0..a.len() {
         let sa = (a[index], a[(index + 1) % a.len()]);
         for other in 0..b.len() {
             let sb = (b[other], b[(other + 1) % b.len()]);
-            if !linestring::segments_intersect_2d(sa.0, sa.1, sb.0, sb.1) {
-                continue;
-            }
-            let midpoints = [
-                [(sa.0[0] + sa.1[0]) / 2.0, (sa.0[1] + sa.1[1]) / 2.0],
-                [(sb.0[0] + sb.1[0]) / 2.0, (sb.0[1] + sb.1[1]) / 2.0],
-            ];
-            if strictly_inside(midpoints[0], b) || strictly_inside(midpoints[1], a) {
+            if segments_cross_properly(sa.0, sa.1, sb.0, sb.1) {
                 return true;
             }
         }
     }
-    false
+    let strictly_inside =
+        |p: Point2, ring: &[Point2]| covered_by_ring(p, ring) && !on_boundary(p, ring);
+    a.iter().any(|&p| strictly_inside(p, b)) || b.iter().any(|&p| strictly_inside(p, a))
+}
+
+/// Whether two segments cross at a point interior to both, as opposed to merely
+/// touching at an endpoint or overlapping collinearly.
+fn segments_cross_properly(a0: Point2, a1: Point2, b0: Point2, b1: Point2) -> bool {
+    let orientation = |p: Point2, q: Point2, r: Point2| {
+        let value = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+        if value > 0.0 {
+            1i8
+        } else if value < 0.0 {
+            -1
+        } else {
+            0
+        }
+    };
+    let (o1, o2) = (orientation(a0, a1, b0), orientation(a0, a1, b1));
+    let (o3, o4) = (orientation(b0, b1, a0), orientation(b0, b1, a1));
+    // Every orientation non-zero means no endpoint lies on the other segment.
+    o1 != 0 && o2 != 0 && o3 != 0 && o4 != 0 && o1 != o2 && o3 != o4
 }
 
 fn on_boundary(p: Point2, ring: &[Point2]) -> bool {
@@ -319,6 +332,26 @@ mod tests {
         let lower = Lanelet::new(2, shared, line(102, &[(0.0, -2.0), (10.0, -2.0)]), AttributeMap::new());
         assert!(!overlaps_2d(&upper, &lower));
         assert!(overlaps_2d(&upper, &upper), "a lanelet overlaps itself");
+    }
+
+    #[test]
+    fn a_thin_overlap_is_still_an_overlap() {
+        // The two corridors cross at a shallow angle, so no vertex of either lies
+        // inside the other and the edge midpoints fall outside as well. Only the
+        // proper edge crossing detects it.
+        let shallow = Lanelet::new(
+            1,
+            line(101, &[(0.0, 0.1), (100.0, 5.1)]),
+            line(102, &[(0.0, -0.1), (100.0, 4.9)]),
+            AttributeMap::new(),
+        );
+        let flat = Lanelet::new(
+            2,
+            line(201, &[(0.0, 2.6), (100.0, 2.6)]),
+            line(202, &[(0.0, 2.4), (100.0, 2.4)]),
+            AttributeMap::new(),
+        );
+        assert!(overlaps_2d(&shallow, &flat));
     }
 
     #[test]

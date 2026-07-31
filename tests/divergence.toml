@@ -15,3 +15,12 @@ reason = """\
 Deliberate addition, not a divergence in behaviour: lanelet2.BUG_COMPAT reports \
 whether upstream-bug-compatible mode is active. Upstream has no such attribute, so \
 the reference emits null here."""
+
+[[allow]]
+case = "0700_routing"
+key = "export_graph*"
+reason = """\
+exportGraphML and exportGraphViz are out of scope. Reproducing them means \
+reproducing Boost's GraphML and GraphViz writers byte for byte, which buys \
+nothing for map handling; they raise here instead of writing a file that would \
+differ anyway."""
