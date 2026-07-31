@@ -24,8 +24,11 @@ mod projection;
 mod routing;
 mod traffic_rules;
 
+/// Registers one submodule's classes and functions.
+type Register = fn(&Bound<'_, PyModule>) -> PyResult<()>;
+
 /// Names of the submodules, in the order upstream's packages depend on each other.
-const SUBMODULES: &[(&str, fn(&Bound<'_, PyModule>) -> PyResult<()>)] = &[
+const SUBMODULES: &[(&str, Register)] = &[
     ("core", core::register),
     ("geometry", geometry::register),
     ("projection", projection::register),
@@ -35,11 +38,7 @@ const SUBMODULES: &[(&str, fn(&Bound<'_, PyModule>) -> PyResult<()>)] = &[
     ("matching", matching::register),
 ];
 
-fn add_submodule(
-    parent: &Bound<'_, PyModule>,
-    name: &str,
-    register: fn(&Bound<'_, PyModule>) -> PyResult<()>,
-) -> PyResult<()> {
+fn add_submodule(parent: &Bound<'_, PyModule>, name: &str, register: Register) -> PyResult<()> {
     let sub = PyModule::new(parent.py(), name)?;
     // Must happen before `register`, so classes defined inside see the right
     // `__name__` when Python computes their qualified name.

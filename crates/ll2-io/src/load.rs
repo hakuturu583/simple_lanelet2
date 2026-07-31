@@ -72,7 +72,7 @@ fn align(left: LineString, right: LineString) -> (LineString, LineString) {
 /// Negative means clockwise in a standard x-right, y-up frame, which is the winding
 /// Lanelet2 requires of a boundary.
 fn signed_area_2x(ring: &[LineString]) -> f64 {
-    let points: Vec<[f64; 2]> = ring.iter().flat_map(|line| flat(line)).collect();
+    let points: Vec<[f64; 2]> = ring.iter().flat_map(flat).collect();
     if points.len() < 3 {
         return 0.0;
     }
@@ -86,7 +86,7 @@ fn signed_area_2x(ring: &[LineString]) -> f64 {
 }
 
 /// Reverses a ring: every member is inverted and their order is flipped.
-fn reverse_ring(ring: &mut Vec<LineString>) {
+fn reverse_ring(ring: &mut [LineString]) {
     for line in ring.iter_mut() {
         *line = line.invert();
     }

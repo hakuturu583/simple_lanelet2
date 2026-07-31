@@ -18,6 +18,7 @@ impl PyGpsPoint {
         PyGpsPoint { point }
     }
 
+    #[allow(dead_code)] // symmetry with the other wrapper types
     pub fn inner(&self) -> GpsPoint {
         self.point
     }

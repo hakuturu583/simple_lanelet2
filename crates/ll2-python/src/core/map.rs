@@ -89,6 +89,7 @@ macro_rules! layer_class {
             map: Arc<LaneletMap>,
         }
 
+        #[allow(dead_code)] // part of the macro's uniform shape
         impl $rust {
             pub fn wrap(map: Arc<LaneletMap>) -> Self {
                 $rust { map }
@@ -235,6 +236,7 @@ macro_rules! map_class {
             map: Arc<LaneletMap>,
         }
 
+        #[allow(dead_code)] // part of the macro's uniform shape
         impl $rust {
             pub fn wrap(map: Arc<LaneletMap>) -> (Self, PyLaneletMapLayers) {
                 ($rust { map: map.clone() }, PyLaneletMapLayers::wrap(map))

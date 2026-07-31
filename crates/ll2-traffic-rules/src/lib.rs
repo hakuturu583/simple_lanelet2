@@ -391,9 +391,9 @@ impl TrafficRules {
     /// the destination is impassable too. Repaired by default.
     pub fn can_pass_area(&self, from_passable: bool, to_passable: bool) -> bool {
         if compat::area_to_area_uses_and_guard() {
-            !(!from_passable && to_passable)
+            from_passable || !to_passable
         } else {
-            !(!from_passable || !to_passable)
+            from_passable && to_passable
         }
     }
 }

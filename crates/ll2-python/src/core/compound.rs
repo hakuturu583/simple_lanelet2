@@ -42,6 +42,7 @@ macro_rules! compound_class {
             compound: CompoundLineString,
         }
 
+        #[allow(dead_code)] // part of the macro's uniform shape
         impl $rust {
             pub fn wrap(compound: CompoundLineString) -> Self {
                 $rust { compound }
@@ -150,6 +151,7 @@ macro_rules! compound_hybrid {
             compound: CompoundLineString,
         }
 
+        #[allow(dead_code)] // part of the macro's uniform shape
         impl $rust {
             pub fn wrap(compound: CompoundLineString) -> Self {
                 $rust { compound }

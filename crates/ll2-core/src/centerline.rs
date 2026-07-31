@@ -287,7 +287,7 @@ pub fn calculate(left_bound: &LineString, right_bound: &LineString) -> LineStrin
         let last = centerline.last().expect("seeded with the entry midpoint");
         let last2d: Point2 = [last.x(), last.y()];
 
-        let left_candidate = if left_current + 1 <= left3.len() {
+        let left_candidate = if left_current < left3.len() {
             closest_nonintersecting_point(
                 &bounds,
                 Side::Left,
@@ -298,7 +298,7 @@ pub fn calculate(left_bound: &LineString, right_bound: &LineString) -> LineStrin
         } else {
             None
         };
-        let right_candidate = if right_current + 1 <= right3.len() {
+        let right_candidate = if right_current < right3.len() {
             closest_nonintersecting_point(
                 &bounds,
                 Side::Right,

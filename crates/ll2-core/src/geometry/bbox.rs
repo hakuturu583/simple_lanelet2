@@ -52,9 +52,9 @@ impl BoundingBox2d {
     }
 
     pub fn extend_point(&mut self, point: [f64; 2]) {
-        for axis in 0..2 {
-            self.min[axis] = self.min[axis].min(point[axis]);
-            self.max[axis] = self.max[axis].max(point[axis]);
+        for ((min, max), value) in self.min.iter_mut().zip(&mut self.max).zip(point) {
+            *min = min.min(value);
+            *max = max.max(value);
         }
     }
 
@@ -116,9 +116,9 @@ impl BoundingBox3d {
     }
 
     pub fn extend_point(&mut self, point: [f64; 3]) {
-        for axis in 0..3 {
-            self.min[axis] = self.min[axis].min(point[axis]);
-            self.max[axis] = self.max[axis].max(point[axis]);
+        for ((min, max), value) in self.min.iter_mut().zip(&mut self.max).zip(point) {
+            *min = min.min(value);
+            *max = max.max(value);
         }
     }
 

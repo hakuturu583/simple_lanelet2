@@ -8,7 +8,7 @@
 //! `lanelet2_core/src/LineStringGeometry.cpp`
 
 use crate::geometry::distance::{
-    closest_segment, distance_2d_point_point, distance_2d_point_segment, project_onto_segment,
+    closest_segment, distance_2d_point_point, distance_2d_point_segment,
 };
 
 pub type Point2 = [f64; 2];
@@ -261,8 +261,9 @@ fn closest_points_between_segments(
     let denominator = a * c - b * b;
 
     const EPSILON: f64 = 1e-12;
-    let (mut sn, mut sd) = (denominator, denominator);
-    let (mut tn, mut td) = (denominator, denominator);
+    let mut sd = denominator;
+    let mut td = denominator;
+    let (mut sn, mut tn);
     if denominator < EPSILON {
         // The segments are (nearly) parallel; pin the first parameter to zero.
         sn = 0.0;

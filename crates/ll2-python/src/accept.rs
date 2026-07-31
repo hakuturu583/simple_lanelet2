@@ -13,6 +13,8 @@
 //! Names are normalised by dropping a leading `Const`, because Boost implicitly
 //! converts a mutable primitive to its const counterpart wherever one is expected.
 
+#![allow(dead_code)] // the tables are selected by name at each call site
+
 /// The class name with any leading `Const` removed.
 pub fn normalise(class_name: &str) -> &str {
     class_name.strip_prefix("Const").unwrap_or(class_name)

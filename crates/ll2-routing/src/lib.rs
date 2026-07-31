@@ -73,6 +73,9 @@ impl RelationType {
     }
 }
 
+/// One edge as `(fromId, fromInverted, toId, toInverted, relation, costId, cost)`.
+pub type EdgeSummary = (Id, bool, Id, bool, RelationType, usize, f64);
+
 /// A lanelet reached from somewhere, and how.
 #[derive(Clone)]
 pub struct LaneletRelation {
@@ -174,8 +177,8 @@ impl RoutingGraph {
                     let (relation, value) = if changeable {
                         let change = model.cost_lane_change(
                             &rules,
-                            &[lanelet.clone()],
-                            &[candidate.clone()],
+                            std::slice::from_ref(lanelet),
+                            std::slice::from_ref(candidate),
                         );
                         if change.is_finite() {
                             // A change that is affordable is a real lane change.
@@ -491,15 +494,10 @@ impl RoutingGraph {
         to: &Lanelet,
         include_conflicting: bool,
     ) -> Option<RelationType> {
-        let relations = if include_conflicting {
-            RelationType::all()
-        } else {
-            RelationType::all()
-        };
-        // Upstream's "without conflicting" filter is a no-op -- it computes
-        // allRelations() | ~Conflicting, which matches everything -- so conflicting
-        // relations are reported either way. Repaired below.
-        let found = self.neighbours(from, relations, 0);
+        // Every relation is searched either way. Upstream's "without conflicting"
+        // filter is a no-op -- it computes allRelations() | ~Conflicting, which
+        // matches everything -- so the exclusion happens after the lookup instead.
+        let found = self.neighbours(from, RelationType::all(), 0);
         let matching = found
             .into_iter()
             .find(|candidate| candidate.lanelet.is_same_view(to))?;
@@ -663,7 +661,7 @@ impl RoutingGraph {
     }
 
     /// Every edge, for inspection and for testing the builder itself.
-    pub fn edges(&self) -> Vec<(Id, bool, Id, bool, RelationType, usize, f64)> {
+    pub fn edges(&self) -> Vec<EdgeSummary> {
         self.graph
             .all_edges()
             .into_iter()

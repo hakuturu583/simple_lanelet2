@@ -140,6 +140,7 @@ macro_rules! linestring_class {
             line: LineString,
         }
 
+        #[allow(dead_code)] // part of the macro's uniform shape
         impl $rust {
             pub const KIND: Kind = Kind {
                 dimensions: $dims,
