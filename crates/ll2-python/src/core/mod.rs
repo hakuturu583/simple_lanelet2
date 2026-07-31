@@ -7,6 +7,7 @@ use pyo3::types::PyModule;
 
 pub mod attribute;
 pub mod basic;
+pub mod lanelet;
 pub mod linestring;
 pub mod point;
 
@@ -40,6 +41,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<point::PyConstPoint3d>()?;
 
     linestring::register(m)?;
+    lanelet::register(m)?;
 
     m.add_function(wrap_pyfunction!(get_id, m)?)?;
     m.add_function(wrap_pyfunction!(register_id, m)?)?;

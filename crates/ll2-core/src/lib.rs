@@ -5,14 +5,17 @@
 //! upstream Lanelet2 C++ and carries a `file:line` reference in its doc comment.
 
 pub mod attribute;
+pub mod centerline;
 pub mod compat;
 pub mod fmt;
 pub mod id;
+pub mod lanelet;
 pub mod linestring;
 pub mod point;
 pub mod refs;
 
 pub use attribute::{Attribute, AttributeMap};
 pub use id::{Id, INVAL_ID, get_id, register_id};
+pub use lanelet::Lanelet;
 pub use linestring::LineString;
 pub use point::Point;

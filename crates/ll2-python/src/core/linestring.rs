@@ -248,7 +248,7 @@ macro_rules! linestring_class {
                 self.line.to_display_string()
             }
 
-            fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+            pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
                 let attributes = attributes_repr_arg(py, &self.line.attributes().read())?;
                 Ok(self.line.repr($py_name, &self.point_reprs(py)?, &attributes))
             }
