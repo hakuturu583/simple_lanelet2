@@ -9,6 +9,7 @@ pub mod area;
 pub mod attribute;
 pub mod basic;
 pub mod compound;
+pub mod convert;
 pub mod gps;
 pub mod lanelet;
 pub mod linestring;
