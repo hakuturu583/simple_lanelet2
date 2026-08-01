@@ -1,0 +1,106 @@
+# The Autoware oracle: a reproducible reference implementation to measure against.
+#
+# This is a *measuring instrument*, not a dependency. Nothing simple-lanelet2 ships
+# touches ROS -- the wheel is Rust and PyO3 and installs with uv alone. But the types
+# `autoware_lanelet2_extension` adds are only reachable through its own bindings, and
+# every guess this project has made about a reference has turned out wrong, so the
+# bindings have to be run rather than read.
+#
+# RoboStack packages ROS for conda, which gets us a pinned ROS Humble and a pinned
+# lanelet2 without touching the host. What it does *not* have is
+# `autoware_lanelet2_extension_python`: the newest extension on any channel is 1.1.0,
+# which predates that sub-package. So the extension alone is built from source, at a
+# pinned commit, on top of the pinned environment. pixi.lock covers everything else.
+#
+#   pixi run build-extension     # fetch at EXTENSION_REF, colcon build
+#   pixi run oracle-env          # print the setup.bash for SIMPLE_LL2_AW_SETUP
+#
+# Then, from the repository root:
+#
+#   export SIMPLE_LL2_AW_SETUP=$(cd tests/oracle && pixi run --frozen oracle-env)
+#   just venv-aw && just diff
+#
+# Without that variable the `# ORACLE: aw` and `# ORACLE: skew` cases are skipped and
+# the rest of the suite runs unchanged.
+
+[workspace]
+name = "simple-lanelet2-oracle"
+version = "0.1.0"
+description = "Pinned upstream Lanelet2 + Autoware extension, used only as a test oracle"
+channels = ["https://prefix.dev/robostack-humble", "conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+# No explicit python pin: RoboStack ties the interpreter to the ROS distro through
+# ros2-distro-mutex, and pinning it here only produces an unsolvable environment.
+
+# The reference implementation itself. Note this is 1.2.2, while tests/ref-requirements
+# .txt pins the PyPI wheel at 1.2.3 -- two different builds of upstream, deliberately.
+# `# ORACLE: skew` cases compare them and tests/oracle_skew.toml enumerates whatever
+# they legitimately disagree on, so a difference can always be attributed.
+# Pin the mutex so conda-forge build tools cannot drag the interpreter forward:
+# ros-humble-lanelet2 1.2.2 is built for cp311, and colcon/cmake happily resolve
+# against a newer python otherwise.
+ros2-distro-mutex = "0.9.*"
+
+ros-humble-lanelet2 = "1.2.2.*"
+ros-humble-lanelet2-python = "1.2.2.*"
+
+# Everything the extension needs to build. Its C++ half is also on this channel at
+# 1.1.0, but taking it from source keeps the library and the bindings on one commit.
+ros-humble-ros-workspace = "*"
+ros-humble-ament-cmake-auto = "*"
+ros-humble-autoware-map-msgs = "*"
+ros-humble-autoware-planning-msgs = "*"
+ros-humble-geometry-msgs = "*"
+ros-humble-rclpy = "*"
+colcon-common-extensions = "*"
+cmake = "*"
+cxx-compiler = "*"
+ninja = "*"
+# `boost` is deliberately not requested: conda-forge would resolve libboost-python
+# against the newest interpreter, which lanelet2-python 1.2.2 (cp311) cannot use. It
+# arrives at the right ABI as a dependency of lanelet2-python itself.
+libboost-devel = "*"
+geographiclib-cpp = "*"
+pugixml = "*"
+range-v3 = "*"
+git = "*"
+
+[activation.env]
+# Pinned by commit, not by branch: the oracle must not move on its own. Bumping this
+# is a deliberate edit, and 1000_aw_oracle_identity reports what is actually loaded.
+EXTENSION_REPO = "https://github.com/autowarefoundation/autoware_lanelet2_extension.git"
+EXTENSION_REF = "1.2.0"
+
+[tasks.fetch-extension]
+description = "Clone the extension at the pinned ref"
+cmd = """
+test -d src/autoware_lanelet2_extension || (
+  mkdir -p src &&
+  git clone --depth 1 --branch "$EXTENSION_REF" "$EXTENSION_REPO" src/autoware_lanelet2_extension
+)
+"""
+
+[tasks.build-extension]
+description = "Build the extension and its Python bindings against the pinned ROS"
+depends-on = ["fetch-extension"]
+cmd = "colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release"
+
+[tasks.oracle-env]
+description = "Print the setup.bash path to hand to SIMPLE_LL2_AW_SETUP"
+cmd = "echo $PWD/install/setup.bash"
+
+[tasks.check]
+description = "Confirm the oracle can import both halves of the reference"
+cmd = """
+. install/setup.bash && python -c "
+import lanelet2, sys
+import autoware_lanelet2_extension_python.regulatory_elements as r
+import autoware_lanelet2_extension_python.projection as p
+print('python  ', sys.version.split()[0])
+print('lanelet2', lanelet2.__file__)
+print('regelems', sorted(n for n in dir(r) if n[0].isupper()))
+print('projs   ', sorted(n for n in dir(p) if n[0].isupper()))
+"
+"""

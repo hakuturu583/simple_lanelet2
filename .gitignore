@@ -10,3 +10,8 @@ __pycache__/
 /.pytest_cache
 /tests/.out
 /.venv-aw
+tests/oracle/.pixi/
+tests/oracle/src/
+tests/oracle/build/
+tests/oracle/install/
+tests/oracle/log/
