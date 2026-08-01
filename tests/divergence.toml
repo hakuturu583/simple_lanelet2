@@ -36,3 +36,18 @@ build of lanelet2 (sha 3757bd26c344b1ab) and our mapping_example round-trip is \
 byte-identical to the PyPI wheel 1.2.3; it is the pinned RoboStack 1.2.2, which links \
 a different GeographicLib, that stands apart. `written_bytes` is compared normally \
 and does match, so the claim this case makes is still a byte-level one."""
+
+[[allow]]
+case = "1400_aw_utilities"
+key = "arc_wide"
+reason = """\
+A floating-point edge that only appears when the requested arc length saturates to \
+exactly the total. getPolygonFromArcLength scales the request by each bound's length, \
+which upstream takes from boost::geometry::length; that does not agree bit for bit \
+with the running sum of the same segment distances used by the scan immediately \
+afterwards, so the scan's strict `>` lands on either side of the final segment \
+depending on which sum produced the bound. Upstream's right bound is cut one point \
+short and interpolates an end point; ours keeps the original last point. Measured on \
+mapping_example.osm: 15 polygon points versus our 16, the extra one lying on the \
+segment between two of theirs. Ordinary requests -- arc_0_5 and arc_2_9 in the same \
+case -- agree exactly, and no reimplementation without boost can settle this one."""

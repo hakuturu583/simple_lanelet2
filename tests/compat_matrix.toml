@@ -148,3 +148,19 @@ Upstream's query.py dispatches getAllNeighbors on argument type, matches neither
 branch for the graph-and-lanelet overload, and falls off the end returning None. The \
 C++ has the overload; only the shim loses it. Repaired by default, None under \
 bug-compat."""
+
+[[entry]]
+case = "1400_aw_utilities"
+key = "length_single_*"
+reason = """\
+Upstream's shim for getLaneletLength2d/3d dispatches on argument type and never \
+matches a bare lanelet, so only the list form works there; the C++ has both. \
+Repaired by default, TypeError under bug-compat."""
+
+[[entry]]
+case = "1400_aw_utilities"
+key = "conflicting"
+reason = """\
+getConflictingLanelets' binding wants a graph type Python cannot produce, so it \
+cannot be called in the reference. Repaired by default, ArgumentError under \
+bug-compat."""
