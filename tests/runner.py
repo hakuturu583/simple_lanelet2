@@ -12,6 +12,13 @@ run          interpreter              environment
 ``FIXED``    ``.venv/bin/python``      ours, default (upstream defects repaired)
 ===========  =======================  =============================================
 
+A case may name a different reference with a ``# ORACLE:`` header. ``aw`` scores it
+against a ROS overlay carrying ``autoware_lanelet2_extension``, and ``skew`` compares
+the two references to each other. That oracle is **optional and test-only** -- nothing
+this project ships depends on ROS; it exists because the extension's bindings are
+distributed only as an ament package. Point ``SIMPLE_LL2_AW_SETUP`` at an overlay's
+``setup.bash`` to enable those cases; without it they are skipped.
+
 Two independent assertions come out of that:
 
 1. **REF vs COMPAT must match exactly.** This is the compatibility claim. The only
@@ -50,16 +57,17 @@ DATA_DIR = ROOT / "tests" / "data"
 REF_PYTHON = ROOT / ".venv-ref" / "bin" / "python"
 OUR_PYTHON = ROOT / ".venv" / "bin" / "python"
 
-#: The second reference: a ROS interpreter with `autoware_lanelet2_extension`
-#: alongside its own build of lanelet2. It cannot live in a uv venv — the bindings
-#: are Python 3.10 and link against the ROS `liblanelet2_core.so` — so it is reached
-#: by sourcing an overlay workspace instead. `.venv-aw` holds *our* wheel on 3.10 so
-#: both sides of the comparison speak the same ABI.
-AW_SETUP = Path(
-    os.environ.get(
-        "SIMPLE_LL2_AW_SETUP", "/home/masaya/workspace/autoware/install/setup.bash"
-    )
-)
+#: An *optional* second reference, used only by `# ORACLE: aw` and `# ORACLE: skew`
+#: cases: a ROS interpreter carrying `autoware_lanelet2_extension` alongside its own
+#: build of lanelet2. Nothing we ship depends on ROS — this is a measuring instrument,
+#: needed because the extension's bindings are distributed only as an ament package
+#: and there is no wheel to install. They are Python 3.10 and link against the ROS
+#: `liblanelet2_core.so`, so they cannot go in a uv venv; the workspace is sourced
+#: instead. `.venv-aw` holds *our* wheel on 3.10 so both sides speak the same ABI.
+#:
+#: Opt in by pointing SIMPLE_LL2_AW_SETUP at an overlay's `setup.bash`. Without it
+#: those cases are skipped and everything else runs exactly as before.
+AW_SETUP = Path(os.environ["SIMPLE_LL2_AW_SETUP"]) if "SIMPLE_LL2_AW_SETUP" in os.environ else None
 AW_OUR_PYTHON = ROOT / ".venv-aw" / "bin" / "python"
 
 DEFAULT_REL_TOL = 1e-12
@@ -543,13 +551,13 @@ def main() -> int:
         case
         for case in cases
         if parse_directives(case.read_text(encoding="utf-8"))[3] != "pypi"
-        and not (AW_OUR_PYTHON.exists() and AW_SETUP.exists())
+        and not (AW_OUR_PYTHON.exists() and AW_SETUP is not None and AW_SETUP.exists())
     ]
     if missing:
         names = ", ".join(case.stem for case in missing)
         print(
             f"the Autoware oracle is unavailable, skipping: {names}\n"
-            f"  (needs {AW_SETUP} and `just venv-aw`)",
+            "  (set SIMPLE_LL2_AW_SETUP to an overlay's setup.bash, then `just venv-aw`)",
             file=sys.stderr,
         )
         cases = [case for case in cases if case not in missing]
