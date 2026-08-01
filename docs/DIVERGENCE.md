@@ -149,7 +149,6 @@ upstream, where registration happens when its shared library loads. See
   yields coordinates derived from lat/lon instead: plausible, and *not* what
   Autoware's own tooling produces. Half-implementing this would be worse than not
   having it, so it is absent and said so loudly.
-- `MGRSProjector`. `TransverseMercatorProjector` is provided.
 - `utility.query` and `utility.utilities`. Their ROS-dependent halves need
   `geometry_msgs` and `rclpy`, which this project deliberately does not depend on;
   upstream imports those at module top, so those modules are unimportable without ROS

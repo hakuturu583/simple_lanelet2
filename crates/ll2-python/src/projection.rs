@@ -175,6 +175,15 @@ pub fn projector_of(obj: &Bound<'_, PyAny>) -> Option<SharedProjector> {
         PyLocalCartesianProjector,
         PyGeocentricProjector
     );
+    // The extension's projectors are ordinary projectors as far as io.load is
+    // concerned; they are probed here rather than given a marker attribute, because
+    // 0001_api_surface compares public names and any extra one is a regression.
+    if let Ok(value) = obj.cast::<crate::awext::projection::PyMgrsProjector>() {
+        return Some(value.borrow().shared());
+    }
+    if let Ok(value) = obj.cast::<crate::awext::projection::PyTransverseMercatorProjector>() {
+        return Some(value.borrow().shared());
+    }
     None
 }
 

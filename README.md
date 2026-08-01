@@ -95,8 +95,8 @@ changes what `lanelet2.io.load` produces from that point on.
 and `local_y` tags over the projected latitude and longitude. A real Autoware map is
 full of them — the Nishi-Shinjuku example carries 36,936 — so reading one through
 plain `lanelet2.io.load` gives coordinates derived from lat/lon: perfectly plausible
-numbers that are *not* the ones Autoware's tooling produces. `MGRSProjector`,
-`utility.query` and `utility.utilities` are also absent; see
+numbers that are *not* the ones Autoware's tooling produces. `utility.query` and
+`utility.utilities` are also absent; see
 [`docs/DIVERGENCE.md`](docs/DIVERGENCE.md).
 
 ## Licence
