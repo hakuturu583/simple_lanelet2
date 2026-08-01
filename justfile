@@ -62,6 +62,9 @@ test-rust:
 upstream-tests:
     LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream -q
     ./.venv/bin/python -m pytest tests/upstream -q
+    # The extension's own tests, likewise unmodified.
+    LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream-awext -q
+    ./.venv/bin/python -m pytest tests/upstream-awext -q
 
 # Regenerate the type stubs from the built extension.
 stubs: build

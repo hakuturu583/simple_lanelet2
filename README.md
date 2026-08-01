@@ -95,9 +95,13 @@ changes what `lanelet2.io.load` produces from that point on.
 and `local_y` tags over the projected latitude and longitude. A real Autoware map is
 full of them — the Nishi-Shinjuku example carries 36,936 — so reading one through
 plain `lanelet2.io.load` gives coordinates derived from lat/lon: perfectly plausible
-numbers that are *not* the ones Autoware's tooling produces. `utility.query` and
-`utility.utilities` are also absent; see
-[`docs/DIVERGENCE.md`](docs/DIVERGENCE.md).
+numbers that are *not* the ones Autoware's tooling produces.
+
+`utility.query` and `utility.utilities` are provided apart from their ROS-dependent
+halves, which are defined but raise when called — upstream imports `geometry_msgs` and
+`rclpy` at module top, so its versions cannot be imported at all without ROS. Several
+of upstream's own bindings do not work; those are repaired here and reproduced under
+`LANELET2_BUG_COMPAT=1`. See [`docs/DIVERGENCE.md`](docs/DIVERGENCE.md) for the list.
 
 ## Licence
 

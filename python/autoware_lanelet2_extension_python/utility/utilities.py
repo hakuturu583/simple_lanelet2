@@ -13,22 +13,28 @@ against the *second* and *second-to-last* accumulated lengths, which changes whi
 segment an endpoint interpolates within.
 """
 
-import math
+import math as _math
 
 import lanelet2  # noqa: F401
-from lanelet2.core import Lanelet, LineString3d, Point3d, Polygon3d, getId
-from lanelet2.geometry import distance, length, to2D
+from lanelet2.core import Lanelet as _Lanelet
+from lanelet2.core import LineString3d as _LineString3d
+from lanelet2.core import Point3d as _Point3d
+from lanelet2.core import Polygon3d as _Polygon3d
+from lanelet2.core import getId as _getId
+from lanelet2.geometry import distance as _distance
+from lanelet2.geometry import length as _length
+from lanelet2.geometry import to2D as _to2D
 
 from lanelet2._lanelet2 import awext_query as _query
 
-DEFAULT_RESOLUTION = 5.0
+_DEFAULT_RESOLUTION = 5.0
 
 
 def _accumulated_lengths(linestring):
     """Running total of segment lengths, starting at zero."""
     lengths = [0.0]
     for i in range(1, len(linestring)):
-        lengths.append(lengths[-1] + distance(linestring[i - 1], linestring[i]))
+        lengths.append(lengths[-1] + _distance(linestring[i - 1], linestring[i]))
     return lengths
 
 
@@ -53,7 +59,7 @@ def _nearest_index_pair(accumulated, target):
 
 def _resample_points(linestring, num_segments):
     """`num_segments + 1` points spaced evenly by arc length along a linestring."""
-    line_length = length(linestring)
+    line_length = _length(linestring)
     accumulated = _accumulated_lengths(linestring)
     if len(accumulated) < 2:
         return []
@@ -82,8 +88,8 @@ def _segment_count(lanelet, resolution):
     The *longer* bound decides, so the two are resampled to the same count and their
     points pair up index by index.
     """
-    longer = max(length(lanelet.leftBound), length(lanelet.rightBound))
-    return max(int(math.ceil(longer / resolution)), 1)
+    longer = max(_length(lanelet.leftBound), _length(lanelet.rightBound))
+    return max(int(_math.ceil(longer / resolution)), 1)
 
 
 def _resampled_bounds(lanelet, resolution):
@@ -98,17 +104,17 @@ def _resampled_bounds(lanelet, resolution):
 def _normalised(a, b):
     """The unit vector from `b` to `a`."""
     dx, dy, dz = a[0] - b[0], a[1] - b[1], a[2] - b[2]
-    norm = math.sqrt(dx * dx + dy * dy + dz * dz)
+    norm = _math.sqrt(dx * dx + dy * dy + dz * dz)
     if norm == 0.0:
         return 0.0, 0.0, 0.0
     return dx / norm, dy / norm, dz / norm
 
 
 def _linestring(points):
-    return LineString3d(getId(), [Point3d(getId(), *p) for p in points])
+    return _LineString3d(_getId(), [_Point3d(_getId(), *p) for p in points])
 
 
-def generateFineCenterline(lanelet_obj, resolution=DEFAULT_RESOLUTION):
+def generateFineCenterline(lanelet_obj, resolution=_DEFAULT_RESOLUTION):
     """A centerline resampled to roughly `resolution`-metre spacing."""
     left, right, segments = _resampled_bounds(lanelet_obj, resolution)
     return _linestring(
@@ -123,7 +129,7 @@ def generateFineCenterline(lanelet_obj, resolution=DEFAULT_RESOLUTION):
     )
 
 
-def getCenterlineWithOffset(lanelet_obj, offset, resolution=DEFAULT_RESOLUTION):
+def getCenterlineWithOffset(lanelet_obj, offset, resolution=_DEFAULT_RESOLUTION):
     """The centerline shifted sideways, positive being towards the left bound."""
     left, right, segments = _resampled_bounds(lanelet_obj, resolution)
     points = []
@@ -138,7 +144,7 @@ def getCenterlineWithOffset(lanelet_obj, offset, resolution=DEFAULT_RESOLUTION):
     return _query.__as_const_lines__([_linestring(points)])[0]
 
 
-def getRightBoundWithOffset(lanelet_obj, offset, resolution=DEFAULT_RESOLUTION):
+def getRightBoundWithOffset(lanelet_obj, offset, resolution=_DEFAULT_RESOLUTION):
     """The right bound shifted, positive being *away* from the left bound."""
     left, right, segments = _resampled_bounds(lanelet_obj, resolution)
     points = []
@@ -148,7 +154,7 @@ def getRightBoundWithOffset(lanelet_obj, offset, resolution=DEFAULT_RESOLUTION):
     return _query.__as_const_lines__([_linestring(points)])[0]
 
 
-def getLeftBoundWithOffset(lanelet_obj, offset, resolution=DEFAULT_RESOLUTION):
+def getLeftBoundWithOffset(lanelet_obj, offset, resolution=_DEFAULT_RESOLUTION):
     """The left bound shifted, positive being *away* from the right bound."""
     left, right, segments = _resampled_bounds(lanelet_obj, resolution)
     points = []
@@ -164,19 +170,19 @@ def getClosestSegment(search_point, linestring):
     Ties go to the earlier segment, since the comparison is strict.
     """
     if len(linestring) < 2:
-        return LineString3d(getId(), [])
+        return _LineString3d(_getId(), [])
     closest = None
     best = float("inf")
     for i in range(1, len(linestring)):
         previous, current = linestring[i - 1], linestring[i]
-        segment = LineString3d(
-            getId(),
+        segment = _LineString3d(
+            _getId(),
             [
-                Point3d(getId(), previous.x, previous.y, previous.z),
-                Point3d(getId(), current.x, current.y, current.z),
+                _Point3d(_getId(), previous.x, previous.y, previous.z),
+                _Point3d(_getId(), current.x, current.y, current.z),
             ],
         )
-        gap = distance(to2D(segment), search_point)
+        gap = _distance(_to2D(segment), search_point)
         if gap < best:
             closest, best = segment, gap
     return _query.__as_const_lines__([closest])[0]
@@ -191,11 +197,11 @@ def _unique_points(points, existing):
     """
     for point in points:
         duplicate = any(
-            distance(Point3d(0, point.x, point.y, point.z), other) <= 0.01
+            _distance(_Point3d(0, point.x, point.y, point.z), other) <= 0.01
             for other in existing
         )
         if not duplicate:
-            existing.append(Point3d(getId(), point.x, point.y, point.z))
+            existing.append(_Point3d(_getId(), point.x, point.y, point.z))
     return existing
 
 
@@ -206,8 +212,8 @@ def combineLaneletsShape(lanelets):
         _unique_points(lanelet_obj.leftBound, lefts)
         _unique_points(lanelet_obj.rightBound, rights)
         _unique_points(lanelet_obj.centerline, centres)
-    combined = Lanelet(getId(), LineString3d(getId(), lefts), LineString3d(getId(), rights))
-    combined.centerline = LineString3d(getId(), centres)
+    combined = _Lanelet(_getId(), _LineString3d(_getId(), lefts), _LineString3d(_getId(), rights))
+    combined.centerline = _LineString3d(_getId(), centres)
     return combined
 
 
@@ -225,12 +231,12 @@ def _linestring_from_arc_length(linestring, s1, s2):
     """
     points = []
     if len(linestring) == 0:
-        return LineString3d(getId(), points)
+        return _LineString3d(_getId(), points)
 
     accumulated = 0.0
     start_index = len(linestring)
     for i in range(len(linestring) - 1):
-        step = distance(linestring[i], linestring[i + 1])
+        step = _distance(linestring[i], linestring[i + 1])
         if accumulated + step > s1:
             start_index = i
             break
@@ -240,13 +246,13 @@ def _linestring_from_arc_length(linestring, s1, s2):
         direction = _normalised((p2.x, p2.y, p2.z), (p1.x, p1.y, p1.z))
         residue = s1 - accumulated
         points.append(
-            Point3d(0, *(v + d * residue for v, d in zip((p1.x, p1.y, p1.z), direction)))
+            _Point3d(0, *(v + d * residue for v, d in zip((p1.x, p1.y, p1.z), direction)))
         )
 
     accumulated = 0.0
     end_index = len(linestring)
     for i in range(len(linestring) - 1):
-        step = distance(linestring[i], linestring[i + 1])
+        step = _distance(linestring[i], linestring[i + 1])
         if accumulated + step > s2:
             end_index = i
             break
@@ -254,16 +260,16 @@ def _linestring_from_arc_length(linestring, s1, s2):
 
     for i in range(start_index + 1, min(end_index, len(linestring))):
         p = linestring[i]
-        points.append(Point3d(0, p.x, p.y, p.z))
+        points.append(_Point3d(0, p.x, p.y, p.z))
 
     if end_index < len(linestring) - 1:
         p1, p2 = linestring[end_index], linestring[end_index + 1]
         direction = _normalised((p2.x, p2.y, p2.z), (p1.x, p1.y, p1.z))
         residue = s2 - accumulated
         points.append(
-            Point3d(0, *(v + d * residue for v, d in zip((p1.x, p1.y, p1.z), direction)))
+            _Point3d(0, *(v + d * residue for v, d in zip((p1.x, p1.y, p1.z), direction)))
         )
-    return LineString3d(0, points)
+    return _LineString3d(0, points)
 
 
 def getPolygonFromArcLength(lanelets, s1, s2):
@@ -278,7 +284,7 @@ def getPolygonFromArcLength(lanelets, s1, s2):
     combined = combineLaneletsShape(lanelets)
     total = length2d(combined)
     if total == 0.0:
-        return Lanelet(0, LineString3d(0, []), LineString3d(0, [])).polygon3d()
+        return _Lanelet(0, _LineString3d(0, []), _LineString3d(0, [])).polygon3d()
 
     ratio1 = max(0.0, min(s1, total)) / total
     ratio2 = max(0.0, min(s2, total)) / total
@@ -294,10 +300,10 @@ def getPolygonFromArcLength(lanelets, s1, s2):
     right = _linestring_from_arc_length(
         combined.rightBound, ratio1 * right_length, ratio2 * right_length
     )
-    return Lanelet(0, left, right).polygon3d()
+    return _Lanelet(0, left, right).polygon3d()
 
 
-def overwriteLaneletsCenterline(lanelet_map, resolution=DEFAULT_RESOLUTION, force_overwrite=False):
+def overwriteLaneletsCenterline(lanelet_map, resolution=_DEFAULT_RESOLUTION, force_overwrite=False):
     """Replaces every computed centerline with a finely resampled one.
 
     A centerline the map author supplied is left alone unless `force_overwrite`; that
@@ -368,7 +374,7 @@ def lineStringWithWidthToPolygon(linestring):
         tuple(v - n * half for v, n in zip((back.x, back.y, back.z), left)),
         tuple(v - n * half for v, n in zip((front.x, front.y, front.z), left)),
     ]
-    return Polygon3d(getId(), [Point3d(getId(), *c) for c in corners])
+    return _Polygon3d(_getId(), [_Point3d(_getId(), *c) for c in corners])
 
 
 def lineStringToPolygon(linestring):
@@ -382,8 +388,8 @@ def lineStringToPolygon(linestring):
         len(linestring) < 3 or linestring[0].id == linestring[-1].id
     ):
         return None
-    return Polygon3d(
-        getId(), [Point3d(getId(), p.x, p.y, p.z) for p in linestring]
+    return _Polygon3d(
+        _getId(), [_Point3d(_getId(), p.x, p.y, p.z) for p in linestring]
     )
 
 

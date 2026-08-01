@@ -51,3 +51,19 @@ short and interpolates an end point; ours keeps the original last point. Measure
 mapping_example.osm: 15 polygon points versus our 16, the extra one lying on the \
 segment between two of theirs. Ordinary requests -- arc_0_5 and arc_2_9 in the same \
 case -- agree exactly, and no reimplementation without boost can settle this one."""
+
+[[allow]]
+case = "1050_aw_api_surface"
+key = "module:utility.*"
+reason = """\
+Upstream's utility modules import geometry_msgs and rclpy at their top, which leaks \
+Point, Pose, Quaternion and serialize_message into their namespaces as public names. \
+We import neither -- that is the whole reason our versions are importable without ROS \
+-- so those four names are absent. Everything else in the surface matches exactly."""
+
+[[allow]]
+case = "1050_aw_api_surface"
+key = "module:utility.utilities"
+reason = """\
+Also missing getExpandedLanelet and getExpandedLanelets, which need offsetNoThrow and \
+checkForInversion -- lanelet2 internals not exposed to Python."""

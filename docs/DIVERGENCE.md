@@ -149,15 +149,17 @@ upstream, where registration happens when its shared library loads. See
   yields coordinates derived from lat/lon instead: plausible, and *not* what
   Autoware's own tooling produces. Half-implementing this would be worse than not
   having it, so it is absent and said so loudly.
-- `utility.utilities` entirely.
+- `getExpandedLanelet` and `getExpandedLanelets`. They need `offsetNoThrow` and
+  `checkForInversion`, lanelet2 internals that are not exposed to Python and that we
+  do not have. Everything else in `utility.utilities` is provided.
 - `utility.query` is complete apart from `Point`, `Pose` and `serialize_message`,
   which are ROS types that leak into upstream's module namespace from its own imports.
   Its ROS-dependent functions are *defined* but raise when called, so the module stays
   importable; upstream imports `geometry_msgs` and `rclpy` at module top, which makes
   its version unimportable without ROS at all.
 
-Five of `utility.query`'s functions cannot be called in the reference. All are
-repaired by default and reproduced under `LANELET2_BUG_COMPAT=1`:
+Seven functions across the two utility modules cannot be called in the reference at
+all. All are repaired by default and reproduced under `LANELET2_BUG_COMPAT=1`:
 
 - `getSucceedingLaneletSequences` and `getPrecedingLaneletSequences` return a nested
   C++ vector Boost.Python was never given a to_python converter for.
@@ -167,6 +169,17 @@ repaired by default and reproduced under `LANELET2_BUG_COMPAT=1`:
 - `getAllNeighbors` reaches upstream's own shim, which dispatches on argument type,
   matches neither branch for the graph-and-lanelet overload, and falls off the end
   returning `None`. The C++ has the overload; only the shim loses it.
+- `getLaneletLength2d` and `getLaneletLength3d` have the same shim problem: only the
+  list form is ever matched, though the C++ takes a single lanelet too.
+- `getConflictingLanelets` wants a graph type Python cannot produce.
+
+One difference is not repairable here. `getPolygonFromArcLength` scales the request by
+each bound's length, which upstream takes from `boost::geometry::length`; that does not
+agree bit for bit with the running sum of the same segment distances used by the scan
+immediately afterwards. When a request saturates to exactly the total length, the
+scan's strict comparison lands on either side of the final segment depending on which
+sum produced the bound — upstream cuts one point short and interpolates an end point,
+we keep the original last point. Ordinary requests agree exactly.
 - `BusStopArea` and `Roundabout` have no Python class, matching upstream. They are
   registered nonetheless, because the C++ factory knows them: without that a map
   containing them would fail to load even with the extension present.
