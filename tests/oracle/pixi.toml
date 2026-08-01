@@ -49,6 +49,18 @@ ros-humble-lanelet2-python = "1.2.2.*"
 # Everything the extension needs to build. Its C++ half is also on this channel at
 # 1.1.0, but taking it from source keeps the library and the bindings on one commit.
 ros-humble-ros-workspace = "*"
+# Taken from the extension's own package.xml rather than guessed. autoware_cmake is
+# the one that fails first and least helpfully -- its absence reads as a CMake module
+# path problem rather than a missing package.
+ros-humble-autoware-cmake = "*"
+ros-humble-ament-cmake-ros = "*"
+ros-humble-python-cmake-module = "*"
+ros-humble-lanelet2-validation = "*"
+ros-humble-lanelet2-maps = "*"
+ros-humble-rclcpp = "*"
+ros-humble-tf2 = "*"
+ros-humble-tf2-geometry-msgs = "*"
+ros-humble-visualization-msgs = "*"
 ros-humble-ament-cmake-auto = "*"
 ros-humble-autoware-map-msgs = "*"
 ros-humble-autoware-planning-msgs = "*"
@@ -85,7 +97,10 @@ test -d src/autoware_lanelet2_extension || (
 [tasks.build-extension]
 description = "Build the extension and its Python bindings against the pinned ROS"
 depends-on = ["fetch-extension"]
-cmd = "colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release"
+# BUILD_TESTING=OFF is not a shortcut: the extension's own C++ tests are compiled
+# with -Werror and do not survive the conda toolchain's GCC 14, which is newer than
+# upstream builds against. We want the library and the bindings, not their tests.
+cmd = "colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF"
 
 [tasks.oracle-env]
 description = "Print the setup.bash path to hand to SIMPLE_LL2_AW_SETUP"
@@ -93,14 +108,16 @@ cmd = "echo $PWD/install/setup.bash"
 
 [tasks.check]
 description = "Confirm the oracle can import both halves of the reference"
+# Run through bash: pixi's task shell has no `source`, and the overlay has to be
+# sourced before the extension's bindings are importable.
 cmd = """
-. install/setup.bash && python -c "
-import lanelet2, sys
+bash -c '. install/setup.bash >/dev/null 2>&1; python -c "
+import sys, lanelet2
 import autoware_lanelet2_extension_python.regulatory_elements as r
 import autoware_lanelet2_extension_python.projection as p
-print('python  ', sys.version.split()[0])
-print('lanelet2', lanelet2.__file__)
-print('regelems', sorted(n for n in dir(r) if n[0].isupper()))
-print('projs   ', sorted(n for n in dir(p) if n[0].isupper()))
-"
+print(\\"python  \\", sys.version.split()[0])
+print(\\"lanelet2\\", lanelet2.__file__)
+print(\\"regelems\\", sorted(n for n in dir(r) if n[0].isupper()))
+print(\\"projs   \\", sorted(n for n in dir(p) if n[0].isupper()))
+"'
 """

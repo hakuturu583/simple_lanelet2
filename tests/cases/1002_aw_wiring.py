@@ -30,7 +30,12 @@ def main():
 
     map_ = load(data_path("mapping_example.osm"), projector)
     emit("counts", [len(map_.pointLayer), len(map_.laneletLayer)])
-    emit("first_lanelets", [repr(x)[:100] for x in by_id(map_.laneletLayer)][:5])
+    # Deliberately not the lanelets' reprs. The pinned oracle is lanelet2 1.2.2, which
+    # still recurses forever on a lanelet whose regulatory element points back at it;
+    # 1.2.3 broke the cycle with _ReprWrapper, and so do we. Lanelet reprs are covered
+    # against the PyPI oracle by 0210_lanelet and 0220_regelem -- this case exists to
+    # check the plumbing, not to relitigate that fix against an older build.
+    emit("first_lanelet_ids", [x.id for x in by_id(map_.laneletLayer)][:5])
 
 
 run(main)
