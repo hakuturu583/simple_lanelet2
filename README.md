@@ -72,6 +72,33 @@ What the harness checks, beyond "it runs":
   way subtype, both directions, both locations — rather than spot-checked;
 - the routing graph's whole edge list is compared before any query is.
 
+## Autoware maps
+
+`autoware_lanelet2_extension`'s regulatory elements and its transverse Mercator
+projector are provided under the upstream import path, in this same wheel:
+
+```python
+import lanelet2
+import autoware_lanelet2_extension_python.regulatory_elements  # registers the subtypes
+from autoware_lanelet2_extension_python.projection import TransverseMercatorProjector
+```
+
+Importing `regulatory_elements` is what makes `road_marking`, `crosswalk`,
+`detection_area` and the rest resolvable, and it makes `traffic_light` resolve to
+`AutowareTrafficLight`. Before that import a map carrying them is refused, exactly as
+stock Lanelet2 refuses it. That is upstream's behaviour, not an accident of packaging:
+registration there happens when the extension's shared library loads. Note that it is
+process-wide and cannot be undone, so an unrelated module importing the extension
+changes what `lanelet2.io.load` produces from that point on.
+
+**`AutowareOsmParser` is not implemented.** Autoware's own parser prefers `local_x`
+and `local_y` tags over the projected latitude and longitude. A real Autoware map is
+full of them — the Nishi-Shinjuku example carries 36,936 — so reading one through
+plain `lanelet2.io.load` gives coordinates derived from lat/lon: perfectly plausible
+numbers that are *not* the ones Autoware's tooling produces. `MGRSProjector`,
+`utility.query` and `utility.utilities` are also absent; see
+[`docs/DIVERGENCE.md`](docs/DIVERGENCE.md).
+
 ## Licence
 
 BSD-3-Clause, matching upstream Lanelet2. See [`NOTICE`](NOTICE) for vendored assets.

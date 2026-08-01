@@ -24,7 +24,9 @@ build:
 # an `# ORACLE: aw` case speak the same ABI. The reference itself is a ROS overlay
 # workspace, reached by sourcing it -- see SIMPLE_LL2_AW_SETUP in tests/runner.py.
 venv-aw: build-wheel
-    uv venv --python 3.10 .venv-aw
+    # 3.12 to match the pinned oracle: both sides of an `# ORACLE: aw`
+    # comparison must be the same interpreter, and RoboStack picks it.
+    uv venv --python 3.12 .venv-aw
     uv pip install --python .venv-aw --reinstall target/wheels/*.whl
 
 # A real wheel rather than an editable install; `# ORACLE: aw` cases need one.

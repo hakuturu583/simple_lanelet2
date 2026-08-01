@@ -103,3 +103,57 @@ Surprising, but intended upstream, and with no better answer available:
   raises `KeyError`.
 - `leftOf`, `rightOf` and `follows` compare object *identity*, not geometry. Two
   coincident but distinct linestrings are not "left of" each other.
+
+---
+
+## autoware_lanelet2_extension
+
+Provided through the upstream import path,
+`autoware_lanelet2_extension_python.{regulatory_elements,projection}`, and shipped in
+the same wheel. Importing `regulatory_elements` is what makes its subtypes resolvable
+— before that a map carrying them is refused exactly as stock Lanelet2 refuses it,
+and elements loaded beforehand keep the class they were built with. That mirrors
+upstream, where registration happens when its shared library loads. See
+`docs/AUTOWARE_EXTENSION.md` for the measured behaviour behind each item here.
+
+### Repaired by default, reproduced under `LANELET2_BUG_COMPAT=1`
+
+- `NoStoppingArea.__repr__` is bound to a `NoParkingArea&` upstream, so the class
+  cannot render itself at all — it raises rather than printing the wrong name.
+- `Crosswalk`'s constructor inserts each stop line into a `std::map` under one key,
+  and `insert` does not overwrite, so only the first of several survives.
+- `Crosswalk.addCrosswalkArea` writes to role `crosswalk` while `crosswalkAreas()`
+  reads `crosswalk_polygon`, so an added area is invisible to its own getter.
+
+### Not reproducible
+
+- `Crosswalk.crosswalkLanelet()` dereferences a weak reference without checking, so
+  upstream **segfaults** once the lanelet is gone rather than reporting anything. We
+  raise. This cannot be pinned by a diff case: there is no way to observe our raise
+  against a reference that dies instead of raising.
+- `VirtualTrafficLight`'s Python constructor cannot succeed — it validates for
+  exactly one `start_line` and its signature gives no way to supply one — so the
+  class is reachable only by loading a map. We raise with the same message.
+
+### Deliberately different
+
+- Boost.Python splices its own `instance` class into the MRO of everything it
+  exports. Ours are ordinary Python classes and do not, which is already true of every
+  stock class here.
+
+### Not implemented
+
+- **`AutowareOsmParser`.** It overrides node coordinates from `local_x`/`local_y`
+  tags where present, and reads a `MetaInfo` element for versions. The Nishi-Shinjuku
+  map carries 36,936 `local_x` tags, so reading it through plain `lanelet2.io.load`
+  yields coordinates derived from lat/lon instead: plausible, and *not* what
+  Autoware's own tooling produces. Half-implementing this would be worse than not
+  having it, so it is absent and said so loudly.
+- `MGRSProjector`. `TransverseMercatorProjector` is provided.
+- `utility.query` and `utility.utilities`. Their ROS-dependent halves need
+  `geometry_msgs` and `rclpy`, which this project deliberately does not depend on;
+  upstream imports those at module top, so those modules are unimportable without ROS
+  in the first place.
+- `BusStopArea` and `Roundabout` have no Python class, matching upstream. They are
+  registered nonetheless, because the C++ factory knows them: without that a map
+  containing them would fail to load even with the extension present.
