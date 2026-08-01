@@ -20,6 +20,18 @@ venvs:
 build:
     uv run --no-sync --python .venv maturin develop --uv
 
+# The Autoware oracle's counterpart: our wheel on Python 3.10, so that both sides of
+# an `# ORACLE: aw` case speak the same ABI. The reference itself is a ROS overlay
+# workspace, reached by sourcing it -- see SIMPLE_LL2_AW_SETUP in tests/runner.py.
+venv-aw: build-wheel
+    uv venv --python 3.10 .venv-aw
+    uv pip install --python .venv-aw --reinstall target/wheels/*.whl
+
+# A real wheel rather than an editable install; `# ORACLE: aw` cases need one.
+build-wheel:
+    rm -f target/wheels/*.whl
+    uv run --no-sync --python .venv maturin build --out target/wheels
+
 build-release:
     uv run --no-sync --python .venv maturin develop --uv --release
 

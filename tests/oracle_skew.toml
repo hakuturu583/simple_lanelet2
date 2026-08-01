@@ -1,0 +1,46 @@
+# Where the two *reference* implementations disagree with each other.
+#
+# There are two oracles. `.venv-ref` holds the PyPI `lanelet2==1.2.3` wheel, which is
+# what almost every case is scored against. The ROS overlay reached through
+# `# ORACLE: aw` holds a different build of lanelet2 plus
+# `autoware_lanelet2_extension`, and it is the only oracle that knows the extension's
+# types at all.
+#
+# Those two builds are not the same source. This project has already been misled once
+# by exactly that kind of skew -- a `bus_lane` carries a road's speed limit in the
+# PyPI wheel and nothing in the newer clone -- so any Autoware-side mismatch has to be
+# attributable before it can be acted on. Cases marked `# ORACLE: skew` exercise
+# nothing but stock behaviour and run under *both* references; whatever they disagree
+# on is listed here, with a reason, or the runner fails.
+#
+# Every entry needs a reason. `case` and `key` are fnmatch patterns. The runner fails
+# if an entry stops firing, so the list cannot rot.
+#
+# An empty list is the good state: it means the two builds agree on everything the
+# skew cases touch, and an Autoware-side difference is therefore ours to explain.
+
+[[allow]]
+case = "1000_aw_oracle_identity"
+key = "python"
+reason = """\
+The extension's bindings are Python 3.10 and link against the ROS \
+liblanelet2_core.so, so they cannot be installed into a uv venv alongside the 3.11 \
+PyPI wheel. The two references necessarily run on different interpreters; our own \
+wheel is abi3 and is installed on 3.10 in .venv-aw so that both sides of an \
+`# ORACLE: aw` comparison speak the same ABI."""
+
+[[allow]]
+case = "1000_aw_oracle_identity"
+key = "lanelet2_module"
+reason = """\
+Different builds of lanelet2 from different sources: the PyPI wheel 1.2.3 versus \
+whatever ROS Humble ships. This is exactly the skew 1001_aw_stock_crosscheck exists \
+to bound."""
+
+[[allow]]
+case = "1000_aw_oracle_identity"
+key = "extension*"
+reason = """\
+Only the ROS overlay has autoware_lanelet2_extension; that is the entire reason it \
+is a second oracle. The lists are the extension's own API surface, recorded here so \
+that a rebuild that adds or drops a class shows up as a diff on this case."""

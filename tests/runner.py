@@ -50,12 +50,25 @@ DATA_DIR = ROOT / "tests" / "data"
 REF_PYTHON = ROOT / ".venv-ref" / "bin" / "python"
 OUR_PYTHON = ROOT / ".venv" / "bin" / "python"
 
+#: The second reference: a ROS interpreter with `autoware_lanelet2_extension`
+#: alongside its own build of lanelet2. It cannot live in a uv venv — the bindings
+#: are Python 3.10 and link against the ROS `liblanelet2_core.so` — so it is reached
+#: by sourcing an overlay workspace instead. `.venv-aw` holds *our* wheel on 3.10 so
+#: both sides of the comparison speak the same ABI.
+AW_SETUP = Path(
+    os.environ.get(
+        "SIMPLE_LL2_AW_SETUP", "/home/masaya/workspace/autoware/install/setup.bash"
+    )
+)
+AW_OUR_PYTHON = ROOT / ".venv-aw" / "bin" / "python"
+
 DEFAULT_REL_TOL = 1e-12
 DEFAULT_ABS_TOL = 1e-12
 CASE_TIMEOUT = 300
 
 TOL_RE = re.compile(r"^#\s*TOL:\s*(.*)$", re.MULTILINE)
 EXPECT_RE = re.compile(r"^#\s*EXPECT:\s*(\w+)\s*$", re.MULTILINE)
+ORACLE_RE = re.compile(r"^#\s*ORACLE:\s*(\w+)\s*$", re.MULTILINE)
 
 #: Iterating a map layer without sorting is the single most common source of
 #: flaky cases, because upstream layers are ``std::unordered_map``. Catch it
@@ -128,7 +141,33 @@ class RunResult:
         return {record.key: record.value for record in self.records}
 
 
-def run_case(case: Path, python: Path, extra_env: dict[str, str]) -> RunResult:
+def direct(python: Path):
+    """Runs a case under an interpreter we control outright."""
+    return lambda case: [str(python), str(case)]
+
+
+def sourced(setup: Path):
+    """Runs a case under a ROS overlay's own `python3`.
+
+    `bash -c`, never `-lc`: the profile must not contribute anything, so the only
+    environment the case sees is our scrubbed set plus whatever `setup.bash` adds.
+    ament *prepends* to PYTHONPATH, so `tests/lib` survives the sourcing.
+    """
+    return lambda case: [
+        "bash",
+        "-c",
+        f'. "{setup}" >/dev/null 2>&1; exec python3 "{case}"',
+    ]
+
+
+#: Which pair of interpreters an oracle names: the reference, and ours.
+ORACLES = {
+    "pypi": (lambda: direct(REF_PYTHON), lambda: direct(OUR_PYTHON)),
+    "aw": (lambda: sourced(AW_SETUP), lambda: direct(AW_OUR_PYTHON)),
+}
+
+
+def run_case(case: Path, interpreter, extra_env: dict[str, str]) -> RunResult:
     env = {
         "PATH": os.environ.get("PATH", ""),
         "HOME": os.environ.get("HOME", ""),
@@ -144,7 +183,7 @@ def run_case(case: Path, python: Path, extra_env: dict[str, str]) -> RunResult:
     with tempfile.TemporaryDirectory(prefix="ll2-case-") as workdir:
         try:
             proc = subprocess.run(
-                [str(python), str(case)],
+                interpreter(case),
                 env=env,
                 cwd=workdir,
                 capture_output=True,
@@ -297,7 +336,7 @@ class CaseOutcome:
     deviation: Deviation = field(default_factory=Deviation)
 
 
-def parse_directives(source: str) -> tuple[float, float, str]:
+def parse_directives(source: str) -> tuple[float, float, str, str]:
     rel_tol, abs_tol = DEFAULT_REL_TOL, DEFAULT_ABS_TOL
     match = TOL_RE.search(source)
     if match:
@@ -308,7 +347,13 @@ def parse_directives(source: str) -> tuple[float, float, str]:
             elif name == "abs":
                 abs_tol = float(value)
     expect = EXPECT_RE.search(source)
-    return rel_tol, abs_tol, (expect.group(1) if expect else "exact")
+    oracle = ORACLE_RE.search(source)
+    return (
+        rel_tol,
+        abs_tol,
+        (expect.group(1) if expect else "exact"),
+        (oracle.group(1) if oracle else "pypi"),
+    )
 
 
 def lint_case(source: str) -> list[str]:
@@ -321,10 +366,16 @@ def lint_case(source: str) -> list[str]:
     return problems
 
 
-def check_case(case: Path, mode: str, divergences: list[Rule], compat_matrix: list[Rule]) -> CaseOutcome:
+def check_case(
+    case: Path,
+    mode: str,
+    divergences: list[Rule],
+    compat_matrix: list[Rule],
+    oracle_skew: list[Rule],
+) -> CaseOutcome:
     name = case.stem
     source = case.read_text(encoding="utf-8")
-    rel_tol, abs_tol, expect = parse_directives(source)
+    rel_tol, abs_tol, expect, oracle = parse_directives(source)
 
     lint_problems = lint_case(source)
     if lint_problems:
@@ -332,8 +383,47 @@ def check_case(case: Path, mode: str, divergences: list[Rule], compat_matrix: li
 
     outcome = CaseOutcome(name, "ok")
 
-    ref = run_case(case, REF_PYTHON, {})
-    compat = run_case(case, OUR_PYTHON, {"LANELET2_BUG_COMPAT": "1"})
+    # A skew case compares the two *references* against each other and never runs
+    # our code at all. The ROS build of lanelet2 is not the PyPI one, so without
+    # this every later Autoware-side mismatch would be ambiguous: our bug, or
+    # theirs? Anything the two legitimately disagree on is enumerated in
+    # oracle_skew.toml with a reason, the same way the other ledgers work.
+    if oracle == "skew":
+        pypi = run_case(case, direct(REF_PYTHON), {})
+        ros = run_case(case, sourced(AW_SETUP), {})
+        cmp_skew = diff_runs(pypi, ros, rel_tol, abs_tol)
+        outcome.deviation = cmp_skew.deviation
+        if cmp_skew.structural:
+            outcome.status = "fail"
+            outcome.messages += [f"PyPI vs ROS: {m}" for m in cmp_skew.structural]
+            if ros.stderr.strip():
+                outcome.messages.append("ROS stderr:\n" + indent(ros.stderr.strip()))
+        for key in cmp_skew.differing:
+            if any(rule.matches(name, key) for rule in oracle_skew):
+                continue
+            outcome.status = "fail"
+            outcome.messages.append(
+                f"the two references disagree at {key!r} "
+                f"(not in oracle_skew.toml):\n      {cmp_skew.details[key]}"
+            )
+        for rule in oracle_skew:
+            if fnmatch(name, rule.case):
+                fired = any(rule.matches(name, key) for key in cmp_skew.differing)
+                declared = any(fnmatch(key, rule.key) for key in pypi.as_dict())
+                if declared and not fired:
+                    outcome.status = "fail"
+                    outcome.messages.append(
+                        f"oracle_skew.toml entry {rule.case}/{rule.key} "
+                        "no longer differs -- remove it"
+                    )
+        return outcome
+
+    if oracle not in ORACLES:
+        return CaseOutcome(name, "fail", [f"unknown '# ORACLE: {oracle}' directive"])
+    reference, ours = (build() for build in ORACLES[oracle])
+
+    ref = run_case(case, reference, {})
+    compat = run_case(case, ours, {"LANELET2_BUG_COMPAT": "1"})
 
     # --- assertion 1: REF vs COMPAT ---------------------------------------
     cmp1 = diff_runs(ref, compat, rel_tol, abs_tol)
@@ -380,7 +470,7 @@ def check_case(case: Path, mode: str, divergences: list[Rule], compat_matrix: li
         return outcome
 
     # --- assertion 2: COMPAT vs FIXED -------------------------------------
-    fixed = run_case(case, OUR_PYTHON, {})
+    fixed = run_case(case, ours, {})
     cmp2 = diff_runs(compat, fixed, rel_tol, abs_tol)
 
     if cmp2.structural:
@@ -437,6 +527,7 @@ def main() -> int:
 
     divergences = load_rules(ROOT / "tests" / "divergence.toml", "allow")
     compat_matrix = load_rules(ROOT / "tests" / "compat_matrix.toml", "entry")
+    oracle_skew = load_rules(ROOT / "tests" / "oracle_skew.toml", "allow")
 
     cases = sorted(CASES_DIR.glob("*.py"))
     if args.show:
@@ -448,7 +539,25 @@ def main() -> int:
         print("no cases matched", file=sys.stderr)
         return 2
 
-    outcomes = [check_case(case, args.mode, divergences, compat_matrix) for case in cases]
+    missing = [
+        case
+        for case in cases
+        if parse_directives(case.read_text(encoding="utf-8"))[3] != "pypi"
+        and not (AW_OUR_PYTHON.exists() and AW_SETUP.exists())
+    ]
+    if missing:
+        names = ", ".join(case.stem for case in missing)
+        print(
+            f"the Autoware oracle is unavailable, skipping: {names}\n"
+            f"  (needs {AW_SETUP} and `just venv-aw`)",
+            file=sys.stderr,
+        )
+        cases = [case for case in cases if case not in missing]
+
+    outcomes = [
+        check_case(case, args.mode, divergences, compat_matrix, oracle_skew)
+        for case in cases
+    ]
 
     failures = 0
     for outcome in outcomes:
@@ -482,12 +591,21 @@ def main() -> int:
 
 
 def show(case: Path) -> int:
-    """Print all three streams for one case, side by side."""
-    runs = [
-        ("REF", run_case(case, REF_PYTHON, {})),
-        ("COMPAT", run_case(case, OUR_PYTHON, {"LANELET2_BUG_COMPAT": "1"})),
-        ("FIXED", run_case(case, OUR_PYTHON, {})),
-    ]
+    """Print every stream for one case, side by side."""
+    oracle = parse_directives(case.read_text(encoding="utf-8"))[3]
+    if oracle == "skew":
+        runs = [
+            ("PyPI", run_case(case, direct(REF_PYTHON), {})),
+            ("ROS", run_case(case, sourced(AW_SETUP), {})),
+        ]
+    else:
+        reference, ours = (build() for build in ORACLES[oracle])
+        suffix = "" if oracle == "pypi" else f" [{oracle}]"
+        runs = [
+            (f"REF{suffix}", run_case(case, reference, {})),
+            (f"COMPAT{suffix}", run_case(case, ours, {"LANELET2_BUG_COMPAT": "1"})),
+            (f"FIXED{suffix}", run_case(case, ours, {})),
+        ]
     keys: list[str] = []
     for _, run in runs:
         for record in run.records:
