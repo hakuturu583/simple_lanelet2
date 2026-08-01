@@ -149,10 +149,17 @@ upstream, where registration happens when its shared library loads. See
   yields coordinates derived from lat/lon instead: plausible, and *not* what
   Autoware's own tooling produces. Half-implementing this would be worse than not
   having it, so it is absent and said so loudly.
-- `utility.query` and `utility.utilities`. Their ROS-dependent halves need
-  `geometry_msgs` and `rclpy`, which this project deliberately does not depend on;
-  upstream imports those at module top, so those modules are unimportable without ROS
-  in the first place.
+- `utility.utilities` entirely, and the parts of `utility.query` that take a
+  `RoutingGraph`: `getAllNeighborsLeft`, `getAllNeighborsRight`,
+  `getSucceedingLaneletSequences`, `getPrecedingLaneletSequences`. Also the
+  `getLinked*` family, which needs 2D polygon intersection predicates we do not have.
+- `utility.query`'s ROS-dependent functions are *defined* but raise when called, so
+  the module stays importable. Upstream imports `geometry_msgs` and `rclpy` at module
+  top, which makes its version unimportable without ROS at all.
+- `trafficLights`, `autowareTrafficLights` and `detectionAreas` are absent from
+  `utility.query` because **upstream's own bindings for them do not work**: they
+  return a C++ vector Boost.Python was never taught to convert, so calling them raises
+  `TypeError`. There is no working behaviour to be compatible with.
 - `BusStopArea` and `Roundabout` have no Python class, matching upstream. They are
   registered nonetheless, because the C++ factory knows them: without that a map
   containing them would fail to load even with the extension present.

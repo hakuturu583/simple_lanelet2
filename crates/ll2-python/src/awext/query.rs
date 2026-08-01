@@ -217,7 +217,27 @@ linestring_query!(
     |kind, size| kind == "pedestrian_marking" && size < 3
 );
 
+/// Re-wraps linestrings as their read-only class.
+///
+/// Upstream's stop-line queries reach the elements through
+/// `regulatoryElementsAs<const T>`, so everything they hand back is `Const`, even
+/// though the same accessor on a writable element is not. A dunder so that
+/// `canon.public_names` filters it and it cannot show up as an extra API name.
+#[pyfunction]
+#[pyo3(name = "__as_const_lines__")]
+pub fn as_const_lines(py: Python<'_>, lines: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    let list = PyList::empty(py);
+    for item in lines.try_iter()? {
+        let item = item?;
+        let (line, _) = crate::core::linestring::linestring_of(&item)
+            .ok_or_else(|| argument_error("query", "stopLines"))?;
+        list.append(Py::new(py, PyConstLineString3d::wrap(line))?)?;
+    }
+    Ok(list.into_any().unbind())
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(as_const_lines, m)?)?;
     m.add_function(wrap_pyfunction!(lanelet_layer, m)?)?;
     m.add_function(wrap_pyfunction!(subtype_lanelets, m)?)?;
     m.add_function(wrap_pyfunction!(road_lanelets, m)?)?;

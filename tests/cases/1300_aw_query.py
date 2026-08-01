@@ -60,5 +60,20 @@ def main():
     for kind in ("parking_lot", "obstacle", "no_such_type"):
         emit("polygons_%s" % kind, len(query.getAllPolygonsByType(map_, kind)))
 
+    # Stop lines come from three kinds of regulatory element, and a right-of-way one
+    # contributes only where *this* lanelet is the one yielding.
+    stoplines = query.stopLinesLanelets(lanelets)
+    emit("stoplines_count", len(stoplines))
+    emit("stoplines_ids", ids(stoplines)[:40])
+    emit("stoplines_type", type(stoplines[0]).__name__ if stoplines else None)
+
+    single = query.stopLinesLanelet(lanelets[0])
+    emit("stoplines_single_count", len(single))
+
+    # Deduplicated by id upstream, through a std::set.
+    signs = query.stopSignStopLines(lanelets)
+    emit("stop_sign_lines", ids(signs))
+    emit("stop_sign_lines_unknown", len(query.stopSignStopLines(lanelets, "no_such_sign")))
+
 
 run(main)
