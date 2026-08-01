@@ -192,7 +192,9 @@ pub fn tauf(taup: f64, es: f64) -> f64 {
     let stol = tol * taup.abs().max(1.0);
     for _ in 0..NUMIT {
         let taupa = taupf(tau, es);
-        let dtau = (taup - taupa) * (1.0 + e2m * tau * tau)
+        // `e2m * (tau * tau)`, not `(e2m * tau) * tau`: GeographicLib writes
+        // `e2m * Math::sq(tau)`, and the two groupings round differently.
+        let dtau = (taup - taupa) * (1.0 + e2m * (tau * tau))
             / (e2m * f64::hypot(1.0, tau) * f64::hypot(1.0, taupa));
         tau += dtau;
         if dtau.abs() < stol {

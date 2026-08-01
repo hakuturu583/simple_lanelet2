@@ -141,21 +141,34 @@ The ROS-dependent halves of `utility.query` and `utility.utilities` need
 `geometry_msgs`/`rclpy`. Upstream imports those at module top, so the modules are
 unimportable without ROS; our shims must import neither and should raise on **call**.
 
-## Known limit: reverse projection is accurate, not bit-exact
+## Byte-identity on the Nishi-Shinjuku map: achieved
 
 `1001_aw_stock_crosscheck` passes with an **empty** `oracle_skew.toml`: the ROS build
 and the PyPI wheel agree on reprs, all four projections, and the load-and-write of
-the 594 KB example map down to its sha256. So oracle skew is not a live concern.
+the 594 KB example map down to its sha256. So oracle skew is not a live concern, and
+the one byte that used to differ on the 10.5 MB map was ours.
 
-Ours differs from both by at most 1 ULP in the *reverse* projection —
-`taupf`/`eatanhe`/`tauf`/`atan2d` all match GeographicLib's definitions, leaving only
-FMA and rounding order in the Clenshaw summation, which cannot be pinned down without
-depending on C++ compiler contraction choices. On the 10.5 MB Nishi-Shinjuku map that
-shows up exactly once in 73,872 coordinate values: one latitude whose 11th decimal
-lands on a rounding boundary (…804995 versus …805002, a difference of 7.1e-15° ≈
-0.8 nm), making the written file one byte longer.
+It had two causes, both found and fixed rather than tolerated:
 
-A byte-exact round trip is therefore achievable for coordinates that come straight
-from the file, but **not guaranteed for a large map that round-trips through reverse
-projection**. Phase 2's gate should be worded as "byte-identical apart from an
-enumerated set of last-digit coordinate roundings" rather than "byte-identical".
+1. **`to_degrees()` multiplies by 180/pi; GeographicLib divides by pi/180.** Those
+   constants are not exact reciprocals in binary floating point, and the two forms
+   disagree by one ulp for about **11% of inputs**. That was enough to move the 11th
+   decimal of one latitude across a rounding boundary (...804995 versus ...805002, a
+   difference of 7.1e-15 degrees, about 0.8 nm) and lengthen the written file by a
+   byte. Fixed in `atan2d`, now the only place a radian value becomes degrees.
+
+2. **The writer emitted relation members the map does not hold.** A rejected
+   regulatory element leaves a placeholder attached to its lanelet but absent from
+   every layer; upstream reports that *and drops the member*, whereas we reported it
+   and wrote it anyway, producing a file that could not be loaded back. Our message
+   was also missing the `Error writing primitive N: ` prefix.
+
+The 10.5 MB map now round-trips **byte-identically** -- same sha256, same 91 load
+errors, same 58 write errors. Phase 2's gate can stay worded as byte-identity.
+
+A residual remains, worth knowing but below the threshold that matters: over a sweep
+of 24,000 reverse projections across three projectors, **5 latitudes still differ by
+exactly 1 ulp**. None of them occurs in either real map we round-trip. The definitions
+of `taupf`, `eatanhe`, `tauf` and `atan2d` all match GeographicLib's, including the
+`e2m * (tau * tau)` grouping, so what is left is rounding order inside the Kruger
+series evaluation.

@@ -119,6 +119,13 @@ pub mod wgs84 {
 /// GeographicLib reduces the angle before calling the trigonometric functions so
 /// that `sind(180)` is exactly zero rather than 1.2e-16, which matters because the
 /// result feeds an `atan2`.
+/// One degree in radians — GeographicLib's `Math::degree()`.
+///
+/// Kept as a named constant because *which way round* it is used matters: degrees to
+/// radians multiplies by it, radians to degrees divides by it. Reaching for Rust's
+/// `to_degrees()` instead silently multiplies by the rounded reciprocal.
+pub(crate) const DEGREE: f64 = std::f64::consts::PI / 180.0;
+
 pub(crate) fn sincosd(angle_degrees: f64) -> (f64, f64) {
     if angle_degrees.is_nan() {
         return (f64::NAN, f64::NAN);
@@ -160,7 +167,11 @@ pub(crate) fn atan2d(y: f64, x: f64) -> f64 {
         x = -x;
         quadrant += 1;
     }
-    let angle = y.atan2(x).to_degrees();
+    // `to_degrees()` multiplies by 180/pi; GeographicLib *divides* by pi/180. The two
+    // constants are not exact reciprocals in binary floating point, so the results
+    // differ by one ulp for about 11% of inputs — which is enough to move the last
+    // printed digit of a latitude and change a written map by a byte.
+    let angle = y.atan2(x) / DEGREE;
     match quadrant {
         0 => angle,
         1 => (if y >= 0.0 { 180.0 } else { -180.0 }) - angle,

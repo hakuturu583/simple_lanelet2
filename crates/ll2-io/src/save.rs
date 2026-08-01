@@ -222,19 +222,32 @@ pub fn from_map(map: &LaneletMap, projector: &dyn Projector) -> (Document, Vec<S
             }
         }
     }
-    for relation in document.relations.values() {
-        for member in &relation.members {
+    // A member pointing at something the map does not hold is reported *and dropped*.
+    // Emitting it anyway would produce a file that cannot be loaded back, and it is
+    // reachable in practice: a regulatory element the loader rejected leaves behind a
+    // placeholder attached to its lanelet but absent from every layer.
+    let ids: Vec<Id> = document.relations.keys().copied().collect();
+    for id in ids {
+        let mut kept = Vec::new();
+        let mut dropped = Vec::new();
+        for member in std::mem::take(&mut document.relations.get_mut(&id).unwrap().members) {
             let present = match member.kind {
                 MemberType::Node => document.nodes.contains_key(&member.reference),
                 MemberType::Way => document.ways.contains_key(&member.reference),
                 MemberType::Relation => document.relations.contains_key(&member.reference),
             };
-            if !present {
-                errors.push(format!(
-                    "Relation has a member with id {} that is not in the map!",
-                    member.reference
-                ));
+            if present {
+                kept.push(member);
+            } else {
+                dropped.push(member.reference);
             }
+        }
+        document.relations.get_mut(&id).unwrap().members = kept;
+        for reference in dropped {
+            errors.push(format!(
+                "Error writing primitive {id}: Relation has a member with id {reference} \
+                 that is not in the map!"
+            ));
         }
     }
 
