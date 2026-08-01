@@ -101,6 +101,14 @@ pub mod registry {
     use std::collections::HashMap;
     use std::sync::OnceLock;
 
+    /// Rejects a parameter map the typed class would refuse to be built from.
+    ///
+    /// Upstream's factory does not merely pick a class, it *constructs* one, and those
+    /// constructors validate. So a malformed element is rejected at load time with the
+    /// constructor's own message, wrapped as
+    /// `Creating a regulatory element of type X failed: <message>`.
+    pub type Validate = fn(&super::RuleParameterMap) -> Result<(), String>;
+
     /// What a kind knows about itself.
     #[derive(Clone, Copy)]
     pub struct RegElemSpec {
@@ -110,6 +118,8 @@ pub mod registry {
         pub class_name: &'static str,
         /// The kind this one derives from, for [`RegElemKind::is_a`].
         pub parent: Option<RegElemKind>,
+        /// What the typed constructor insists on, if anything.
+        pub validate: Option<Validate>,
     }
 
     struct Registry {
@@ -128,19 +138,74 @@ pub mod registry {
     /// round-trips back out as a real tag rather than an empty one.
     pub const GENERIC_RULE_NAME: &str = "regulatory_element";
 
+    /// `TrafficLight` refuses an empty `refers`.
+    fn validate_traffic_light(parameters: &super::RuleParameterMap) -> Result<(), String> {
+        match parameters.get(super::roles::REFERS) {
+            Some(values) if !values.is_empty() => Ok(()),
+            _ => Err("No traffic light defined!".into()),
+        }
+    }
+
+    /// `TrafficSign` insists every sign it refers to says which sign it is.
+    fn validate_traffic_sign(parameters: &super::RuleParameterMap) -> Result<(), String> {
+        let refers = parameters.get(super::roles::REFERS);
+        let missing = refers.into_iter().flatten().any(|value| match value {
+            super::RuleParameter::LineString(line) | super::RuleParameter::Polygon(line) => {
+                !line.attributes().read().contains_key("subtype")
+            }
+            _ => false,
+        });
+        if missing {
+            return Err("Regulatory element has a traffic sign without subtype attribute!".into());
+        }
+        Ok(())
+    }
+
+    /// `RightOfWay` needs somebody to have the right of way.
+    fn validate_right_of_way(parameters: &super::RuleParameterMap) -> Result<(), String> {
+        match parameters.get(super::roles::RIGHT_OF_WAY) {
+            Some(values) if !values.is_empty() => Ok(()),
+            _ => Err("A maneuver must refer to at least one lanelet that has right of way!".into()),
+        }
+    }
+
     const BUILTIN: [RegElemSpec; 6] = [
-        RegElemSpec { rule_name: "traffic_light", class_name: "TrafficLight", parent: None },
-        RegElemSpec { rule_name: "right_of_way", class_name: "RightOfWay", parent: None },
-        RegElemSpec { rule_name: "traffic_sign", class_name: "TrafficSign", parent: None },
+        RegElemSpec {
+            rule_name: "traffic_light",
+            class_name: "TrafficLight",
+            parent: None,
+            validate: Some(validate_traffic_light),
+        },
+        RegElemSpec {
+            rule_name: "right_of_way",
+            class_name: "RightOfWay",
+            parent: None,
+            validate: Some(validate_right_of_way),
+        },
+        RegElemSpec {
+            rule_name: "traffic_sign",
+            class_name: "TrafficSign",
+            parent: None,
+            validate: Some(validate_traffic_sign),
+        },
         // Measured, not assumed: the reference reports
         // `SpeedLimit.__mro__ == [SpeedLimit, TrafficSign, RegulatoryElement, ...]`
-        // and `lanelet.trafficSigns()` returns a `SpeedLimit`.
+        // and `lanelet.trafficSigns()` returns a `SpeedLimit`. It inherits the sign
+        // check with it.
         RegElemSpec {
             rule_name: "speed_limit",
             class_name: "SpeedLimit",
             parent: Some(RegElemKind::TrafficSign),
+            validate: Some(validate_traffic_sign),
         },
-        RegElemSpec { rule_name: "all_way_stop", class_name: "AllWayStop", parent: None },
+        // `AllWayStop` accepts an empty parameter map — measured, and not what its
+        // constructor's stop-line check would suggest.
+        RegElemSpec {
+            rule_name: "all_way_stop",
+            class_name: "AllWayStop",
+            parent: None,
+            validate: None,
+        },
         // `GenericRegulatoryElement` is the C++ class name, but it is not exposed to
         // Python — the kind is only reachable by loading an element with an empty
         // subtype, and the reference reports it as a plain `RegulatoryElement`.
@@ -148,6 +213,7 @@ pub mod registry {
             rule_name: GENERIC_RULE_NAME,
             class_name: "RegulatoryElement",
             parent: None,
+            validate: None,
         },
     ];
 
@@ -201,6 +267,7 @@ pub mod registry {
         rule_name: &str,
         class_name: &str,
         parent: Option<RegElemKind>,
+        validate: Option<Validate>,
     ) -> RegElemKind {
         let mut registry = registry().write();
         if let Some(&existing) = registry.by_rule.get(rule_name)
@@ -214,6 +281,7 @@ pub mod registry {
             rule_name: Box::leak(rule_name.to_owned().into_boxed_str()),
             class_name: Box::leak(class_name.to_owned().into_boxed_str()),
             parent,
+            validate,
         };
         let kind = RegElemKind(registry.specs.len() as u16);
         registry.specs.push(spec);

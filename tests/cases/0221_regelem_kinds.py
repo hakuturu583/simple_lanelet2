@@ -101,6 +101,37 @@ def main():
     emit("typed_row", digest(lanelet.rightOfWay()))
     emit("typed_repr", repr(map_.regulatoryElementLayer[20])[:80])
 
+    # --- the factory *constructs* the class, so its constructor validates ---------
+    # A malformed element is rejected at load time under the same wrapper message as
+    # an unknown one, carrying the constructor's own complaint.
+    for label, subtype, members, sign_subtype in (
+        ("light_empty", "traffic_light", [], True),
+        ("sign_no_subtype", "traffic_sign", ["refers"], False),
+        ("limit_no_subtype", "speed_limit", ["refers"], False),
+        ("row_no_lanelets", "right_of_way", [], True),
+        # Measured: an empty AllWayStop is accepted, despite its stop-line rule.
+        ("allway_empty", "all_way_stop", [], True),
+    ):
+        sign = '<tag k="subtype" v="de206"/>' if sign_subtype else ""
+        body = "".join(
+            '    <member type="way" role="%s" ref="12"/>\n' % role for role in members
+        )
+        path = write_map(
+            "%s.osm" % label,
+            '  <relation id="20">\n%s'
+            '    <tag k="type" v="regulatory_element"/><tag k="subtype" v="%s"/>\n'
+            "  </relation>\n" % (body, subtype),
+            [20],
+        )
+        # The referred way carries the sign subtype, so rewrite the header for it.
+        source = open(path).read().replace(
+            '<tag k="subtype" v="de274"/></way>', "%s</way>" % sign
+        )
+        with open(path, "w") as handle:
+            handle.write(source)
+        _, errors = loadRobust(path, projector)
+        emit("validate_%s" % label, list(errors))
+
     # --- no `subtype` tag at all is its own error, distinct from an unknown one --
     missing = write_map("missing.osm", regelem(20, None), [20])
     expect_raises("missing_load", lambda: load(missing, projector), msg=True)

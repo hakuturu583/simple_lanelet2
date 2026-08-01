@@ -374,6 +374,19 @@ pub fn to_map(document: &Document, projector: &dyn Projector) -> (Arc<LaneletMap
             }
         };
 
+        // The factory *constructs* the typed class, so anything its constructor
+        // refuses is rejected here too, under the same wrapper message.
+        if let Some(validate) = registry::spec(kind).validate
+            && let Err(message) = validate(&parameters)
+        {
+            errors.push(format!(
+                "Error parsing primitive {}: Creating a regulatory element of type {subtype} \
+                 failed: {message}",
+                relation.id
+            ));
+            continue;
+        }
+
         let mut attributes = attributes_of(&relation.tags);
         if subtype.is_empty() {
             // The factory writes the resolved name back into the attributes, so an
