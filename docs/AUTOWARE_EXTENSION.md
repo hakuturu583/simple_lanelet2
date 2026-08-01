@@ -87,12 +87,13 @@ distinction lives in the binding, not in the stored parameter.
 
   A test must use `expect_raises`, not a string comparison.
 
-- **`Crosswalk`'s constructor drops its lanelet.** Constructed with a lanelet, a
-  polygon and one stop line, the parameter map comes back holding
-  `crosswalk_polygon` and `ref_line` but no populated `refers` — and
-  **`crosswalkLanelet()` then segfaults the interpreter**, which is `.front()` on an
-  empty vector (`crosswalk.cpp`). Not reproducible in Rust; raise instead and record
-  it in `divergence.toml`.
+- **`Crosswalk.crosswalkLanelet()` segfaults on an expired reference.** The
+  constructor *does* store the lanelet — `refers` holds a `ConstLanelet` — but holds
+  it **weakly**, as everywhere else a regulatory element refers back to one. Upstream
+  dereferences that without checking, so passing a temporary and then calling the
+  accessor crashes the interpreter. (An earlier note here claimed the constructor
+  dropped the lanelet; that was inferred from the crash and is wrong.) Keep the
+  lanelet alive and the accessor works. We raise on an expired reference instead.
 
 - **`Crosswalk.addCrosswalkArea` writes role `crosswalk`** while `crosswalkAreas()`
   reads `crosswalk_polygon`, so an added area is invisible to the getter.
