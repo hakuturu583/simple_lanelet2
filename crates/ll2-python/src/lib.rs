@@ -41,6 +41,7 @@ const SUBMODULES: &[(&str, Register)] = &[
     // subtypes resolvable. Only `__register__` does that.
     ("awext_regulatory_elements", awext::regelem::register),
     ("awext_projection", awext::projection::register),
+    ("awext_query", awext::query::register),
 ];
 
 fn add_submodule(parent: &Bound<'_, PyModule>, name: &str, register: Register) -> PyResult<()> {

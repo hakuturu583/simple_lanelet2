@@ -7,4 +7,5 @@
 //! carrying these subtypes fails exactly as stock Lanelet2 makes it fail.
 
 pub mod projection;
+pub mod query;
 pub mod regelem;
