@@ -18,7 +18,7 @@ use crate::core::gps::{PyGpsPoint, gps_point_of};
 use crate::err::{argument_error, not_instantiable, runtime};
 use crate::io::PyOrigin;
 
-fn to_py_error(error: ProjectionError) -> PyErr {
+pub(crate) fn to_py_error(error: ProjectionError) -> PyErr {
     runtime(error.message().to_owned())
 }
 

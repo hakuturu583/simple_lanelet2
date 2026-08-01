@@ -18,12 +18,14 @@ pub mod geocentric;
 pub mod local_cartesian;
 pub mod mercator;
 pub mod transverse_mercator;
+pub mod transverse_mercator_projector;
 pub mod utm;
 pub mod utmups;
 
 pub use geocentric::Geocentric;
 pub use local_cartesian::LocalCartesian;
 pub use mercator::SphericalMercator;
+pub use transverse_mercator_projector::TransverseMercatorProjector;
 pub use utm::Utm;
 
 /// A geodetic position: degrees, degrees, metres above the ellipsoid.
@@ -114,11 +116,6 @@ pub mod wgs84 {
     pub const E2M: f64 = (1.0 - F) * (1.0 - F);
 }
 
-/// Degree-argument sine and cosine, exact at the multiples of 90°.
-///
-/// GeographicLib reduces the angle before calling the trigonometric functions so
-/// that `sind(180)` is exactly zero rather than 1.2e-16, which matters because the
-/// result feeds an `atan2`.
 /// One degree in radians — GeographicLib's `Math::degree()`.
 ///
 /// Kept as a named constant because *which way round* it is used matters: degrees to
@@ -126,6 +123,11 @@ pub mod wgs84 {
 /// `to_degrees()` instead silently multiplies by the rounded reciprocal.
 pub(crate) const DEGREE: f64 = std::f64::consts::PI / 180.0;
 
+/// Degree-argument sine and cosine, exact at the multiples of 90°.
+///
+/// GeographicLib reduces the angle before calling the trigonometric functions so
+/// that `sind(180)` is exactly zero rather than 1.2e-16, which matters because the
+/// result feeds an `atan2`.
 pub(crate) fn sincosd(angle_degrees: f64) -> (f64, f64) {
     if angle_degrees.is_nan() {
         return (f64::NAN, f64::NAN);

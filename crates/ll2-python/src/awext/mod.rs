@@ -6,4 +6,5 @@
 //! the registry until the Python shim calls `__register__`, so until it does, a map
 //! carrying these subtypes fails exactly as stock Lanelet2 makes it fail.
 
+pub mod projection;
 pub mod regelem;

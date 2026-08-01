@@ -40,6 +40,7 @@ const SUBMODULES: &[(&str, Register)] = &[
     // Present but inert: importing `lanelet2` must not make the extension's
     // subtypes resolvable. Only `__register__` does that.
     ("awext_regulatory_elements", awext::regelem::register),
+    ("awext_projection", awext::projection::register),
 ];
 
 fn add_submodule(parent: &Bound<'_, PyModule>, name: &str, register: Register) -> PyResult<()> {
