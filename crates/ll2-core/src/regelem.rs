@@ -36,50 +36,189 @@ pub mod roles {
 }
 
 /// Which typed regulatory element this is.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum RegElemKind {
-    TrafficLight,
-    RightOfWay,
-    TrafficSign,
-    SpeedLimit,
-    AllWayStop,
-    Generic,
+///
+/// Upstream this is a C++ class, selected by `RegulatoryElementFactory` from the
+/// `subtype` tag. Third parties — `autoware_lanelet2_extension` above all — add
+/// their own by registering a factory when their shared library loads, so the set
+/// is open. Here a kind is an index into [`registry`], and the built-in six occupy
+/// the first six slots as associated constants so that ordinary comparisons read
+/// exactly as they did when this was an enum.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RegElemKind(u16);
+
+#[allow(non_upper_case_globals)]
+impl RegElemKind {
+    pub const TrafficLight: RegElemKind = RegElemKind(0);
+    pub const RightOfWay: RegElemKind = RegElemKind(1);
+    pub const TrafficSign: RegElemKind = RegElemKind(2);
+    pub const SpeedLimit: RegElemKind = RegElemKind(3);
+    pub const AllWayStop: RegElemKind = RegElemKind(4);
+    pub const Generic: RegElemKind = RegElemKind(5);
 }
 
 impl RegElemKind {
     /// The value of the `subtype` tag that selects this kind when loading a map.
     pub fn rule_name(self) -> &'static str {
-        match self {
-            RegElemKind::TrafficLight => "traffic_light",
-            RegElemKind::RightOfWay => "right_of_way",
-            RegElemKind::TrafficSign => "traffic_sign",
-            RegElemKind::SpeedLimit => "speed_limit",
-            RegElemKind::AllWayStop => "all_way_stop",
-            RegElemKind::Generic => "",
-        }
-    }
-
-    pub fn from_rule_name(name: &str) -> RegElemKind {
-        match name {
-            "traffic_light" => RegElemKind::TrafficLight,
-            "right_of_way" => RegElemKind::RightOfWay,
-            "traffic_sign" => RegElemKind::TrafficSign,
-            "speed_limit" => RegElemKind::SpeedLimit,
-            "all_way_stop" => RegElemKind::AllWayStop,
-            _ => RegElemKind::Generic,
-        }
+        registry::spec(self).rule_name
     }
 
     /// The Python class name, which is also what `repr` reports.
     pub fn class_name(self) -> &'static str {
-        match self {
-            RegElemKind::TrafficLight => "TrafficLight",
-            RegElemKind::RightOfWay => "RightOfWay",
-            RegElemKind::TrafficSign => "TrafficSign",
-            RegElemKind::SpeedLimit => "SpeedLimit",
-            RegElemKind::AllWayStop => "AllWayStop",
-            RegElemKind::Generic => "GenericRegulatoryElement",
+        registry::spec(self).class_name
+    }
+
+    /// Whether this kind is `other`, or derives from it.
+    ///
+    /// Upstream's typed accessors (`Lanelet::trafficLights()` and friends) are
+    /// `dynamic_pointer_cast`s, so a derived element answers to its base's
+    /// accessor: a `SpeedLimit` shows up in `trafficSigns()`, and once the Autoware
+    /// extension is loaded an `AutowareTrafficLight` shows up in `trafficLights()`.
+    pub fn is_a(self, other: RegElemKind) -> bool {
+        let mut current = Some(self);
+        while let Some(kind) = current {
+            if kind == other {
+                return true;
+            }
+            current = registry::spec(kind).parent;
         }
+        false
+    }
+}
+
+impl std::fmt::Debug for RegElemKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.class_name())
+    }
+}
+
+/// The open set of regulatory-element kinds.
+///
+/// Upstream: `lanelet2_core/src/RegulatoryElement.cpp:87-124`
+/// (`RegulatoryElementFactory`).
+pub mod registry {
+    use super::RegElemKind;
+    use parking_lot::RwLock;
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+
+    /// What a kind knows about itself.
+    #[derive(Clone, Copy)]
+    pub struct RegElemSpec {
+        /// The `subtype` tag value, and the factory key.
+        pub rule_name: &'static str,
+        /// The Python class name, which `repr` reports.
+        pub class_name: &'static str,
+        /// The kind this one derives from, for [`RegElemKind::is_a`].
+        pub parent: Option<RegElemKind>,
+    }
+
+    struct Registry {
+        /// Append-only, so a kind's index is stable for the life of the process.
+        specs: Vec<RegElemSpec>,
+        /// Re-assignable, so a later registration takes a rule name over from an
+        /// earlier one — upstream's `registry_[name] = factory` is a plain
+        /// assignment, and `AutowareTrafficLight` relies on it to claim
+        /// `traffic_light` from the stock `TrafficLight`.
+        by_rule: HashMap<&'static str, RegElemKind>,
+    }
+
+    /// The rule name a regulatory element with no `subtype` of its own gets.
+    ///
+    /// Upstream rewrites an empty subtype to this *in the attributes*, so it
+    /// round-trips back out as a real tag rather than an empty one.
+    pub const GENERIC_RULE_NAME: &str = "regulatory_element";
+
+    const BUILTIN: [RegElemSpec; 6] = [
+        RegElemSpec { rule_name: "traffic_light", class_name: "TrafficLight", parent: None },
+        RegElemSpec { rule_name: "right_of_way", class_name: "RightOfWay", parent: None },
+        RegElemSpec { rule_name: "traffic_sign", class_name: "TrafficSign", parent: None },
+        // Measured, not assumed: the reference reports
+        // `SpeedLimit.__mro__ == [SpeedLimit, TrafficSign, RegulatoryElement, ...]`
+        // and `lanelet.trafficSigns()` returns a `SpeedLimit`.
+        RegElemSpec {
+            rule_name: "speed_limit",
+            class_name: "SpeedLimit",
+            parent: Some(RegElemKind::TrafficSign),
+        },
+        RegElemSpec { rule_name: "all_way_stop", class_name: "AllWayStop", parent: None },
+        // `GenericRegulatoryElement` is the C++ class name, but it is not exposed to
+        // Python — the kind is only reachable by loading an element with an empty
+        // subtype, and the reference reports it as a plain `RegulatoryElement`.
+        RegElemSpec {
+            rule_name: GENERIC_RULE_NAME,
+            class_name: "RegulatoryElement",
+            parent: None,
+        },
+    ];
+
+    fn registry() -> &'static RwLock<Registry> {
+        static REGISTRY: OnceLock<RwLock<Registry>> = OnceLock::new();
+        REGISTRY.get_or_init(|| {
+            let specs = BUILTIN.to_vec();
+            let by_rule = specs
+                .iter()
+                .enumerate()
+                .map(|(index, spec)| (spec.rule_name, RegElemKind(index as u16)))
+                .collect();
+            RwLock::new(Registry { specs, by_rule })
+        })
+    }
+
+    /// Looks up a kind's description.
+    pub fn spec(kind: RegElemKind) -> RegElemSpec {
+        registry().read().specs[kind.0 as usize]
+    }
+
+    /// The rule name a subtype tag maps to is not registered.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct UnknownRule(pub String);
+
+    /// Resolves a `subtype` tag to a kind.
+    ///
+    /// An unregistered subtype is an **error**, not a fallback to the generic kind:
+    /// upstream's factory throws, which is what makes a stock Lanelet2 refuse an
+    /// Autoware map until the extension is loaded
+    /// (`lanelet2_core/src/RegulatoryElement.cpp:120-124`).
+    pub fn resolve(subtype: &str) -> Result<RegElemKind, UnknownRule> {
+        let name = if subtype.is_empty() {
+            GENERIC_RULE_NAME
+        } else {
+            subtype
+        };
+        registry()
+            .read()
+            .by_rule
+            .get(name)
+            .copied()
+            .ok_or_else(|| UnknownRule(name.to_owned()))
+    }
+
+    /// Adds a kind, or re-points an existing rule name at a new one.
+    ///
+    /// Returns the kind that now owns `rule_name`. Registering the same class twice
+    /// is idempotent, so importing an extension module more than once is harmless.
+    pub fn register(
+        rule_name: &str,
+        class_name: &str,
+        parent: Option<RegElemKind>,
+    ) -> RegElemKind {
+        let mut registry = registry().write();
+        if let Some(&existing) = registry.by_rule.get(rule_name)
+            && registry.specs[existing.0 as usize].class_name == class_name
+        {
+            return existing;
+        }
+        // Registration happens once per process, at module-import time, for a
+        // handful of classes; leaking the names buys `&'static str` everywhere else.
+        let spec = RegElemSpec {
+            rule_name: Box::leak(rule_name.to_owned().into_boxed_str()),
+            class_name: Box::leak(class_name.to_owned().into_boxed_str()),
+            parent,
+        };
+        let kind = RegElemKind(registry.specs.len() as u16);
+        registry.specs.push(spec);
+        registry.by_rule.insert(spec.rule_name, kind);
+        kind
     }
 }
 

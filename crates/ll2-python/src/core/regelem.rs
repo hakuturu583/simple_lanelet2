@@ -1045,19 +1045,19 @@ impl PySpeedLimit {
     ) -> PyResult<PyClassInitializer<Self>> {
         let (parameters, _) =
             traffic_sign_parameters(trafficSigns, cancellingTrafficSigns, refLines, cancelLines)?;
-        // Upstream binds SpeedLimit's constructor to TrafficSign::make, so the
-        // element it builds is tagged `traffic_sign` rather than `speed_limit`.
-        let subtype = if compat::speed_limit_ctor_makes_traffic_sign() {
-            "traffic_sign"
+        // Upstream binds SpeedLimit's constructor to TrafficSign::make, so what it
+        // builds really *is* a TrafficSign: it is tagged `traffic_sign`, and because
+        // the typed accessors are dynamic casts it turns up in `trafficSigns()` but
+        // not in `speedLimits()`. The Python wrapper class is `SpeedLimit` either
+        // way, which is why the reference's own `SpeedLimit.__repr__` rejects it.
+        let (subtype, kind) = if compat::speed_limit_ctor_makes_traffic_sign() {
+            ("traffic_sign", RegElemKind::TrafficSign)
         } else {
-            "speed_limit"
+            ("speed_limit", RegElemKind::SpeedLimit)
         };
         let attributes = typed_attributes(optional_attribute_map(Some(attributes))?, subtype);
         let base = PyRegulatoryElement::wrap(RegulatoryElement::new(
-            RegElemKind::SpeedLimit,
-            id,
-            attributes,
-            parameters,
+            kind, id, attributes, parameters,
         ));
         Ok(PyClassInitializer::from(base)
             .add_subclass(PyTrafficSign)

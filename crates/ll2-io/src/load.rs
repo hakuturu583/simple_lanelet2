@@ -18,7 +18,9 @@ use ll2_core::lanelet::Lanelet;
 use ll2_core::linestring::LineString;
 use ll2_core::map::{LaneletMap, Primitive};
 use ll2_core::point::Point;
-use ll2_core::regelem::{RegElemKind, RegulatoryElement, RuleParameter, RuleParameterMap};
+use ll2_core::regelem::{
+    RegElemKind, RegulatoryElement, RuleParameter, RuleParameterMap, registry,
+};
 use ll2_projection::{GpsPoint, Projector};
 
 use crate::osm::{Document, MemberType, Tags};
@@ -311,7 +313,7 @@ pub fn to_map(document: &Document, projector: &dyn Projector) -> (Arc<LaneletMap
         }
         let Some(subtype) = relation.tags.get("subtype") else {
             errors.push(format!(
-                "Regulatory element {} has no 'subtype' tag.",
+                "Error parsing primitive {}: Regulatory element has no 'subtype' tag.",
                 relation.id
             ));
             continue;
@@ -356,12 +358,33 @@ pub fn to_map(document: &Document, projector: &dyn Projector) -> (Arc<LaneletMap
             }
         }
 
-        let regelem = RegulatoryElement::new(
-            RegElemKind::from_rule_name(subtype),
-            relation.id,
-            attributes_of(&relation.tags),
-            parameters,
-        );
+        // An unregistered subtype is fatal for this element, exactly as upstream's
+        // factory is: `RegulatoryElementFactory::create` throws, the loader catches
+        // it and records the failure, and the element never enters the map.
+        // Registering the Autoware extension is what makes these names resolve.
+        let kind = match registry::resolve(subtype) {
+            Ok(kind) => kind,
+            Err(_) => {
+                errors.push(format!(
+                    "Error parsing primitive {}: Creating a regulatory element of type {subtype} \
+                     failed: No regulatory element found that implements rule {subtype}",
+                    relation.id
+                ));
+                continue;
+            }
+        };
+
+        let mut attributes = attributes_of(&relation.tags);
+        if subtype.is_empty() {
+            // The factory writes the resolved name back into the attributes, so an
+            // empty subtype round-trips out as a real tag rather than an empty one.
+            attributes.insert(
+                "subtype".to_owned(),
+                registry::GENERIC_RULE_NAME.to_owned().into(),
+            );
+        }
+
+        let regelem = RegulatoryElement::new(kind, relation.id, attributes, parameters);
         regelems.insert(relation.id, regelem.clone());
         map.add(Primitive::RegulatoryElement(regelem));
     }
@@ -372,17 +395,30 @@ pub fn to_map(document: &Document, projector: &dyn Projector) -> (Arc<LaneletMap
             if member.role != "regulatory_element" || member.kind != MemberType::Relation {
                 continue;
             }
-            let Some(regelem) = regelems.get(&member.reference) else {
-                errors.push(format!(
-                    "Relation {} references nonexistent regulatory element {}",
-                    relation.id, member.reference
-                ));
-                continue;
+            let regelem = match regelems.get(&member.reference) {
+                Some(regelem) => regelem.clone(),
+                None => {
+                    // Upstream's `getOrGetDummy` reports the failure against the
+                    // *referencing* primitive and substitutes a bare generic element
+                    // carrying only the id — no attributes, and never added to the
+                    // map's own layer. Skipping instead would leave the lanelet with
+                    // fewer elements than the reference has.
+                    errors.push(format!(
+                        "Error parsing primitive {}: Failed to get id {} from map",
+                        relation.id, member.reference
+                    ));
+                    RegulatoryElement::new(
+                        RegElemKind::Generic,
+                        member.reference,
+                        AttributeMap::new(),
+                        RuleParameterMap::new(),
+                    )
+                }
             };
             if let Some(lanelet) = lanelets.get(&relation.id) {
-                lanelet.add_regulatory_element(regelem.clone());
+                lanelet.add_regulatory_element(regelem);
             } else if let Some(area) = areas.get(&relation.id) {
-                area.add_regulatory_element(regelem.clone());
+                area.add_regulatory_element(regelem);
             }
         }
     }

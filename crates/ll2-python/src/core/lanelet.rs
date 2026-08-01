@@ -58,7 +58,9 @@ pub fn regelems_to_py(py: Python<'_>, regelems: &[RegulatoryElement]) -> PyResul
                     .add_subclass(PySpeedLimit),
             )?
             .into_any(),
-            RegElemKind::Generic => Py::new(py, base)?.into_any(),
+            // `Generic`, and any kind a loaded extension registered but has no
+            // Python class for, surface as the plain base class.
+            _ => Py::new(py, base)?.into_any(),
         };
         list.append(object)?;
     }
@@ -79,11 +81,15 @@ pub fn regelems_repr_arg(py: Python<'_>, regelems: &[RegulatoryElement]) -> PyRe
 }
 
 /// Filters the attached elements down to one kind, for `trafficLights()` and friends.
+///
+/// Upstream these are `regulatoryElementsAs<T>()`, i.e. `dynamic_pointer_cast`, so a
+/// derived kind answers to its base's accessor — `trafficSigns()` includes a
+/// `SpeedLimit`. Comparing kinds for equality would silently drop those.
 fn regelems_of_kind(py: Python<'_>, lanelet: &Lanelet, kind: RegElemKind) -> PyResult<Py<PyAny>> {
     let matching: Vec<RegulatoryElement> = lanelet
         .regulatory_elements()
         .into_iter()
-        .filter(|regelem| regelem.kind() == kind)
+        .filter(|regelem| regelem.kind().is_a(kind))
         .collect();
     regelems_to_py(py, &matching)
 }

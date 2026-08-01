@@ -82,7 +82,10 @@ pub fn load_robust(
     let (document, mut errors) = osm::parse(&text).map_err(IoError::Parse)?;
     let (map, load_errors) = load::to_map(&document, projector);
     errors.extend(load_errors);
-    Ok((map, errors))
+    Ok((
+        map,
+        wrap_errors("Errors ocurred while parsing Lanelet Map:", errors),
+    ))
 }
 
 /// Loads a map, failing if anything went wrong.
@@ -91,10 +94,7 @@ pub fn load(path: &Path, projector: &dyn Projector) -> Result<std::sync::Arc<Lan
     if errors.is_empty() {
         return Ok(map);
     }
-    Err(IoError::Parse(wrap_errors(
-        "Errors ocurred while parsing Lanelet Map:",
-        &errors,
-    )))
+    Err(IoError::Parse(join_errors(&errors)))
 }
 
 /// Writes a map, collecting any problems rather than failing on the first.
@@ -108,7 +108,10 @@ pub fn write_robust(
     let (document, errors) = save::from_map(map, projector);
     std::fs::write(path, document.to_xml(params))
         .map_err(|e| IoError::Write(format!("{}: {e}", path.display())))?;
-    Ok(errors)
+    Ok(wrap_errors(
+        "Errors ocurred while writing Lanelet Map:",
+        errors,
+    ))
 }
 
 /// Writes a map, failing if anything went wrong.
@@ -122,19 +125,29 @@ pub fn write(
     if errors.is_empty() {
         return Ok(());
     }
-    Err(IoError::Write(wrap_errors(
-        "Errors ocurred while writing Lanelet Map:",
-        &errors,
-    )))
+    Err(IoError::Write(join_errors(&errors)))
 }
 
-/// Joins collected errors the way upstream's multi-error exceptions read.
-fn wrap_errors(header: &str, errors: &[String]) -> String {
-    let mut out = header.to_owned();
-    for error in errors {
-        out.push_str("\n\t- ");
-        out.push_str(error);
+/// Prefixes a header and bullets each entry, in place, leaving an empty list alone.
+///
+/// `loadRobust` hands this list back verbatim, and the exception `load` raises is
+/// exactly these lines joined — measured from the reference, which reports
+/// `['Errors ocurred while parsing Lanelet Map:', '\t- Error parsing primitive 20: …']`
+/// (the misspelling is upstream's).
+fn wrap_errors(header: &str, errors: Vec<String>) -> Vec<String> {
+    if errors.is_empty() {
+        return errors;
     }
+    let mut out = Vec::with_capacity(errors.len() + 1);
+    out.push(header.to_owned());
+    out.extend(errors.into_iter().map(|error| format!("\t- {error}")));
+    out
+}
+
+/// The message form of an already-wrapped error list. Note the trailing newline.
+fn join_errors(errors: &[String]) -> String {
+    let mut out = errors.join("\n");
+    out.push('\n');
     out
 }
 
@@ -152,10 +165,16 @@ mod tests {
     }
 
     #[test]
-    fn errors_are_joined_with_the_upstream_header() {
-        assert_eq!(
-            wrap_errors("Header:", &["one".into(), "two".into()]),
-            "Header:\n\t- one\n\t- two"
-        );
+    fn errors_are_bulleted_under_the_upstream_header() {
+        let wrapped = wrap_errors("Header:", vec!["one".into(), "two".into()]);
+        assert_eq!(wrapped, ["Header:", "\t- one", "\t- two"]);
+        // The exception form is the same lines joined, with a trailing newline —
+        // measured from the reference, not inferred.
+        assert_eq!(join_errors(&wrapped), "Header:\n\t- one\n\t- two\n");
+    }
+
+    #[test]
+    fn an_empty_error_list_gains_no_header() {
+        assert!(wrap_errors("Header:", Vec::new()).is_empty());
     }
 }
