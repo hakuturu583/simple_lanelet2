@@ -19,5 +19,9 @@ classifiers = [
 manifest-path = "crates/ll2-python/Cargo.toml"
 module-name = "lanelet2._lanelet2"
 python-source = "python"
+# maturin only ships the package matching module-name, so the extension shim has to
+# be named explicitly or it silently vanishes from the wheel -- which shows up much
+# later as an ImportError in the one venv built from a wheel rather than in place.
+python-packages = ["lanelet2", "autoware_lanelet2_extension_python"]
 features = ["pyo3/extension-module"]
 strip = true

@@ -31,9 +31,20 @@ use pyo3::prelude::*;
 use crate::conv::optional_attribute_map;
 use crate::core::regelem::{
     PyRegulatoryElement, PyTrafficLight, drop_role, first_of_role, linestrings_or_polygons,
-    optional_linestring, push_role, role_as_py, set_wrapper, typed_attributes,
+    optional_linestring, push_role, role_as_py, role_as_py_const, set_wrapper,
+    typed_attributes,
 };
 use crate::err::argument_error;
+
+// Boost.Python raises this — a TypeError subclass — when an argument does not match
+// any registered C++ signature. `NoStoppingArea.__repr__` is bound to a
+// `NoParkingArea&`, so calling it is exactly that kind of mismatch, and the class
+// name is observable through `type(exc).__name__`.
+pyo3::create_exception!(
+    autoware_lanelet2_extension_python,
+    ArgumentError,
+    pyo3::exceptions::PyTypeError
+);
 
 /// Roles the extension introduces beyond the stock set.
 mod awroles {
@@ -300,6 +311,22 @@ macro_rules! stop_line_methods {
 }
 
 stop_line_methods!(PyNoStoppingArea, "NoStoppingArea");
+
+#[pymethods]
+impl PyNoStoppingArea {
+    /// Upstream binds this to a `NoParkingArea&`, so it does not print the wrong name
+    /// — it cannot be called at all. Repaired by default; reproduced under bug-compat.
+    fn __repr__(slf: PyRef<'_, Self>) -> PyResult<String> {
+        if ll2_core::compat::bug_compat() {
+            return Err(ArgumentError::new_err(
+                "Python argument types in\n    NoStoppingArea.__repr__(NoStoppingArea)\n\
+                 did not match C++ signature:\n    \
+                 __repr__(lanelet::autoware::format_v2::NoParkingArea {lvalue})",
+            ));
+        }
+        slf.as_super().__repr__(slf.py())
+    }
+}
 stop_line_methods!(PyDetectionArea, "DetectionArea");
 
 #[pymethods]
@@ -404,12 +431,16 @@ impl PyCrosswalk {
         stop_line: &Bound<'_, PyAny>,
     ) -> PyResult<(Self, PyRegulatoryElement)> {
         let mut parameters = RuleParameterMap::new();
-        // Upstream declares the lanelet parameter and then never stores it, which is
-        // why its own `crosswalkLanelet()` reads an empty vector and crashes. The
-        // role exists and stays empty here, so `.roles` matches and the accessor has
-        // something defined to do.
-        let _ = crosswalk_lanelet;
-        parameters.insert(roles::REFERS.to_owned(), Vec::new());
+        // The lanelet is stored weakly, as everywhere else a regulatory element
+        // refers back to one. Upstream's `crosswalkLanelet()` dereferences that
+        // without checking, so it segfaults once the lanelet is gone rather than
+        // reporting anything — our accessor raises instead.
+        let (lanelet, _) = crate::core::lanelet::lanelet_of(crosswalk_lanelet)
+            .ok_or_else(|| argument_error("Crosswalk", "__init__"))?;
+        parameters.insert(
+            roles::REFERS.to_owned(),
+            vec![RuleParameter::Lanelet(lanelet.downgrade())],
+        );
         parameters.insert(
             awroles::CROSSWALK_POLYGON.to_owned(),
             vec![one_of(crosswalk_area, "Crosswalk")?],
@@ -429,12 +460,12 @@ impl PyCrosswalk {
 
     #[pyo3(name = "crosswalkAreas")]
     fn crosswalk_areas(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
-        role_as_py(slf.py(), &slf.as_super().regelem, awroles::CROSSWALK_POLYGON)
+        role_as_py_const(slf.py(), &slf.as_super().regelem, awroles::CROSSWALK_POLYGON)
     }
 
     #[pyo3(name = "stopLines")]
     fn stop_lines(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
-        role_as_py(slf.py(), &slf.as_super().regelem, roles::REF_LINE)
+        role_as_py_const(slf.py(), &slf.as_super().regelem, roles::REF_LINE)
     }
 
     /// Upstream takes `.front()` of an empty vector here and segfaults. Raising is

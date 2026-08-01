@@ -92,3 +92,25 @@ A consequence of that bug rather than a separate one, and the reason the typed \
 accessors need kinds rather than class names: upstream's SpeedLimit constructor \
 yields an object that is a TrafficSign to a dynamic cast, so lanelet.speedLimits() \
 cannot see it. Repairing the constructor makes it visible."""
+
+[[entry]]
+case = "1100_aw_regelem"
+key = "stopping_repr"
+reason = """\
+Upstream binds NoStoppingArea.__repr__ to a NoParkingArea&, so the class cannot \
+render itself at all -- it raises rather than printing the wrong name. Repaired by \
+default; bug-compat reproduces the Boost.Python ArgumentError."""
+
+[[entry]]
+case = "1100_aw_regelem"
+key = "crosswalk_many_stop_lines"
+reason = """\
+Crosswalk's constructor inserts each stop line into a std::map under the same key, \
+and insert does not overwrite, so only the first of several survives."""
+
+[[entry]]
+case = "1100_aw_regelem"
+key = "crosswalk_add_visible"
+reason = """\
+Crosswalk.addCrosswalkArea writes to role `crosswalk` while crosswalkAreas() reads \
+`crosswalk_polygon`, so an added area is invisible to the getter it belongs to."""

@@ -480,6 +480,28 @@ pub(crate) fn optional_linestring(obj: Option<&Bound<'_, PyAny>>) -> Option<Line
 }
 
 /// Reads the writable primitives stored under a role.
+/// Like [`role_as_py`], but hands out the read-only class family.
+///
+/// Which of the two an accessor uses follows no rule upstream — `detectionAreas()`
+/// is writable while `crosswalkAreas()` is not — so it is copied per accessor.
+pub(crate) fn role_as_py_const(
+    py: Python<'_>,
+    regelem: &RegulatoryElement,
+    role: &str,
+) -> PyResult<Py<PyAny>> {
+    let list = PyList::empty(py);
+    for value in regelem.parameters_for(role) {
+        if matches!(value, RuleParameter::Lanelet(ref w) if w.upgrade().is_none()) {
+            continue;
+        }
+        if matches!(value, RuleParameter::Area(ref w) if w.upgrade().is_none()) {
+            continue;
+        }
+        list.append(rule_parameter_to_py(py, &value, true)?)?;
+    }
+    Ok(list.into_any().unbind())
+}
+
 pub(crate) fn role_as_py(py: Python<'_>, regelem: &RegulatoryElement, role: &str) -> PyResult<Py<PyAny>> {
     let list = PyList::empty(py);
     for value in regelem.parameters_for(role) {
