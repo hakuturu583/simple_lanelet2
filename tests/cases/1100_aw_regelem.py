@@ -8,7 +8,8 @@ deliberately *not* exercised here:
 * `Crosswalk.crosswalkLanelet()` segfaults the reference — its constructor never
   populates `refers`, so the accessor takes the front of an empty vector. Calling it
   would kill the reference interpreter mid-stream and every later key would read as a
-  mismatch. Our own raise is pinned in 1101 instead.
+  mismatch. It is left untested rather than pinned: there is no way to observe our
+  raise against a reference that dies instead of raising.
 * lanelet reprs, because the pinned oracle is lanelet2 1.2.2, which still recurses
   forever on a lanelet whose regulatory element points back at it.
 
