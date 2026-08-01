@@ -149,17 +149,24 @@ upstream, where registration happens when its shared library loads. See
   yields coordinates derived from lat/lon instead: plausible, and *not* what
   Autoware's own tooling produces. Half-implementing this would be worse than not
   having it, so it is absent and said so loudly.
-- `utility.utilities` entirely, and the parts of `utility.query` that take a
-  `RoutingGraph`: `getAllNeighborsLeft`, `getAllNeighborsRight`,
-  `getSucceedingLaneletSequences`, `getPrecedingLaneletSequences`. Also the
-  `getLinked*` family, which needs 2D polygon intersection predicates we do not have.
-- `utility.query`'s ROS-dependent functions are *defined* but raise when called, so
-  the module stays importable. Upstream imports `geometry_msgs` and `rclpy` at module
-  top, which makes its version unimportable without ROS at all.
-- `trafficLights`, `autowareTrafficLights` and `detectionAreas` are absent from
-  `utility.query` because **upstream's own bindings for them do not work**: they
-  return a C++ vector Boost.Python was never taught to convert, so calling them raises
-  `TypeError`. There is no working behaviour to be compatible with.
+- `utility.utilities` entirely.
+- `utility.query` is complete apart from `Point`, `Pose` and `serialize_message`,
+  which are ROS types that leak into upstream's module namespace from its own imports.
+  Its ROS-dependent functions are *defined* but raise when called, so the module stays
+  importable; upstream imports `geometry_msgs` and `rclpy` at module top, which makes
+  its version unimportable without ROS at all.
+
+Five of `utility.query`'s functions cannot be called in the reference. All are
+repaired by default and reproduced under `LANELET2_BUG_COMPAT=1`:
+
+- `getSucceedingLaneletSequences` and `getPrecedingLaneletSequences` return a nested
+  C++ vector Boost.Python was never given a to_python converter for.
+- `getLinkedParkingLot`, `getLinkedLanelet` and `getLinkedLanelets` want a
+  `ConstPolygons3d`, and `getAllParkingLots` hands back a Python list there is no
+  from-python converter for, so no argument satisfies them.
+- `getAllNeighbors` reaches upstream's own shim, which dispatches on argument type,
+  matches neither branch for the graph-and-lanelet overload, and falls off the end
+  returning `None`. The C++ has the overload; only the shim loses it.
 - `BusStopArea` and `Roundabout` have no Python class, matching upstream. They are
   registered nonetheless, because the C++ factory knows them: without that a map
   containing them would fail to load even with the extension present.

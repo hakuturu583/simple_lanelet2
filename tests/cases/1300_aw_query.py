@@ -12,7 +12,7 @@ Results are compared by id, because upstream walks `std::unordered_map` layers a
 its order is not reproducible.
 """
 
-from canon import emit, run
+from canon import emit, expect_raises, run
 
 import autoware_lanelet2_extension_python.regulatory_elements  # noqa: F401
 import autoware_lanelet2_extension_python.utility.query as query
@@ -74,6 +74,50 @@ def main():
     signs = query.stopSignStopLines(lanelets)
     emit("stop_sign_lines", ids(signs))
     emit("stop_sign_lines_unknown", len(query.stopSignStopLines(lanelets, "no_such_sign")))
+
+    # --- the routing-graph queries -----------------------------------------------
+    from lanelet2.routing import RoutingGraph
+    from lanelet2.traffic_rules import Locations, Participants, create
+
+    graph = RoutingGraph(map_, create(Locations.Germany, Participants.Vehicle))
+    probe = sorted(query.roadLanelets(lanelets), key=lambda x: x.id)[:60]
+
+    # `left` is a permitted lane change, `adjacentLeft` merely a shared border; both
+    # continue the walk, in that order.
+    emit("neighbours_left", [ids(query.getAllNeighborsLeft(graph, x)) for x in probe[:20]])
+    emit("neighbours_right", [ids(query.getAllNeighborsRight(graph, x)) for x in probe[:20]])
+    emit("neighbours_left_total", sum(len(query.getAllNeighborsLeft(graph, x)) for x in probe))
+    emit("neighbours_right_total", sum(len(query.getAllNeighborsRight(graph, x)) for x in probe))
+
+    # Upstream cannot return a nested vector of lanelets at all -- Boost.Python was
+    # never given a converter for it -- so these raise there and work here.
+    def sequences(fn, *args):
+        return [[x.id for x in seq] for seq in fn(*args)]
+
+    expect_raises(
+        "succeeding_broken",
+        lambda: query.getSucceedingLaneletSequences(graph, probe[0], 50.0),
+        msg=True,
+    )
+    expect_raises(
+        "preceding_broken",
+        lambda: query.getPrecedingLaneletSequences(graph, probe[0], 50.0),
+        msg=True,
+    )
+    # These three do work upstream -- an earlier reading that they did not came from
+    # passing the wrong argument type, not from the bindings.
+    emit("traffic_lights", ids(query.trafficLights(probe)))
+    emit("autoware_traffic_lights", ids(query.autowareTrafficLights(probe)))
+    emit("detection_areas", ids(query.detectionAreas(probe)))
+    for name in ("crosswalks", "noParkingAreas", "noStoppingAreas", "speedBumps"):
+        emit(name, ids(getattr(query, name)(probe)))
+
+    # The road slice through a lanelet: outermost left first, the lanelet itself in
+    # the middle, then the right-hand neighbours.
+    # Upstream's shim falls off the end of its type dispatch here and returns None
+    # rather than raising, so the emitted value is `None` there and a list here.
+    slices = [query.getAllNeighbors(graph, x) for x in probe[:20]]
+    emit("all_neighbours", None if slices[0] is None else [ids(s) for s in slices])
 
 
 run(main)

@@ -236,8 +236,22 @@ pub fn as_const_lines(py: Python<'_>, lines: &Bound<'_, PyAny>) -> PyResult<Py<P
     Ok(list.into_any().unbind())
 }
 
+/// Raises the same error Boost.Python raises when no overload accepts the arguments.
+///
+/// The `getLinked*` family cannot be called in the reference at all: `getAllParkingLots`
+/// hands back a Python list and there is no from-python converter for the C++ vector
+/// they want, so no argument satisfies them. Bug-compat keeps that, and needs the
+/// error to be the same class the reference raises. A dunder, so the API-surface case
+/// does not see an extra name.
+#[pyfunction]
+#[pyo3(name = "__argument_error__")]
+pub fn raise_argument_error(function: &str) -> PyErr {
+    argument_error("query", function)
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(as_const_lines, m)?)?;
+    m.add_function(wrap_pyfunction!(raise_argument_error, m)?)?;
     m.add_function(wrap_pyfunction!(lanelet_layer, m)?)?;
     m.add_function(wrap_pyfunction!(subtype_lanelets, m)?)?;
     m.add_function(wrap_pyfunction!(road_lanelets, m)?)?;

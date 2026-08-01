@@ -114,3 +114,37 @@ key = "crosswalk_add_visible"
 reason = """\
 Crosswalk.addCrosswalkArea writes to role `crosswalk` while crosswalkAreas() reads \
 `crosswalk_polygon`, so an added area is invisible to the getter it belongs to."""
+
+[[entry]]
+case = "1300_aw_query"
+key = "succeeding_broken"
+reason = """\
+Upstream's binding for getSucceedingLaneletSequences returns a nested vector of \
+lanelets that Boost.Python was never given a to_python converter for, so the function \
+cannot be called at all. Repaired by default; bug-compat reproduces the TypeError \
+verbatim, message included, since that text is how callers recognise it."""
+
+[[entry]]
+case = "1300_aw_query"
+key = "preceding_broken"
+reason = """\
+The same missing converter as succeeding_broken, on getPrecedingLaneletSequences."""
+
+[[entry]]
+case = "1310_aw_query_linked"
+key = "uncallable_*"
+reason = """\
+The whole getLinked* family is uncallable in the reference: getAllParkingLots returns \
+a Python list and Boost.Python has no from-python converter for the ConstPolygons3d \
+these want, so no argument satisfies them. Repaired by default -- the repaired results \
+are what these keys pin -- and bug-compat keeps the ArgumentError."""
+
+
+[[entry]]
+case = "1300_aw_query"
+key = "all_neighbours"
+reason = """\
+Upstream's query.py dispatches getAllNeighbors on argument type, matches neither \
+branch for the graph-and-lanelet overload, and falls off the end returning None. The \
+C++ has the overload; only the shim loses it. Repaired by default, None under \
+bug-compat."""
