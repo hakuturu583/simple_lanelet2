@@ -76,3 +76,19 @@ Origin(lat=49, lon=8.4, alt=100) ends up 8.4 metres up instead of 100."""
 case = "0300_projection"
 key = "origin_lon_kwarg_only"
 reason = "same misnamed keyword: Origin(lat=49, lon=8.4) gets an altitude of 8.4 m"
+
+[[entry]]
+case = "0221_regelem_kinds"
+key = "ctor_limit_subtype"
+reason = """\
+The same SpeedLimit constructor bug as 0220_regelem/limit_attributes, seen through \
+the subtype attribute alone."""
+
+[[entry]]
+case = "0221_regelem_kinds"
+key = "ctor_limits"
+reason = """\
+A consequence of that bug rather than a separate one, and the reason the typed \
+accessors need kinds rather than class names: upstream's SpeedLimit constructor \
+yields an object that is a TrafficSign to a dynamic cast, so lanelet.speedLimits() \
+cannot see it. Repairing the constructor makes it visible."""

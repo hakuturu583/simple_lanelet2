@@ -57,6 +57,12 @@ impl RegElemKind {
 }
 
 impl RegElemKind {
+    /// Its slot in the registry. Stable for the life of the process, which is what
+    /// lets the Python layer keep a parallel table of class wrappers.
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+
     /// The value of the `subtype` tag that selects this kind when loading a map.
     pub fn rule_name(self) -> &'static str {
         registry::spec(self).rule_name
@@ -263,14 +269,19 @@ pub mod registry {
     ///
     /// Returns the kind that now owns `rule_name`. Registering the same class twice
     /// is idempotent, so importing an extension module more than once is harmless.
+    /// `rule_name` may be `None` for a kind that is never selected by a subtype tag.
+    /// The one such case is the object upstream's `SpeedLimit` constructor really
+    /// builds: it answers to `SpeedLimit` in Python and to `TrafficSign` in a cast,
+    /// and no `subtype` value resolves to it.
     pub fn register(
-        rule_name: &str,
+        rule_name: Option<&str>,
         class_name: &str,
         parent: Option<RegElemKind>,
         validate: Option<Validate>,
     ) -> RegElemKind {
         let mut registry = registry().write();
-        if let Some(&existing) = registry.by_rule.get(rule_name)
+        if let Some(name) = rule_name
+            && let Some(&existing) = registry.by_rule.get(name)
             && registry.specs[existing.0 as usize].class_name == class_name
         {
             return existing;
@@ -278,14 +289,16 @@ pub mod registry {
         // Registration happens once per process, at module-import time, for a
         // handful of classes; leaking the names buys `&'static str` everywhere else.
         let spec = RegElemSpec {
-            rule_name: Box::leak(rule_name.to_owned().into_boxed_str()),
+            rule_name: Box::leak(rule_name.unwrap_or("").to_owned().into_boxed_str()),
             class_name: Box::leak(class_name.to_owned().into_boxed_str()),
             parent,
             validate,
         };
         let kind = RegElemKind(registry.specs.len() as u16);
         registry.specs.push(spec);
-        registry.by_rule.insert(spec.rule_name, kind);
+        if rule_name.is_some() {
+            registry.by_rule.insert(spec.rule_name, kind);
+        }
         kind
     }
 }

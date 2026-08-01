@@ -505,6 +505,7 @@ fn first_of_role(py: Python<'_>, regelem: &RegulatoryElement, role: &str) -> PyR
 
 /// `lanelet2.core.TrafficLight`.
 #[pyclass(name = "TrafficLight", module = "lanelet2.core", extends = PyRegulatoryElement)]
+#[derive(Default)]
 pub struct PyTrafficLight;
 
 #[pymethods]
@@ -611,6 +612,7 @@ fn maneuver_type(py: Python<'_>, member: &str) -> PyResult<Py<PyAny>> {
 
 /// `lanelet2.core.RightOfWay`.
 #[pyclass(name = "RightOfWay", module = "lanelet2.core", extends = PyRegulatoryElement)]
+#[derive(Default)]
 pub struct PyRightOfWay;
 
 #[pymethods]
@@ -829,6 +831,7 @@ fn drop_role(
 
 /// `lanelet2.core.TrafficSign`.
 #[pyclass(name = "TrafficSign", module = "lanelet2.core", extends = PyRegulatoryElement, subclass)]
+#[derive(Default)]
 pub struct PyTrafficSign;
 
 /// Builds the four-role parameter map shared by `TrafficSign` and `SpeedLimit`.
@@ -1029,6 +1032,24 @@ impl PyTrafficSign {
 #[pyclass(name = "SpeedLimit", module = "lanelet2.core", extends = PyTrafficSign)]
 pub struct PySpeedLimit;
 
+/// The hybrid upstream's `SpeedLimit(...)` constructor produces.
+///
+/// Its Python class is `SpeedLimit`, but the C++ object it holds is a `TrafficSign`,
+/// so `trafficSigns()` returns it — displayed as a `SpeedLimit` — while
+/// `speedLimits()` does not. One `RegElemKind` cannot say both unless the two are
+/// separate kinds sharing a class name.
+fn compat_speed_limit_kind() -> &'static RegElemKind {
+    static KIND: std::sync::OnceLock<RegElemKind> = std::sync::OnceLock::new();
+    KIND.get_or_init(|| {
+        ll2_core::regelem::registry::register(
+            None,
+            "SpeedLimit",
+            Some(RegElemKind::TrafficSign),
+            None,
+        )
+    })
+}
+
 #[pymethods]
 impl PySpeedLimit {
     #[new]
@@ -1051,7 +1072,7 @@ impl PySpeedLimit {
         // not in `speedLimits()`. The Python wrapper class is `SpeedLimit` either
         // way, which is why the reference's own `SpeedLimit.__repr__` rejects it.
         let (subtype, kind) = if compat::speed_limit_ctor_makes_traffic_sign() {
-            ("traffic_sign", RegElemKind::TrafficSign)
+            ("traffic_sign", *compat_speed_limit_kind())
         } else {
             ("speed_limit", RegElemKind::SpeedLimit)
         };
@@ -1168,6 +1189,7 @@ impl PyConstLaneletWithStopLine {
 
 /// `lanelet2.core.AllWayStop`.
 #[pyclass(name = "AllWayStop", module = "lanelet2.core", extends = PyRegulatoryElement)]
+#[derive(Default)]
 pub struct PyAllWayStop;
 
 #[pymethods]
@@ -1286,7 +1308,67 @@ impl PyAllWayStop {
     }
 }
 
+/// Builds the Python object for one kind, given its base.
+///
+/// Each arm needs a differently shaped `PyClassInitializer`, so instead of one match
+/// that every new class has to be threaded through, each class contributes its own
+/// constructor to a table indexed by kind. An extension registering a kind at import
+/// time drops its entry in here at the same moment.
+pub type WrapFn = fn(Python<'_>, RegulatoryElement) -> PyResult<Py<PyAny>>;
+
+static WRAPPERS: std::sync::RwLock<Vec<Option<WrapFn>>> = std::sync::RwLock::new(Vec::new());
+
+pub fn set_wrapper(kind: RegElemKind, wrap: WrapFn) {
+    let mut wrappers = WRAPPERS.write().expect("wrapper table poisoned");
+    if wrappers.len() <= kind.index() {
+        wrappers.resize(kind.index() + 1, None);
+    }
+    wrappers[kind.index()] = Some(wrap);
+}
+
+/// Wraps an element in whatever Python class its kind reports.
+///
+/// A kind with no entry — the generic one, or an extension kind that registered a
+/// rule name but no class — surfaces as the plain base.
+pub fn wrap_typed(py: Python<'_>, regelem: RegulatoryElement) -> PyResult<Py<PyAny>> {
+    let wrap = WRAPPERS.read().expect("wrapper table poisoned").get(regelem.kind().index()).copied().flatten();
+    match wrap {
+        Some(wrap) => wrap(py, regelem),
+        None => Ok(Py::new(py, PyRegulatoryElement::wrap(regelem))?.into_any()),
+    }
+}
+
+fn wrap_plain<T: Default + Send + pyo3::PyClass<BaseType = PyRegulatoryElement>>(
+    py: Python<'_>,
+    regelem: RegulatoryElement,
+) -> PyResult<Py<PyAny>>
+where
+    PyClassInitializer<T>: From<(T, PyRegulatoryElement)>,
+{
+    Ok(Py::new(py, (T::default(), PyRegulatoryElement::wrap(regelem)))?.into_any())
+}
+
+fn wrap_speed_limit(py: Python<'_>, regelem: RegulatoryElement) -> PyResult<Py<PyAny>> {
+    Ok(Py::new(
+        py,
+        PyClassInitializer::from(PyRegulatoryElement::wrap(regelem))
+            .add_subclass(PyTrafficSign)
+            .add_subclass(PySpeedLimit),
+    )?
+    .into_any())
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    set_wrapper(RegElemKind::TrafficLight, wrap_plain::<PyTrafficLight>);
+    set_wrapper(RegElemKind::RightOfWay, wrap_plain::<PyRightOfWay>);
+    set_wrapper(RegElemKind::TrafficSign, wrap_plain::<PyTrafficSign>);
+    set_wrapper(RegElemKind::AllWayStop, wrap_plain::<PyAllWayStop>);
+    set_wrapper(RegElemKind::SpeedLimit, wrap_speed_limit);
+    // What upstream's `SpeedLimit(...)` really builds in bug-compat mode: a Python
+    // `SpeedLimit` that a cast to `SpeedLimit` nevertheless rejects. No subtype
+    // resolves to it, so it is registered without a rule name.
+    set_wrapper(*compat_speed_limit_kind(), wrap_speed_limit);
+
     m.add_class::<ReprWrapper>()?;
     m.add_class::<PyRuleParameterMap>()?;
     m.add_class::<PyConstRuleParameterMap>()?;

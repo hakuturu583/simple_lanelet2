@@ -132,6 +132,36 @@ def main():
         _, errors = loadRobust(path, projector)
         emit("validate_%s" % label, list(errors))
 
+    # --- what `SpeedLimit(...)` really builds ------------------------------------
+    # Upstream binds the constructor to TrafficSign::make, so the object answers to
+    # `SpeedLimit` in Python but fails a cast to one: it shows up in `trafficSigns()`
+    # — displayed as a SpeedLimit — and not in `speedLimits()`.
+    from lanelet2.core import (
+        AttributeMap,
+        Lanelet,
+        LineString3d,
+        Point3d,
+        SpeedLimit,
+        TrafficSign,
+        TrafficSignsWithType,
+        getId,
+    )
+
+    def line(*offsets):
+        return LineString3d(
+            getId(), [Point3d(getId(), x, 0.0, 0.0) for x in offsets]
+        )
+
+    host = Lanelet(getId(), line(0.0, 1.0), line(0.0, 1.0))
+    limit = SpeedLimit(getId(), AttributeMap(), TrafficSignsWithType([line(2.0, 3.0)], "de274"))
+    sign = TrafficSign(getId(), AttributeMap(), TrafficSignsWithType([line(4.0, 5.0)], "de206"))
+    host.addRegulatoryElement(limit)
+    host.addRegulatoryElement(sign)
+    emit("ctor_limit_type", type(limit).__name__)
+    emit("ctor_limit_subtype", dict(limit.attributes).get("subtype"))
+    emit("ctor_signs", [type(x).__name__ for x in host.trafficSigns()])
+    emit("ctor_limits", [type(x).__name__ for x in host.speedLimits()])
+
     # --- no `subtype` tag at all is its own error, distinct from an unknown one --
     missing = write_map("missing.osm", regelem(20, None), [20])
     expect_raises("missing_load", lambda: load(missing, projector), msg=True)

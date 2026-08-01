@@ -39,30 +39,9 @@ pub fn lanelet_of(obj: &Bound<'_, PyAny>) -> Option<(Lanelet, bool)> {
 /// PyO3 needs the subclass initializer, so the mapping from kind to class is
 /// spelled out rather than inferred.
 pub fn regelems_to_py(py: Python<'_>, regelems: &[RegulatoryElement]) -> PyResult<Py<PyAny>> {
-    use crate::core::regelem::{
-        PyAllWayStop, PyRightOfWay, PySpeedLimit, PyTrafficLight, PyTrafficSign,
-    };
-
     let list = PyList::empty(py);
     for regelem in regelems {
-        let base = PyRegulatoryElement::wrap(regelem.clone());
-        let object: Py<PyAny> = match regelem.kind() {
-            RegElemKind::TrafficLight => Py::new(py, (PyTrafficLight, base))?.into_any(),
-            RegElemKind::RightOfWay => Py::new(py, (PyRightOfWay, base))?.into_any(),
-            RegElemKind::AllWayStop => Py::new(py, (PyAllWayStop, base))?.into_any(),
-            RegElemKind::TrafficSign => Py::new(py, (PyTrafficSign, base))?.into_any(),
-            RegElemKind::SpeedLimit => Py::new(
-                py,
-                PyClassInitializer::from(base)
-                    .add_subclass(PyTrafficSign)
-                    .add_subclass(PySpeedLimit),
-            )?
-            .into_any(),
-            // `Generic`, and any kind a loaded extension registered but has no
-            // Python class for, surface as the plain base class.
-            _ => Py::new(py, base)?.into_any(),
-        };
-        list.append(object)?;
+        list.append(crate::core::regelem::wrap_typed(py, regelem.clone())?)?;
     }
     Ok(list.into_any().unbind())
 }
