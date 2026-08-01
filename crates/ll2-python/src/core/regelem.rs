@@ -441,13 +441,13 @@ pub fn regelem_of(obj: &Bound<'_, PyAny>) -> Option<RegulatoryElement> {
 // ---------------------------------------------------------------------------
 
 /// The attributes every typed element carries, so that a written map round-trips.
-fn typed_attributes(mut attributes: AttributeMap, subtype: &str) -> AttributeMap {
+pub(crate) fn typed_attributes(mut attributes: AttributeMap, subtype: &str) -> AttributeMap {
     attributes.insert("type".into(), Attribute::new("regulatory_element"));
     attributes.insert("subtype".into(), Attribute::new(subtype));
     attributes
 }
 
-fn linestrings_or_polygons(obj: &Bound<'_, PyAny>, class: &str) -> PyResult<Vec<RuleParameter>> {
+pub(crate) fn linestrings_or_polygons(obj: &Bound<'_, PyAny>, class: &str) -> PyResult<Vec<RuleParameter>> {
     let mut out = Vec::new();
     for item in obj.try_iter()? {
         let item = item?;
@@ -461,7 +461,7 @@ fn linestrings_or_polygons(obj: &Bound<'_, PyAny>, class: &str) -> PyResult<Vec<
     Ok(out)
 }
 
-fn lanelets(obj: &Bound<'_, PyAny>, class: &str) -> PyResult<Vec<RuleParameter>> {
+pub(crate) fn lanelets(obj: &Bound<'_, PyAny>, class: &str) -> PyResult<Vec<RuleParameter>> {
     let mut out = Vec::new();
     for item in obj.try_iter()? {
         let item = item?;
@@ -471,7 +471,7 @@ fn lanelets(obj: &Bound<'_, PyAny>, class: &str) -> PyResult<Vec<RuleParameter>>
     Ok(out)
 }
 
-fn optional_linestring(obj: Option<&Bound<'_, PyAny>>) -> Option<LineString> {
+pub(crate) fn optional_linestring(obj: Option<&Bound<'_, PyAny>>) -> Option<LineString> {
     let obj = obj?;
     if obj.is_none() {
         return None;
@@ -480,7 +480,7 @@ fn optional_linestring(obj: Option<&Bound<'_, PyAny>>) -> Option<LineString> {
 }
 
 /// Reads the writable primitives stored under a role.
-fn role_as_py(py: Python<'_>, regelem: &RegulatoryElement, role: &str) -> PyResult<Py<PyAny>> {
+pub(crate) fn role_as_py(py: Python<'_>, regelem: &RegulatoryElement, role: &str) -> PyResult<Py<PyAny>> {
     let list = PyList::empty(py);
     for value in regelem.parameters_for(role) {
         // A weak reference that no longer resolves is skipped, not reported as
@@ -496,7 +496,7 @@ fn role_as_py(py: Python<'_>, regelem: &RegulatoryElement, role: &str) -> PyResu
     Ok(list.into_any().unbind())
 }
 
-fn first_of_role(py: Python<'_>, regelem: &RegulatoryElement, role: &str) -> PyResult<Py<PyAny>> {
+pub(crate) fn first_of_role(py: Python<'_>, regelem: &RegulatoryElement, role: &str) -> PyResult<Py<PyAny>> {
     match regelem.parameters_for(role).first() {
         None => Ok(py.None()),
         Some(value) => rule_parameter_to_py(py, value, false),
@@ -504,7 +504,9 @@ fn first_of_role(py: Python<'_>, regelem: &RegulatoryElement, role: &str) -> PyR
 }
 
 /// `lanelet2.core.TrafficLight`.
-#[pyclass(name = "TrafficLight", module = "lanelet2.core", extends = PyRegulatoryElement)]
+// `subclass` so the Autoware extension can derive AutowareTrafficLight from it,
+// which is what makes `lanelet.trafficLights()` return one.
+#[pyclass(name = "TrafficLight", module = "lanelet2.core", extends = PyRegulatoryElement, subclass)]
 #[derive(Default)]
 pub struct PyTrafficLight;
 
@@ -806,26 +808,28 @@ impl PyTrafficSignsWithType {
     }
 }
 
-fn push_role(
+pub(crate) fn push_role(
     base: &PyRegulatoryElement,
     role: &str,
     value: &Bound<'_, PyAny>,
+    class: &str,
     method: &str,
 ) -> PyResult<()> {
     let parameter =
-        rule_parameter_from_any(value).ok_or_else(|| argument_error("TrafficSign", method))?;
+        rule_parameter_from_any(value).ok_or_else(|| argument_error(class, method))?;
     base.regelem.push_parameter(role, parameter);
     Ok(())
 }
 
-fn drop_role(
+pub(crate) fn drop_role(
     base: &PyRegulatoryElement,
     role: &str,
     value: &Bound<'_, PyAny>,
+    class: &str,
     method: &str,
 ) -> PyResult<bool> {
     let parameter =
-        rule_parameter_from_any(value).ok_or_else(|| argument_error("TrafficSign", method))?;
+        rule_parameter_from_any(value).ok_or_else(|| argument_error(class, method))?;
     Ok(base.regelem.remove_parameter(role, &parameter))
 }
 
@@ -947,12 +951,12 @@ impl PyTrafficSign {
 
     #[pyo3(name = "addTrafficSign")]
     fn add_traffic_sign(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        push_role(slf.as_super(), roles::REFERS, value, "addTrafficSign")
+        push_role(slf.as_super(), roles::REFERS, value, "TrafficSign", "addTrafficSign")
     }
 
     #[pyo3(name = "removeTrafficSign")]
     fn remove_traffic_sign(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-        drop_role(slf.as_super(), roles::REFERS, value, "removeTrafficSign")
+        drop_role(slf.as_super(), roles::REFERS, value, "TrafficSign", "removeTrafficSign")
     }
 
     #[pyo3(name = "addCancellingTrafficSign")]
@@ -961,6 +965,7 @@ impl PyTrafficSign {
             slf.as_super(),
             roles::CANCELS,
             value,
+            "TrafficSign",
             "addCancellingTrafficSign",
         )
     }
@@ -971,18 +976,19 @@ impl PyTrafficSign {
             slf.as_super(),
             roles::CANCELS,
             value,
+            "TrafficSign",
             "removeCancellingTrafficSign",
         )
     }
 
     #[pyo3(name = "addRefLine")]
     fn add_ref_line(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        push_role(slf.as_super(), roles::REF_LINE, value, "addRefLine")
+        push_role(slf.as_super(), roles::REF_LINE, value, "TrafficSign", "addRefLine")
     }
 
     #[pyo3(name = "removeRefLine")]
     fn remove_ref_line(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-        drop_role(slf.as_super(), roles::REF_LINE, value, "removeRefLine")
+        drop_role(slf.as_super(), roles::REF_LINE, value, "TrafficSign", "removeRefLine")
     }
 
     #[pyo3(name = "addCancellingRefLine")]
@@ -991,6 +997,7 @@ impl PyTrafficSign {
             slf.as_super(),
             roles::CANCEL_LINE,
             value,
+            "TrafficSign",
             "addCancellingRefLine",
         )
     }
@@ -1001,6 +1008,7 @@ impl PyTrafficSign {
             slf.as_super(),
             roles::CANCEL_LINE,
             value,
+            "TrafficSign",
             "removeCancellingRefLine",
         )
     }

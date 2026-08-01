@@ -22,6 +22,7 @@ mod io;
 mod matching;
 mod projection;
 mod routing;
+mod awext;
 mod traffic_rules;
 
 /// Registers one submodule's classes and functions.
@@ -36,6 +37,9 @@ const SUBMODULES: &[(&str, Register)] = &[
     ("traffic_rules", traffic_rules::register),
     ("routing", routing::register),
     ("matching", matching::register),
+    // Present but inert: importing `lanelet2` must not make the extension's
+    // subtypes resolvable. Only `__register__` does that.
+    ("awext_regulatory_elements", awext::regelem::register),
 ];
 
 fn add_submodule(parent: &Bound<'_, PyModule>, name: &str, register: Register) -> PyResult<()> {
