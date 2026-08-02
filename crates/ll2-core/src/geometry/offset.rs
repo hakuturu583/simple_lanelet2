@@ -45,7 +45,11 @@ fn norm(a: Point) -> f64 {
 
 fn normalized(a: Point) -> Point {
     let length = norm(a);
-    if length == 0.0 { [0.0, 0.0] } else { scale(a, 1.0 / length) }
+    if length == 0.0 {
+        [0.0, 0.0]
+    } else {
+        scale(a, 1.0 / length)
+    }
 }
 
 fn dot(a: Point, b: Point) -> f64 {
@@ -110,7 +114,11 @@ fn shift_lateral(line: &[Point], index: usize, offset: f64, pv: &Vicinity) -> Po
         let half_sine = norm(bisector) / 2.0;
         (
             bisector,
-            if half_sine > EPSILON { offset / half_sine } else { 0.0 },
+            if half_sine > EPSILON {
+                offset / half_sine
+            } else {
+                0.0
+            },
         )
     };
     add(

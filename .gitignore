@@ -15,3 +15,4 @@ tests/oracle/src/
 tests/oracle/build/
 tests/oracle/install/
 tests/oracle/log/
+/tests/upstream-fresh/

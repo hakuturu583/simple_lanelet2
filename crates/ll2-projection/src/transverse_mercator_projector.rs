@@ -30,11 +30,7 @@ pub struct TransverseMercatorProjector {
 
 impl TransverseMercatorProjector {
     pub fn new(origin: Origin, scale_factor: f64) -> Self {
-        let projection = TransverseMercator::new(
-            crate::wgs84::A,
-            crate::wgs84::F,
-            scale_factor,
-        );
+        let projection = TransverseMercator::new(crate::wgs84::A, crate::wgs84::F, scale_factor);
         let central_meridian = origin.position.lon;
         let (_, origin_northing) =
             projection.forward(central_meridian, origin.position.lat, origin.position.lon);
@@ -79,10 +75,18 @@ mod tests {
         let origin = Origin::new(GpsPoint::new(35.6895, 139.6917, 0.0));
         let projector = TransverseMercatorProjector::new(origin, DEFAULT_SCALE_FACTOR);
         let at_origin = projector.forward(origin.position).unwrap();
-        assert!(at_origin[1].abs() < 1e-9, "northing at origin: {}", at_origin[1]);
+        assert!(
+            at_origin[1].abs() < 1e-9,
+            "northing at origin: {}",
+            at_origin[1]
+        );
         // The easting is zero here too, but because the origin *is* the central
         // meridian -- not because an offset was applied.
-        assert!(at_origin[0].abs() < 1e-9, "easting at origin: {}", at_origin[0]);
+        assert!(
+            at_origin[0].abs() < 1e-9,
+            "easting at origin: {}",
+            at_origin[0]
+        );
     }
 
     #[test]
@@ -105,7 +109,9 @@ mod tests {
                 let point = GpsPoint::new(lat, lon, 12.5);
                 let xyz = projector.forward(point).unwrap();
                 let back = projector.reverse(xyz).unwrap();
-                worst = worst.max((back.lat - lat).abs()).max((back.lon - lon).abs());
+                worst = worst
+                    .max((back.lat - lat).abs())
+                    .max((back.lon - lon).abs());
             }
         }
         assert!(worst < 1e-11, "worst round-trip error {worst} degrees");

@@ -7,17 +7,16 @@
 
 use std::sync::Arc;
 
-use ll2_projection::{Mgrs, TransverseMercatorProjector};
 use ll2_projection::transverse_mercator_projector::DEFAULT_SCALE_FACTOR;
+use ll2_projection::{Mgrs, TransverseMercatorProjector};
 use pyo3::prelude::*;
 
 use crate::core::basic::PyBasicPoint3d;
 use crate::core::gps::{PyGpsPoint, gps_point_of};
 use crate::err::argument_error;
-use crate::projection::to_py_error;
 use crate::io::PyOrigin;
 use crate::projection::SharedProjector;
-use ll2_projection::Projector;
+use crate::projection::to_py_error;
 
 /// `autoware_lanelet2_extension_python.projection.TransverseMercatorProjector`.
 ///
@@ -62,7 +61,10 @@ impl PyTransverseMercatorProjector {
             .cast::<PyBasicPoint3d>()
             .map_err(|_| argument_error("TransverseMercatorProjector", "reverse"))?
             .borrow();
-        let geodetic = self.projector.reverse(point.values()).map_err(to_py_error)?;
+        let geodetic = self
+            .projector
+            .reverse(point.values())
+            .map_err(to_py_error)?;
         Ok(PyGpsPoint::wrap(geodetic))
     }
 
@@ -119,7 +121,10 @@ impl PyMgrsProjector {
             .cast::<PyBasicPoint3d>()
             .map_err(|_| argument_error("MGRSProjector", "reverse"))?
             .borrow();
-        let geodetic = self.projector.reverse(point.values()).map_err(to_py_error)?;
+        let geodetic = self
+            .projector
+            .reverse(point.values())
+            .map_err(to_py_error)?;
         Ok(PyGpsPoint::wrap(geodetic))
     }
 

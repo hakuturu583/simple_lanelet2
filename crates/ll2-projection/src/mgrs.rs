@@ -69,8 +69,7 @@ pub fn forward(
             "Easting {x} is outside the grid"
         )));
     }
-    let row_index =
-        ((y / TILE).floor() as i64).rem_euclid(ROW_PERIOD as i64) as usize;
+    let row_index = ((y / TILE).floor() as i64).rem_euclid(ROW_PERIOD as i64) as usize;
     let row_index = (row_index + if zone % 2 == 0 { EVEN_ROW_SHIFT } else { 0 }) % ROW_PERIOD;
 
     // The zone is always two digits: the reference writes `01CER`, not `1CER`.
@@ -94,14 +93,18 @@ pub fn reverse(code: &str) -> Result<(i32, bool, f64, f64, usize), ProjectionErr
     let bytes = code.trim().to_ascii_uppercase().into_bytes();
     let digits = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
     if digits == 0 || bytes.len() < digits + 3 {
-        return Err(ProjectionError::Reverse(format!("Malformed MGRS code {code}")));
+        return Err(ProjectionError::Reverse(format!(
+            "Malformed MGRS code {code}"
+        )));
     }
     let zone: i32 = std::str::from_utf8(&bytes[..digits])
         .unwrap()
         .parse()
         .map_err(|_| ProjectionError::Reverse(format!("Bad zone in {code}")))?;
     if !(1..=60).contains(&zone) {
-        return Err(ProjectionError::Reverse(format!("Zone {zone} is out of range")));
+        return Err(ProjectionError::Reverse(format!(
+            "Zone {zone} is out of range"
+        )));
     }
 
     let band = bytes[digits];
@@ -209,10 +212,9 @@ impl Mgrs {
 
 impl Projector for Mgrs {
     fn forward(&self, point: GpsPoint) -> Result<[f64; 3], ProjectionError> {
-        let projected = utmups::forward(point.lat, point.lon)
-            .and_then(|(zone, northp, x, y)| {
-                forward(zone, northp, x, y, point.lat, 0).map(|code| (code, x, y))
-            });
+        let projected = utmups::forward(point.lat, point.lon).and_then(|(zone, northp, x, y)| {
+            forward(zone, northp, x, y, point.lat, 0).map(|code| (code, x, y))
+        });
         match projected {
             Err(error) => {
                 eprintln!("Failed to project to MGRS: {error}");
@@ -268,6 +270,27 @@ impl Projector for Mgrs {
     }
 }
 
+/// Prints one grid code per line for a sweep of positions, so the same sweep can be
+/// run against the reference and diffed. Used by `tools/mgrs_sweep.rs`-style checks.
+pub fn sweep_codes() -> Vec<(f64, f64, String)> {
+    let mut out = Vec::new();
+    for band in 0..20 {
+        let lat = (band as f64 - 10.0) * 8.0 + 4.0;
+        if !(-80.0..84.0).contains(&lat) {
+            continue;
+        }
+        for zone in 1..=60 {
+            let lon = utmups::central_meridian(zone) + 1.5;
+            if let Ok((z, northp, x, y)) = utmups::forward(lat, lon)
+                && let Ok(code) = forward(z, northp, x, y, lat, 0)
+            {
+                out.push((lat, lon, code));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,25 +341,4 @@ mod tests {
             assert!((y - ry).abs() < cell, "{code}: northing off by {}", y - ry);
         }
     }
-}
-
-/// Prints one grid code per line for a sweep of positions, so the same sweep can be
-/// run against the reference and diffed. Used by `tools/mgrs_sweep.rs`-style checks.
-pub fn sweep_codes() -> Vec<(f64, f64, String)> {
-    let mut out = Vec::new();
-    for band in 0..20 {
-        let lat = (band as f64 - 10.0) * 8.0 + 4.0;
-        if !(-80.0..84.0).contains(&lat) {
-            continue;
-        }
-        for zone in 1..=60 {
-            let lon = utmups::central_meridian(zone) + 1.5;
-            if let Ok((z, northp, x, y)) = utmups::forward(lat, lon)
-                && let Ok(code) = forward(z, northp, x, y, lat, 0)
-            {
-                out.push((lat, lon, code));
-            }
-        }
-    }
-    out
 }

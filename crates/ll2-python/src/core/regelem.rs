@@ -447,7 +447,10 @@ pub(crate) fn typed_attributes(mut attributes: AttributeMap, subtype: &str) -> A
     attributes
 }
 
-pub(crate) fn linestrings_or_polygons(obj: &Bound<'_, PyAny>, class: &str) -> PyResult<Vec<RuleParameter>> {
+pub(crate) fn linestrings_or_polygons(
+    obj: &Bound<'_, PyAny>,
+    class: &str,
+) -> PyResult<Vec<RuleParameter>> {
     let mut out = Vec::new();
     for item in obj.try_iter()? {
         let item = item?;
@@ -502,7 +505,11 @@ pub(crate) fn role_as_py_const(
     Ok(list.into_any().unbind())
 }
 
-pub(crate) fn role_as_py(py: Python<'_>, regelem: &RegulatoryElement, role: &str) -> PyResult<Py<PyAny>> {
+pub(crate) fn role_as_py(
+    py: Python<'_>,
+    regelem: &RegulatoryElement,
+    role: &str,
+) -> PyResult<Py<PyAny>> {
     let list = PyList::empty(py);
     for value in regelem.parameters_for(role) {
         // A weak reference that no longer resolves is skipped, not reported as
@@ -518,7 +525,11 @@ pub(crate) fn role_as_py(py: Python<'_>, regelem: &RegulatoryElement, role: &str
     Ok(list.into_any().unbind())
 }
 
-pub(crate) fn first_of_role(py: Python<'_>, regelem: &RegulatoryElement, role: &str) -> PyResult<Py<PyAny>> {
+pub(crate) fn first_of_role(
+    py: Python<'_>,
+    regelem: &RegulatoryElement,
+    role: &str,
+) -> PyResult<Py<PyAny>> {
     match regelem.parameters_for(role).first() {
         None => Ok(py.None()),
         Some(value) => rule_parameter_to_py(py, value, false),
@@ -837,8 +848,7 @@ pub(crate) fn push_role(
     class: &str,
     method: &str,
 ) -> PyResult<()> {
-    let parameter =
-        rule_parameter_from_any(value).ok_or_else(|| argument_error(class, method))?;
+    let parameter = rule_parameter_from_any(value).ok_or_else(|| argument_error(class, method))?;
     base.regelem.push_parameter(role, parameter);
     Ok(())
 }
@@ -850,8 +860,7 @@ pub(crate) fn drop_role(
     class: &str,
     method: &str,
 ) -> PyResult<bool> {
-    let parameter =
-        rule_parameter_from_any(value).ok_or_else(|| argument_error(class, method))?;
+    let parameter = rule_parameter_from_any(value).ok_or_else(|| argument_error(class, method))?;
     Ok(base.regelem.remove_parameter(role, &parameter))
 }
 
@@ -973,12 +982,24 @@ impl PyTrafficSign {
 
     #[pyo3(name = "addTrafficSign")]
     fn add_traffic_sign(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        push_role(slf.as_super(), roles::REFERS, value, "TrafficSign", "addTrafficSign")
+        push_role(
+            slf.as_super(),
+            roles::REFERS,
+            value,
+            "TrafficSign",
+            "addTrafficSign",
+        )
     }
 
     #[pyo3(name = "removeTrafficSign")]
     fn remove_traffic_sign(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-        drop_role(slf.as_super(), roles::REFERS, value, "TrafficSign", "removeTrafficSign")
+        drop_role(
+            slf.as_super(),
+            roles::REFERS,
+            value,
+            "TrafficSign",
+            "removeTrafficSign",
+        )
     }
 
     #[pyo3(name = "addCancellingTrafficSign")]
@@ -1005,12 +1026,24 @@ impl PyTrafficSign {
 
     #[pyo3(name = "addRefLine")]
     fn add_ref_line(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        push_role(slf.as_super(), roles::REF_LINE, value, "TrafficSign", "addRefLine")
+        push_role(
+            slf.as_super(),
+            roles::REF_LINE,
+            value,
+            "TrafficSign",
+            "addRefLine",
+        )
     }
 
     #[pyo3(name = "removeRefLine")]
     fn remove_ref_line(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-        drop_role(slf.as_super(), roles::REF_LINE, value, "TrafficSign", "removeRefLine")
+        drop_role(
+            slf.as_super(),
+            roles::REF_LINE,
+            value,
+            "TrafficSign",
+            "removeRefLine",
+        )
     }
 
     #[pyo3(name = "addCancellingRefLine")]
@@ -1107,9 +1140,8 @@ impl PySpeedLimit {
             ("speed_limit", RegElemKind::SpeedLimit)
         };
         let attributes = typed_attributes(optional_attribute_map(Some(attributes))?, subtype);
-        let base = PyRegulatoryElement::wrap(RegulatoryElement::new(
-            kind, id, attributes, parameters,
-        ));
+        let base =
+            PyRegulatoryElement::wrap(RegulatoryElement::new(kind, id, attributes, parameters));
         Ok(PyClassInitializer::from(base)
             .add_subclass(PyTrafficSign)
             .add_subclass(PySpeedLimit))
@@ -1361,7 +1393,12 @@ pub fn set_wrapper(kind: RegElemKind, wrap: WrapFn) {
 /// A kind with no entry — the generic one, or an extension kind that registered a
 /// rule name but no class — surfaces as the plain base.
 pub fn wrap_typed(py: Python<'_>, regelem: RegulatoryElement) -> PyResult<Py<PyAny>> {
-    let wrap = WRAPPERS.read().expect("wrapper table poisoned").get(regelem.kind().index()).copied().flatten();
+    let wrap = WRAPPERS
+        .read()
+        .expect("wrapper table poisoned")
+        .get(regelem.kind().index())
+        .copied()
+        .flatten();
     match wrap {
         Some(wrap) => wrap(py, regelem),
         None => Ok(Py::new(py, PyRegulatoryElement::wrap(regelem))?.into_any()),

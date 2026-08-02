@@ -16,8 +16,8 @@
 
 pub mod geocentric;
 pub mod local_cartesian;
-pub mod mgrs;
 pub mod mercator;
+pub mod mgrs;
 pub mod transverse_mercator;
 pub mod transverse_mercator_projector;
 pub mod utm;
@@ -25,8 +25,8 @@ pub mod utmups;
 
 pub use geocentric::Geocentric;
 pub use local_cartesian::LocalCartesian;
-pub use mgrs::Mgrs;
 pub use mercator::SphericalMercator;
+pub use mgrs::Mgrs;
 pub use transverse_mercator_projector::TransverseMercatorProjector;
 pub use utm::Utm;
 

@@ -33,12 +33,14 @@ fn map_of(obj: &Bound<'_, PyAny>) -> Option<std::sync::Arc<LaneletMap>> {
 }
 
 /// Reads a sequence of lanelets, whichever class they arrived as.
-fn lanelets_of(obj: &Bound<'_, PyAny>, function: &str) -> PyResult<Vec<ll2_core::lanelet::Lanelet>> {
+fn lanelets_of(
+    obj: &Bound<'_, PyAny>,
+    function: &str,
+) -> PyResult<Vec<ll2_core::lanelet::Lanelet>> {
     let mut out = Vec::new();
     for item in obj.try_iter()? {
         let item = item?;
-        let (lanelet, _) =
-            lanelet_of(&item).ok_or_else(|| argument_error("query", function))?;
+        let (lanelet, _) = lanelet_of(&item).ok_or_else(|| argument_error("query", function))?;
         out.push(lanelet);
     }
     Ok(out)
@@ -117,7 +119,6 @@ fn linestrings_where(
         .all()
         .iter()
         .filter_map(ll2_core::map::as_linestring)
-        .cloned()
         .filter(|line| {
             let attributes = line.attributes();
             let attributes = attributes.read();
@@ -127,6 +128,7 @@ fn linestrings_where(
                 .unwrap_or_else(|| "none".to_owned());
             keep(&kind, line.len())
         })
+        .cloned()
         .collect();
     // Layers are unordered upstream; sorting keeps our own output reproducible.
     matching.sort_by_key(|line| line.id());
@@ -143,7 +145,6 @@ fn polygons_of_type(py: Python<'_>, map: &LaneletMap, wanted: &str) -> PyResult<
         .all()
         .iter()
         .filter_map(ll2_core::map::as_linestring)
-        .cloned()
         .filter(|polygon| {
             let attributes = polygon.attributes();
             let attributes = attributes.read();
@@ -151,6 +152,7 @@ fn polygons_of_type(py: Python<'_>, map: &LaneletMap, wanted: &str) -> PyResult<
                 .get("type")
                 .is_some_and(|value| value.value() == wanted)
         })
+        .cloned()
         .collect();
     matching.sort_by_key(|polygon| polygon.id());
     for polygon in matching {
@@ -181,7 +183,11 @@ macro_rules! polygon_query {
     };
 }
 
-polygon_query!(get_all_obstacle_polygons, "getAllObstaclePolygons", "obstacle");
+polygon_query!(
+    get_all_obstacle_polygons,
+    "getAllObstaclePolygons",
+    "obstacle"
+);
 polygon_query!(get_all_parking_lots, "getAllParkingLots", "parking_lot");
 
 macro_rules! linestring_query {
@@ -196,10 +202,13 @@ macro_rules! linestring_query {
 }
 
 linestring_query!(curbstones, "curbstones", |kind, _size| kind == "curbstone");
-linestring_query!(get_all_parking_spaces, "getAllParkingSpaces", |kind, _size| {
-    kind == "parking_space"
-});
-linestring_query!(get_all_fences, "getAllFences", |kind, _size| kind == "fence");
+linestring_query!(
+    get_all_parking_spaces,
+    "getAllParkingSpaces",
+    |kind, _size| { kind == "parking_space" }
+);
+linestring_query!(get_all_fences, "getAllFences", |kind, _size| kind
+    == "fence");
 // Three type values, not one -- read from query.cpp rather than inferred from the name.
 linestring_query!(get_all_partitions, "getAllPartitions", |kind, _size| {
     kind == "guard_rail" || kind == "fence" || kind == "wall"

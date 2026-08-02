@@ -31,8 +31,7 @@ use pyo3::prelude::*;
 use crate::conv::optional_attribute_map;
 use crate::core::regelem::{
     PyRegulatoryElement, PyTrafficLight, drop_role, first_of_role, linestrings_or_polygons,
-    optional_linestring, push_role, role_as_py, role_as_py_const, set_wrapper,
-    typed_attributes,
+    optional_linestring, push_role, role_as_py, role_as_py_const, set_wrapper, typed_attributes,
 };
 use crate::err::argument_error;
 
@@ -93,6 +92,8 @@ macro_rules! awext_regelem {
                 Ok(Py::new(py, ($class, PyRegulatoryElement::wrap(regelem)))?.into_any())
             }
 
+            // Some classes build their initializer by hand instead.
+            #[allow(dead_code)]
             fn build(
                 id: Id,
                 attributes: &Bound<'_, PyAny>,
@@ -121,21 +122,21 @@ macro_rules! awext_regelem {
 // ---------------------------------------------------------------------------
 
 awext_regelem! { class: PyRoadMarking, rule: "road_marking", py: "RoadMarking",
-                 roles: [roles::REFERS], }
+roles: [roles::REFERS], }
 awext_regelem! { class: PySpeedBump, rule: "speed_bump", py: "SpeedBump",
-                 roles: [roles::REFERS], }
+roles: [roles::REFERS], }
 awext_regelem! { class: PyNoParkingArea, rule: "no_parking_area", py: "NoParkingArea",
-                 roles: [roles::REFERS], }
+roles: [roles::REFERS], }
 awext_regelem! { class: PyNoStoppingArea, rule: "no_stopping_area", py: "NoStoppingArea",
-                 roles: [roles::REFERS, roles::REF_LINE], }
+roles: [roles::REFERS, roles::REF_LINE], }
 awext_regelem! { class: PyDetectionArea, rule: "detection_area", py: "DetectionArea",
-                 roles: [roles::REFERS, roles::REF_LINE], }
+roles: [roles::REFERS, roles::REF_LINE], }
 awext_regelem! { class: PyVirtualTrafficLight, rule: "virtual_traffic_light",
-                 py: "VirtualTrafficLight",
-                 roles: [roles::REFERS, roles::REF_LINE,
-                         awroles::START_LINE, awroles::END_LINE], }
+py: "VirtualTrafficLight",
+roles: [roles::REFERS, roles::REF_LINE,
+        awroles::START_LINE, awroles::END_LINE], }
 awext_regelem! { class: PyCrosswalk, rule: "crosswalk", py: "Crosswalk",
-                 roles: [roles::REFERS, awroles::CROSSWALK_POLYGON, roles::REF_LINE], }
+roles: [roles::REFERS, awroles::CROSSWALK_POLYGON, roles::REF_LINE], }
 /// The one class the macro cannot generate: it derives from the *stock*
 /// `TrafficLight` rather than from `RegulatoryElement`, which is what makes
 /// `lanelet.trafficLights()` return it, and it takes `traffic_light` over from the
@@ -195,13 +196,17 @@ impl PyRoadMarking {
     #[pyo3(name = "setRoadMarking")]
     fn set_road_marking(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let parameter = one_of(value, "RoadMarking")?;
-        slf.as_super().regelem.set_parameters_for(roles::REFERS, vec![parameter]);
+        slf.as_super()
+            .regelem
+            .set_parameters_for(roles::REFERS, vec![parameter]);
         Ok(())
     }
 
     #[pyo3(name = "removeRoadMarking")]
     fn remove_road_marking(slf: PyRef<'_, Self>) {
-        slf.as_super().regelem.set_parameters_for(roles::REFERS, Vec::new());
+        slf.as_super()
+            .regelem
+            .set_parameters_for(roles::REFERS, Vec::new());
     }
 }
 
@@ -215,7 +220,10 @@ impl PySpeedBump {
         speed_bump: &Bound<'_, PyAny>,
     ) -> PyResult<(Self, PyRegulatoryElement)> {
         let mut parameters = RuleParameterMap::new();
-        parameters.insert(roles::REFERS.to_owned(), vec![one_of(speed_bump, "SpeedBump")?]);
+        parameters.insert(
+            roles::REFERS.to_owned(),
+            vec![one_of(speed_bump, "SpeedBump")?],
+        );
         Self::build(id, attributes, parameters)
     }
 
@@ -226,12 +234,24 @@ impl PySpeedBump {
 
     #[pyo3(name = "addSpeedBump")]
     fn add_speed_bump(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        push_role(slf.as_super(), roles::REFERS, value, "SpeedBump", "addSpeedBump")
+        push_role(
+            slf.as_super(),
+            roles::REFERS,
+            value,
+            "SpeedBump",
+            "addSpeedBump",
+        )
     }
 
     #[pyo3(name = "removeSpeedBump")]
     fn remove_speed_bump(slf: PyRef<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-        drop_role(slf.as_super(), roles::REFERS, value, "SpeedBump", "removeSpeedBump")
+        drop_role(
+            slf.as_super(),
+            roles::REFERS,
+            value,
+            "SpeedBump",
+            "removeSpeedBump",
+        )
     }
 }
 
@@ -258,12 +278,27 @@ macro_rules! area_class {
     };
 }
 
-area_class!(PyNoParkingArea, "NoParkingArea", "noParkingAreas",
-            "addNoParkingArea", "removeNoParkingArea");
-area_class!(PyNoStoppingArea, "NoStoppingArea", "noStoppingAreas",
-            "addNoStoppingArea", "removeNoStoppingArea");
-area_class!(PyDetectionArea, "DetectionArea", "detectionAreas",
-            "addDetectionArea", "removeDetectionArea");
+area_class!(
+    PyNoParkingArea,
+    "NoParkingArea",
+    "noParkingAreas",
+    "addNoParkingArea",
+    "removeNoParkingArea"
+);
+area_class!(
+    PyNoStoppingArea,
+    "NoStoppingArea",
+    "noStoppingAreas",
+    "addNoStoppingArea",
+    "removeNoStoppingArea"
+);
+area_class!(
+    PyDetectionArea,
+    "DetectionArea",
+    "detectionAreas",
+    "addDetectionArea",
+    "removeDetectionArea"
+);
 
 #[pymethods]
 impl PyNoParkingArea {
@@ -304,7 +339,9 @@ macro_rules! stop_line_methods {
 
             #[pyo3(name = "removeStopLine")]
             fn remove_stop_line(slf: PyRef<'_, Self>) {
-                slf.as_super().regelem.set_parameters_for(roles::REF_LINE, Vec::new());
+                slf.as_super()
+                    .regelem
+                    .set_parameters_for(roles::REF_LINE, Vec::new());
             }
         }
     };
@@ -460,7 +497,11 @@ impl PyCrosswalk {
 
     #[pyo3(name = "crosswalkAreas")]
     fn crosswalk_areas(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
-        role_as_py_const(slf.py(), &slf.as_super().regelem, awroles::CROSSWALK_POLYGON)
+        role_as_py_const(
+            slf.py(),
+            &slf.as_super().regelem,
+            awroles::CROSSWALK_POLYGON,
+        )
     }
 
     #[pyo3(name = "stopLines")]
@@ -537,12 +578,18 @@ impl PyAutowareTrafficLight {
                 parameters.insert(awroles::LIGHT_BULBS.to_owned(), bulbs);
             }
         }
-        let attributes = typed_attributes(optional_attribute_map(Some(attributes))?, "traffic_light");
-        Ok(PyClassInitializer::from(PyRegulatoryElement::wrap(
-            RegulatoryElement::new(Self::kind(), id, attributes, parameters),
-        ))
-        .add_subclass(PyTrafficLight)
-        .add_subclass(PyAutowareTrafficLight))
+        let attributes =
+            typed_attributes(optional_attribute_map(Some(attributes))?, "traffic_light");
+        Ok(
+            PyClassInitializer::from(PyRegulatoryElement::wrap(RegulatoryElement::new(
+                Self::kind(),
+                id,
+                attributes,
+                parameters,
+            )))
+            .add_subclass(PyTrafficLight)
+            .add_subclass(PyAutowareTrafficLight),
+        )
     }
 
     #[pyo3(name = "lightBulbs")]

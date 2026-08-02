@@ -14,6 +14,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 mod accept;
+mod awext;
 mod conv;
 mod core;
 mod err;
@@ -22,7 +23,6 @@ mod io;
 mod matching;
 mod projection;
 mod routing;
-mod awext;
 mod traffic_rules;
 
 /// Registers one submodule's classes and functions.

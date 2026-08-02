@@ -59,6 +59,14 @@ test-rust:
 
 # Upstream's own test suite, run unmodified against our implementation, in both
 # modes. It passes either way: none of the repaired defects is one upstream tests.
+# Upstream's own tests, fetched at HEAD rather than read from the vendored copies.
+# Reports separately on tests that fail (we are incompatible) and tests that merely
+# changed (our copies are stale). This is what CI runs.
+upstream-fresh:
+    python3 tools/fetch_upstream_tests.py || true
+    ./.venv/bin/python -m pytest tests/upstream-fresh -q
+    LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream-fresh -q
+
 upstream-tests:
     LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream -q
     ./.venv/bin/python -m pytest tests/upstream -q

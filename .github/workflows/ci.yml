@@ -1,0 +1,178 @@
+# Compatibility is the claim this project makes, so CI is arranged to attack it from
+# three directions rather than to run a test suite.
+#
+#   check     the parts that need nothing but this repository
+#   upstream  upstream's *own* tests, fetched fresh, run unmodified against us
+#   oracle    the full diff harness, including the Autoware extension via pixi
+#
+# `upstream` deliberately fetches at HEAD rather than a pin. A vendored copy proves
+# compatibility with whatever upstream looked like when it was copied; fetching proves
+# it against upstream as it stands today, and turns "they changed a test" into a red
+# build instead of a silent drift.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Upstream can move without us touching anything, and that is exactly what the
+  # upstream job is meant to catch, so it also runs on a schedule.
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: rust + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      # PyO3 0.29 deprecates the tuple form of subclass initialisation and the
+      # automatic FromPyObject derive. Those are signals about a future release, not
+      # defects, and fixing them is a refactor across every pyclass -- so they are
+      # allowed here and everything else is denied.
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings -A deprecated
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: build the wheel
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv maturin
+          uv run --no-sync --python .venv maturin build --out target/wheels
+
+      # The wheel has to be usable with uv alone -- no ROS, no Boost, no C++ toolchain.
+      # That is half the reason this project exists, so it is checked rather than
+      # assumed.
+      - name: install it clean and import everything
+        run: |
+          uv venv --python 3.11 /tmp/fresh
+          uv pip install --python /tmp/fresh target/wheels/*.whl
+          /tmp/fresh/bin/python - <<'PY'
+          import lanelet2, lanelet2.core, lanelet2.geometry, lanelet2.io
+          import lanelet2.matching, lanelet2.projection, lanelet2.routing, lanelet2.traffic_rules
+          import autoware_lanelet2_extension_python.regulatory_elements as r
+          import autoware_lanelet2_extension_python.utility.query as q
+          import autoware_lanelet2_extension_python.utility.utilities as u
+          from autoware_lanelet2_extension_python.projection import MGRSProjector, TransverseMercatorProjector
+          assert len([n for n in dir(r) if n[0].isupper()]) == 8
+          print("clean install ok:", len(q.__all__), "queries,", len(u.__all__), "utilities")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: target/wheels/*.whl
+
+  upstream:
+    name: upstream's own tests (fetched)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+
+      - name: build and install
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv maturin pytest
+          uv run --no-sync --python .venv maturin develop --uv
+
+      # Reports separately on tests that fail (we are incompatible) and tests that
+      # merely changed (our vendored copy is stale). Both matter; only the first is
+      # a compatibility problem.
+      - name: fetch upstream's tests
+        id: fetch
+        continue-on-error: true
+        run: python3 tools/fetch_upstream_tests.py
+
+      - name: run them unmodified, both modes
+        run: |
+          ./.venv/bin/python -m pytest tests/upstream-fresh -q
+          LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream-fresh -q
+
+      - name: report drift
+        if: steps.fetch.outcome == 'failure'
+        run: |
+          echo "::warning::upstream changed a test file -- the vendored copies in" \
+               "tests/upstream* need updating. The fetched versions passed, so this" \
+               "is not a compatibility failure."
+
+  oracle:
+    name: diff harness (PyPI + Autoware oracles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - uses: prefix-dev/setup-pixi@v0
+        with:
+          manifest-path: tests/oracle/pixi.toml
+          # Keyed on the lock file, so a solve only happens when the pins move.
+          cache: true
+
+      - name: venvs and wheel
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv maturin pytest
+          uv venv --python 3.11 .venv-ref
+          uv pip install --python .venv-ref -r tests/ref-requirements.txt
+          uv run --no-sync --python .venv maturin develop --uv
+          uv run --no-sync --python .venv maturin build --out target/wheels
+
+      # The extension is not on any conda channel -- the newest there predates its
+      # Python bindings -- so it is built from source at the pinned tag on top of the
+      # pinned environment. Cached on the tag, since it does not move on its own.
+      - name: cache the built extension
+        id: extension-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            tests/oracle/install
+            tests/oracle/build
+            tests/oracle/src
+          key: awext-${{ hashFiles('tests/oracle/pixi.toml') }}
+
+      - name: build the Autoware oracle
+        if: steps.extension-cache.outputs.cache-hit != 'true'
+        working-directory: tests/oracle
+        run: pixi run --frozen build-extension
+
+      - name: confirm the oracle imports both halves
+        working-directory: tests/oracle
+        run: pixi run --frozen check
+
+      # .venv-aw holds *our* wheel on the oracle's interpreter, so both sides of an
+      # `# ORACLE: aw` comparison speak the same ABI.
+      - name: our wheel on the oracle's Python
+        run: |
+          uv venv --python 3.12 .venv-aw
+          uv pip install --python .venv-aw --reinstall target/wheels/*.whl
+
+      - name: the whole suite, both oracles
+        env:
+          SIMPLE_LL2_AW_SETUP: ${{ github.workspace }}/tests/oracle/install/setup.bash
+        run: ./.venv/bin/python tests/runner.py
+
+      # And once more with the Autoware oracle absent, since the wheel must not need it.
+      - name: the suite without the Autoware oracle
+        run: ./.venv/bin/python tests/runner.py
+
+      - name: vendored upstream tests, both modes
+        run: |
+          ./.venv/bin/python -m pytest tests/upstream tests/upstream-awext -q
+          LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream tests/upstream-awext -q
