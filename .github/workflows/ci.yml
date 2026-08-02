@@ -2,8 +2,13 @@
 # three directions rather than to run a test suite.
 #
 #   check     the parts that need nothing but this repository
+#   diff      the harness against the PyPI reference -- 20 cases, no ROS anywhere
 #   upstream  upstream's *own* tests, fetched fresh, run unmodified against us
-#   oracle    the full diff harness, including the Autoware extension via pixi
+#   oracle    the remaining 12 cases, which need the Autoware reference, via pixi
+#
+# The first three are minutes; `oracle` has to restore a conda environment and colcon
+# build the extension, so it is kept separate rather than made a prerequisite of the
+# quick feedback.
 #
 # `upstream` deliberately fetches at HEAD rather than a pin. A vendored copy proves
 # compatibility with whatever upstream looked like when it was copied; fetching proves
@@ -74,6 +79,34 @@ jobs:
         with:
           name: wheel
           path: target/wheels/*.whl
+
+  diff:
+    name: diff harness (PyPI reference)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+
+      - name: venvs
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv maturin pytest
+          uv venv --python 3.11 .venv-ref
+          uv pip install --python .venv-ref -r tests/ref-requirements.txt
+          uv run --no-sync --python .venv maturin develop --uv
+
+      # Without SIMPLE_LL2_AW_SETUP the Autoware cases skip themselves, leaving the
+      # twenty that only need the PyPI wheel. Those are the bulk of the compatibility
+      # claim and they need no ROS at all.
+      - name: three-way diff against lanelet2==1.2.3
+        run: ./.venv/bin/python tests/runner.py
+
+      - name: upstream's tests, vendored copies, both modes
+        run: |
+          ./.venv/bin/python -m pytest tests/upstream tests/upstream-awext -q
+          LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream tests/upstream-awext -q
 
   upstream:
     name: upstream's own tests (fetched)
@@ -157,22 +190,23 @@ jobs:
         run: pixi run --frozen check
 
       # .venv-aw holds *our* wheel on the oracle's interpreter, so both sides of an
-      # `# ORACLE: aw` comparison speak the same ABI.
+      # `# ORACLE: aw` comparison speak the same ABI. The version is read back from the
+      # oracle rather than written here: RoboStack ties it to the ROS distro through
+      # ros2-distro-mutex, so bumping a pin can move it.
       - name: our wheel on the oracle's Python
         run: |
-          uv venv --python 3.12 .venv-aw
+          cd tests/oracle
+          PYVER=$(pixi run --frozen python -c 'import sys; print("%d.%d" % sys.version_info[:2])' | tail -1)
+          cd "$GITHUB_WORKSPACE"
+          echo "oracle interpreter: $PYVER"
+          uv venv --python "$PYVER" .venv-aw
           uv pip install --python .venv-aw --reinstall target/wheels/*.whl
 
+      # All 32 cases: the 20 the `diff` job also covers, plus the 10 `# ORACLE: aw`
+      # ones for the extension and the 2 `# ORACLE: skew` ones that compare the two
+      # references against each other.
       - name: the whole suite, both oracles
         env:
           SIMPLE_LL2_AW_SETUP: ${{ github.workspace }}/tests/oracle/install/setup.bash
         run: ./.venv/bin/python tests/runner.py
 
-      # And once more with the Autoware oracle absent, since the wheel must not need it.
-      - name: the suite without the Autoware oracle
-        run: ./.venv/bin/python tests/runner.py
-
-      - name: vendored upstream tests, both modes
-        run: |
-          ./.venv/bin/python -m pytest tests/upstream tests/upstream-awext -q
-          LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream tests/upstream-awext -q

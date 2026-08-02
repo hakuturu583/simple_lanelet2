@@ -104,6 +104,23 @@ halves, which are defined but raise when called — upstream imports `geometry_m
 of upstream's own bindings do not work; those are repaired here and reproduced under
 `LANELET2_BUG_COMPAT=1`. See [`docs/DIVERGENCE.md`](docs/DIVERGENCE.md) for the list.
 
+## CI
+
+Four jobs, arranged around the compatibility claim rather than around the test suite:
+
+| job | what it proves | needs |
+|---|---|---|
+| `check` | it builds, lints, and the wheel installs into an empty venv and imports | nothing |
+| `diff` | 20 cases against the PyPI `lanelet2==1.2.3`, plus upstream's vendored tests | a wheel |
+| `upstream` | upstream's *own* tests, cloned at HEAD each run, unmodified, both modes | network |
+| `oracle` | all 32 cases, including the Autoware extension and the two-reference skew check | pixi + colcon |
+
+`upstream` fetching at HEAD rather than a pin is deliberate. A vendored copy proves
+compatibility with whatever upstream looked like the day it was copied; fetching proves
+it against upstream as it stands, and a test they change becomes a signal rather than a
+silent drift. It runs on a schedule too, since upstream moves without anyone touching
+this repository. Locally: `just upstream-fresh`.
+
 ## Licence
 
 BSD-3-Clause, matching upstream Lanelet2. See [`NOTICE`](NOTICE) for vendored assets.
