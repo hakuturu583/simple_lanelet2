@@ -252,6 +252,7 @@ pub fn raise_argument_error(function: &str) -> PyErr {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(as_const_lines, m)?)?;
     m.add_function(wrap_pyfunction!(raise_argument_error, m)?)?;
+    m.add_function(wrap_pyfunction!(offset_line, m)?)?;
     m.add_function(wrap_pyfunction!(lanelet_layer, m)?)?;
     m.add_function(wrap_pyfunction!(subtype_lanelets, m)?)?;
     m.add_function(wrap_pyfunction!(road_lanelets, m)?)?;
@@ -268,4 +269,19 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_all_pedestrian_line_markings, m)?)?;
     m.add_function(wrap_pyfunction!(curbstones, m)?)?;
     Ok(())
+}
+
+/// Offsets a 2D polyline sideways, positive to the left.
+///
+/// Exposed as a dunder rather than a public name: it is machinery for the extension's
+/// `getExpandedLanelet`, not part of anyone's API, and `0001_api_surface` compares
+/// public names exactly.
+#[pyfunction]
+#[pyo3(name = "__offset__")]
+pub fn offset_line(points: Vec<(f64, f64)>, distance: f64) -> Vec<(f64, f64)> {
+    let line: Vec<[f64; 2]> = points.iter().map(|&(x, y)| [x, y]).collect();
+    ll2_core::geometry::offset::offset(&line, distance)
+        .into_iter()
+        .map(|p| (p[0], p[1]))
+        .collect()
 }

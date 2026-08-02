@@ -91,11 +91,12 @@ registration there happens when the extension's shared library loads. Note that 
 process-wide and cannot be undone, so an unrelated module importing the extension
 changes what `lanelet2.io.load` produces from that point on.
 
-**`AutowareOsmParser` is not implemented.** Autoware's own parser prefers `local_x`
-and `local_y` tags over the projected latitude and longitude. A real Autoware map is
-full of them — the Nishi-Shinjuku example carries 36,936 — so reading one through
-plain `lanelet2.io.load` gives coordinates derived from lat/lon: perfectly plausible
-numbers that are *not* the ones Autoware's tooling produces.
+**Coordinates come from latitude and longitude, not from `local_x`/`local_y`.**
+Autoware's C++ `AutowareOsmParser` prefers those tags, and a real Autoware map is full
+of them — the Nishi-Shinjuku example carries 36,936. That parser is not reachable from
+Python in the reference either, so `lanelet2.io.load` behaves the same in both; our
+output on that map is byte-identical to the reference's. But it does mean the numbers
+differ from what Autoware's own C++ tooling produces.
 
 `utility.query` and `utility.utilities` are provided apart from their ROS-dependent
 halves, which are defined but raise when called — upstream imports `geometry_msgs` and

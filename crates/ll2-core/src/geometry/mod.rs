@@ -5,6 +5,7 @@
 //! in exactly the boundary cases that matter here (touching segments, collinear
 //! overlap, points exactly on an edge), and those differences would be silent.
 
+pub mod offset;
 pub mod bbox;
 pub mod distance;
 pub mod lanelet;

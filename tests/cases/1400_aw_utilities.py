@@ -10,6 +10,12 @@ the second-to-last, which changes which segment a near-endpoint target interpola
 within. Rewriting it as a bisection would agree almost everywhere and differ exactly
 where it matters.
 
+`getExpandedLanelet` is the other substantial one. Offsetting a polyline sideways is
+only a per-vertex shift while the line turns *away* from the offset; where it turns
+towards it the shifted segments cross, and the naive result loops back on itself. The
+port splits the line into convex runs and walks them, cutting at the crossings, which
+is what keeps the inside of a corner from overshooting.
+
 Two functions cannot be called in the reference and are repaired here: the single
 lanelet form of `getLaneletLength2d`/`3d`, whose shim only ever matches the list form,
 and `getConflictingLanelets`, whose binding wants a graph type Python cannot produce.
@@ -79,6 +85,22 @@ def main():
     # Both refuse rather than raise: too few distinct points, and no width tag.
     emit("to_polygon", utilities.lineStringToPolygon(probe[0].leftBound))
     emit("to_polygon_width", utilities.lineStringWithWidthToPolygon(probe[0].leftBound))
+
+    # --- expanding ----------------------------------------------------------------
+    for left_offset, right_offset in ((0.5, -0.5), (1.0, -0.25), (-0.3, 0.3)):
+        key = "expand_%g_%g" % (left_offset, right_offset)
+        for lanelet in probe:
+            expanded = utilities.getExpandedLanelet(lanelet, left_offset, right_offset)
+            emit("%s_%d_left" % (key, lanelet.id), coordinates(expanded.leftBound))
+            emit("%s_%d_right" % (key, lanelet.id), coordinates(expanded.rightBound))
+            # The id and attributes carry over; only the geometry changes.
+            emit("%s_%d_id" % (key, lanelet.id), expanded.id)
+            emit("%s_%d_attrs" % (key, lanelet.id), dict(expanded.attributes))
+
+    # A corner is the interesting case: offsetting into the inside must not overshoot
+    # past it and come back.
+    corner = utilities.getExpandedLanelets(probe, 0.5, -0.5)
+    emit("expand_many_ids", [x.id for x in corner])
 
     # --- routing ------------------------------------------------------------------
     from lanelet2.routing import RoutingGraph

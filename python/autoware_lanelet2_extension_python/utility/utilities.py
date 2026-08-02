@@ -188,6 +188,103 @@ def getClosestSegment(search_point, linestring):
     return _query.__as_const_lines__([closest])[0]
 
 
+def _copy_z(source, target):
+    """Gives the offset points elevations interpolated from the original bound.
+
+    Walked by 2D arc length along both lines at once, rather than by index: the offset
+    line has its own point count, so the two do not correspond. Ends are copied
+    outright.
+    """
+    if not source or not target:
+        return target
+    target[0] = (target[0][0], target[0][1], source[0][2])
+    if len(source) < 2 or len(target) < 2:
+        return target
+    target[-1] = (target[-1][0], target[-1][1], source[-1][2])
+
+    def flat(a, b):
+        return _math.hypot(b[0] - a[0], b[1] - a[1])
+
+    i_from = 1
+    s_from = flat(source[0], source[1])
+    s_to = 0.0
+    s_from_prev = 0.0
+    for i_to in range(1, len(target) - 1):
+        s_to += flat(target[i_to - 1], target[i_to])
+        while s_from < s_to and i_from + 1 < len(source):
+            s_from_prev = s_from
+            s_from += flat(source[i_from], source[i_from + 1])
+            i_from += 1
+        span = s_from - s_from_prev
+        ratio = (s_to - s_from_prev) / span if span else 0.0
+        z = source[i_from - 1][2] + ratio * (source[i_from][2] - source[i_from - 1][2])
+        target[i_to] = (target[i_to][0], target[i_to][1], z)
+    return target
+
+
+def _close_the_ends(original_left, original_right, left, right, left_offset, right_offset):
+    """Pulls both bounds' end points onto the line joining the originals'.
+
+    Without this, expanding a run of lanelets opens a longitudinal gap between
+    consecutive ones: each bound's end moves along its own normal, and the two normals
+    do not agree at a join.
+    """
+    for index in (0, -1):
+        dx = original_right[index][0] - original_left[index][0]
+        dy = original_right[index][1] - original_left[index][1]
+        theta = _math.atan2(dy, dx)
+        right[index] = (
+            original_right[index][0] - right_offset * _math.cos(theta),
+            original_right[index][1] - right_offset * _math.sin(theta),
+            right[index][2],
+        )
+        left[index] = (
+            original_left[index][0] - left_offset * _math.cos(theta),
+            original_left[index][1] - left_offset * _math.sin(theta),
+            left[index][2],
+        )
+
+
+def getExpandedLanelet(lanelet_obj, left_offset, right_offset):
+    """A lanelet with its bounds pushed outwards.
+
+    Offsets are signed the same way everywhere here: positive is to the left, so
+    widening a lanelet means a positive left offset and a negative right one.
+
+    Upstream checks afterwards that neither bound inverted and logs if it did, then
+    uses the result regardless -- so there is nothing observable to reproduce, and no
+    check here either.
+    """
+    original_left = [(p.x, p.y, p.z) for p in lanelet_obj.leftBound]
+    original_right = [(p.x, p.y, p.z) for p in lanelet_obj.rightBound]
+
+    left = [
+        (x, y, 0.0)
+        for x, y in _query.__offset__([(p[0], p[1]) for p in original_left], left_offset)
+    ]
+    right = [
+        (x, y, 0.0)
+        for x, y in _query.__offset__([(p[0], p[1]) for p in original_right], right_offset)
+    ]
+    _close_the_ends(original_left, original_right, left, right, left_offset, right_offset)
+    _copy_z(original_left, left)
+    _copy_z(original_right, right)
+
+    expanded = _Lanelet(
+        lanelet_obj.id,
+        _LineString3d(0, [_Point3d(0, *p) for p in left]),
+        _LineString3d(0, [_Point3d(0, *p) for p in right]),
+    )
+    # Iterating an AttributeMap yields entry objects, not keys.
+    for key, value in dict(lanelet_obj.attributes).items():
+        expanded.attributes[key] = value
+    return expanded
+
+
+def getExpandedLanelets(lanelets, left_offset, right_offset):
+    return [getExpandedLanelet(x, left_offset, right_offset) for x in lanelets]
+
+
 def _unique_points(points, existing):
     """Appends points that are not already within a centimetre of one present.
 
@@ -420,6 +517,8 @@ for _name in _ROS_ONLY:
 
 __all__ = [
     "combineLaneletsShape",
+    "getExpandedLanelet",
+    "getExpandedLanelets",
     "generateFineCenterline",
     "getConflictingLanelets",
     "getLaneletLength2d",

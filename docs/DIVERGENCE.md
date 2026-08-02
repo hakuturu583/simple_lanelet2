@@ -149,9 +149,11 @@ upstream, where registration happens when its shared library loads. See
   yields coordinates derived from lat/lon instead: plausible, and *not* what
   Autoware's own tooling produces. Half-implementing this would be worse than not
   having it, so it is absent and said so loudly.
-- `getExpandedLanelet` and `getExpandedLanelets`. They need `offsetNoThrow` and
-  `checkForInversion`, lanelet2 internals that are not exposed to Python and that we
-  do not have. Everything else in `utility.utilities` is provided.
+- Nothing in `utility.utilities`; it is complete. `getExpandedLanelet` needed
+  lanelet2's polyline offset, which is not exposed to Python, so that algorithm is
+  ported in `crates/ll2-core/src/geometry/offset.rs` — convex-run decomposition and a
+  self-intersection walk, agreeing with the reference to 5.4e-10 m across every
+  lanelet of the example map.
 - `utility.query` is complete apart from `Point`, `Pose` and `serialize_message`,
   which are ROS types that leak into upstream's module namespace from its own imports.
   Its ROS-dependent functions are *defined* but raise when called, so the module stays
