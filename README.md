@@ -115,6 +115,11 @@ Four jobs, arranged around the compatibility claim rather than around the test s
 | `upstream` | upstream's *own* tests, cloned at HEAD each run, unmodified, both modes | network |
 | `oracle` | all 32 cases, including the Autoware extension and the two-reference skew check | pixi + colcon |
 
+One caveat on what `upstream` proves. Lanelet2's own tests are substantive; the
+Autoware extension's Python tests are import smoke tests, and its real suite is C++
+gtest that cannot run against a Python implementation. The extension is verified by the
+`# ORACLE: aw` diff cases instead — see [`tests/upstream-awext/README.md`](tests/upstream-awext/README.md).
+
 `upstream` fetching at HEAD rather than a pin is deliberate. A vendored copy proves
 compatibility with whatever upstream looked like the day it was copied; fetching proves
 it against upstream as it stands, and a test they change becomes a signal rather than a
