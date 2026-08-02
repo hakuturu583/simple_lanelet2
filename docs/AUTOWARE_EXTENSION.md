@@ -167,9 +167,35 @@ It had two causes, both found and fixed rather than tolerated:
 The 10.5 MB map now round-trips **byte-identically** -- same sha256, same 91 load
 errors, same 58 write errors. Phase 2's gate can stay worded as byte-identity.
 
-A residual remains, worth knowing but below the threshold that matters: over a sweep
-of 24,000 reverse projections across three projectors, **5 latitudes still differ by
-exactly 1 ulp**. None of them occurs in either real map we round-trip. The definitions
-of `taupf`, `eatanhe`, `tauf` and `atan2d` all match GeographicLib's, including the
-`e2m * (tau * tau)` grouping, so what is left is rounding order inside the Kruger
-series evaluation.
+### The residual, and why it has no answer
+
+Over a sweep of 24,000 reverse projections, 5 latitudes differ from the PyPI wheel by
+exactly 1 ulp. That number is best read next to two others, measured the same way:
+
+| pair | differing | magnitude |
+|---|---|---|
+| ours vs PyPI wheel 1.2.3 | **5** / 24,000 | 1 ulp |
+| ours vs RoboStack 1.2.2 | 1,635 / 24,000 | 1 ulp |
+| PyPI 1.2.3 vs RoboStack 1.2.2 | 1,632 / 24,000 | 1 ulp |
+
+**The two reference builds disagree with each other three hundred times more often than
+we disagree with the closer of them.** There is no single bit-exact target to hit;
+matching one build would mean reproducing its compiler's instruction selection, which
+the other build already contradicts.
+
+What the residual is *not* has been checked rather than assumed:
+
+- **The series coefficients are bit-identical.** Recomputed with GeographicLib's own
+  `Math::polyval` and the same tables: every `alp` and `bet`, `a1` and `es` match to
+  the last digit.
+- **`tauf` and `atand` are exact.** Feeding our `taup` to GeographicLib's `Math::tauf`
+  returns our `tau` bit for bit, and its `Math::atand` of that returns our latitude.
+- **The forward series is bit-exact** over all 24,000 points, using the same Clenshaw
+  recurrence and complex arithmetic as the reverse.
+- **It is not FMA contraction.** GCC contracts `a*b - c*d` by default and Rust does
+  not, which made the complex multiply a good suspect. Writing it with `mul_add` moved
+  the count from 5 to 6 — so that is not what the reference does either.
+
+Bisected, the divergence is one ulp in `taup = sin(xip) / r`, upstream of everything
+verified above: the rounding of the reverse Clenshaw recurrence itself. Neither map we
+round-trip contains an affected point.
