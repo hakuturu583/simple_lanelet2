@@ -299,9 +299,14 @@ macro_rules! lanelet_class {
 
             fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
                 match lanelet_of(other) {
-                    Some((lanelet, mutable)) => {
-                        mutable == $mutable && self.lanelet.is_same_view(&lanelet)
-                    }
+                    // A const and a mutable handle to the same lanelet are equal.
+                    // Upstream's operator== compares constData(), and a Lanelet
+                    // is-a ConstLanelet, so mutability is not part of identity --
+                    // exactly as Point compares on dimension and LineString on
+                    // Kind, neither of which carries it. Requiring it to match is
+                    // what left a RoutingGraph-returned ConstLanelet unequal to the
+                    // mutable one in laneletLayer, despite an equal id and hash.
+                    Some((lanelet, _mutable)) => self.lanelet.is_same_view(&lanelet),
                     None => false,
                 }
             }
