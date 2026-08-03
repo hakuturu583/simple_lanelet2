@@ -1,11 +1,28 @@
-# Publishes to PyPI when a v* tag is pushed.
+# Cuts releases and publishes them to PyPI.
 #
-# Authentication is Trusted Publishing, so there is no API token in this repository's
-# secrets. That has to be configured once on PyPI's side -- Publishing -> add a pending
-# publisher with owner `hakuturu583`, repository `simple_lanelet2`, workflow
+# There are three ways in, and the first is the everyday one:
+#
+#   push to main   the auto-release mechanism (borrowed from tier4/splatsim). When a
+#                  merged PR carries exactly one `release:major|minor|patch` label, the
+#                  `release` job bumps the version, tags it `vX.Y.Z`, and the tag is
+#                  built and published -- all in this one run.
+#   push a v* tag  a hand-cut tag (a hotfix, say) is built and published directly; the
+#                  `release` job is skipped.
+#   workflow_dispatch   builds the wheels and sdist without tagging or publishing, to
+#                  eyeball a release before committing to it.
+#
+# The publish happens as a follow-up job here rather than in a separate `on: push:
+# tags` workflow *on purpose*: the auto-release tag is pushed with GITHUB_TOKEN, and a
+# token-pushed tag does not start new workflow runs. splatsim hit the same wall with
+# its Docker publish and solved it the same way. A hand-pushed tag would trigger such a
+# workflow, but keeping both paths in one file means one place to trust.
+#
+# Authentication to PyPI is Trusted Publishing, so there is no API token in this
+# repository's secrets. That is configured once on PyPI's side -- Publishing -> add a
+# pending publisher with owner `hakuturu583`, repository `simple_lanelet2`, workflow
 # `release.yml`, environment `pypi`. Until that exists the publish step fails and the
-# wheels are still available as artifacts, which is the right way round: nothing
-# reaches PyPI without a deliberate action outside this repository.
+# wheels are still available as artifacts, which is the right way round: nothing reaches
+# PyPI without a deliberate action outside this repository.
 #
 # A version can never be replaced on PyPI, so the tests run again here rather than
 # trusting that CI was green on the same commit.
@@ -14,30 +31,163 @@ name: Release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
-  # Builds the artifacts without publishing, for checking a release before tagging.
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # The splatsim mechanism: read the release label off the merged PR and, if there is
+  # one, bump the version and push the tag. Runs only on a push to main; a tag push or
+  # a manual dispatch skips it and falls straight through to the build.
+  release:
+    name: cut the release tag
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      bump: ${{ steps.pr.outputs.bump }}
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - name: read the release label off the merged PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pr_json=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/pulls \
+            --jq '.[0] // empty' 2>/dev/null || true)
+          if [ -z "$pr_json" ]; then
+            echo "No PR associated with this push -- nothing to release"
+            echo "bump=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          labels=$(echo "$pr_json" | jq -r '[.labels[].name] | join(",")')
+          bump=none
+          count=0
+          for lvl in major minor patch; do
+            if echo ",$labels," | grep -q ",release:${lvl},"; then
+              bump=$lvl
+              count=$((count + 1))
+            fi
+          done
+          if [ "$count" -gt 1 ]; then
+            echo "::error::More than one release label on the PR -- pick exactly one"
+            exit 1
+          fi
+          echo "bump=${bump}" >> "$GITHUB_OUTPUT"
+          echo "Resolved bump level: ${bump}"
+
+      - uses: actions/checkout@v4
+        if: steps.pr.outputs.bump != 'none'
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: bump pyproject, Cargo.toml and Cargo.lock together
+        if: steps.pr.outputs.bump != 'none'
+        id: bump
+        run: |
+          set -euo pipefail
+          next=$(python3 tools/bump_version.py "${{ steps.pr.outputs.bump }}")
+          echo "next=${next}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${next}" >> "$GITHUB_OUTPUT"
+          echo "Bumped to ${next} (${{ steps.pr.outputs.bump }})"
+
+      - name: fail if the tag already exists
+        if: steps.pr.outputs.bump != 'none'
+        run: |
+          if git rev-parse "refs/tags/${{ steps.bump.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.bump.outputs.tag }} already exists" >&2
+            exit 1
+          fi
+
+      - name: commit, tag and push
+        if: steps.pr.outputs.bump != 'none'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml Cargo.toml Cargo.lock
+          git commit -m "chore(release): ${{ steps.bump.outputs.tag }}"
+          git tag -a "${{ steps.bump.outputs.tag }}" -m "Release ${{ steps.bump.outputs.tag }}"
+          git push origin "HEAD:main"
+          git push origin "${{ steps.bump.outputs.tag }}"
+
+      - name: GitHub release with generated notes
+        if: steps.pr.outputs.bump != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.bump.outputs.tag }}" \
+            --title "${{ steps.bump.outputs.tag }}" \
+            --generate-notes
+
+  # One place to work out, for all three entry points, which commit to build and whether
+  # it may be published. Runs even when `release` is skipped (tag push, dispatch).
+  resolve:
+    name: resolve what to build
+    needs: [release]
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.r.outputs.proceed }}
+      ref: ${{ steps.r.outputs.ref }}
+      publish: ${{ steps.r.outputs.publish }}
+    steps:
+      - id: r
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          BUMP: ${{ needs.release.outputs.bump }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          proceed=false; publish=false; ref="$REF_NAME"
+          if [ "$EVENT" = "push" ] && [[ "$REF" == refs/tags/v* ]]; then
+            # A hand-cut tag: build and publish it.
+            proceed=true; publish=true; ref="$REF_NAME"
+          elif [ "$EVENT" = "push" ] && [ "$REF" = "refs/heads/main" ]; then
+            # The auto-release path: build and publish only if a tag was cut.
+            if [ "$BUMP" != "none" ] && [ -n "$TAG" ]; then
+              proceed=true; publish=true; ref="$TAG"
+            fi
+          elif [ "$EVENT" = "workflow_dispatch" ]; then
+            # A dry run: build the artifacts, publish nothing.
+            proceed=true; publish=false; ref="$REF_NAME"
+          fi
+          echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "event=$EVENT ref=$ref proceed=$proceed publish=$publish"
+
   verify:
     name: test the tagged commit
+    needs: [resolve]
+    if: needs.resolve.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v5
 
       - name: the version in the tag must be the version in the package
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: needs.resolve.outputs.publish == 'true'
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          TAG="${REF#v}"
           PKG=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
           CRATE=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           echo "tag=$TAG pyproject=$PKG cargo=$CRATE"
           test "$TAG" = "$PKG" && test "$TAG" = "$CRATE"
+        env:
+          REF: ${{ needs.resolve.outputs.ref }}
 
       - run: cargo test --workspace
 
@@ -54,13 +204,15 @@ jobs:
 
   wheels:
     name: wheel (${{ matrix.target }})
-    needs: verify
+    needs: [resolve, verify]
     runs-on: ubuntu-latest
     strategy:
       matrix:
         target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
       # abi3-py39, so one wheel per architecture serves 3.9 through 3.13.
       - uses: PyO3/maturin-action@v1
         with:
@@ -74,10 +226,12 @@ jobs:
 
   sdist:
     name: sdist
-    needs: verify
+    needs: [resolve, verify]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
       # Only Linux wheels are built, because Linux is where this has been verified
       # against the reference. The sdist is what lets anyone else build it -- it needs
       # a Rust toolchain, which maturin bootstraps.
@@ -92,8 +246,8 @@ jobs:
 
   publish:
     name: publish to PyPI
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [wheels, sdist]
+    needs: [resolve, wheels, sdist]
+    if: needs.resolve.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment:
       name: pypi
