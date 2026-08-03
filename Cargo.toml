@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "1.0.2"
+version = "1.0.3"
 edition = "2024"
 license = "BSD-3-Clause"
 repository = "https://github.com/hakuturu583/simple_lanelet2"

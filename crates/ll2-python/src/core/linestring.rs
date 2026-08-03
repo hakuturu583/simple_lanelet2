@@ -8,7 +8,6 @@
 //!
 //! Upstream: `lanelet2_python/python_api/core.cpp:340-380, 796-996`
 
-use ll2_core::compat;
 use ll2_core::linestring::LineString;
 use ll2_core::point::Point;
 use pyo3::exceptions::PyAttributeError;
@@ -239,11 +238,12 @@ macro_rules! linestring_class {
             }
 
             fn __hash__(&self) -> i64 {
-                if compat::hash_by_id_only() {
-                    self.line.id()
-                } else {
-                    self.line.identity() as i64
-                }
+                // Hash by id, matching upstream. `__eq__` compares storage
+                // identity, and equal storage always shares an id, so `a == b`
+                // still implies `hash(a) == hash(b)` -- the only direction
+                // Python requires. Id hashing keeps set/dict iteration order
+                // matching upstream for order-sensitive consumers.
+                self.line.id()
             }
 
             fn __str__(&self) -> String {

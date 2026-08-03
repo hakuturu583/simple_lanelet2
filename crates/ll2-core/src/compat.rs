@@ -1,7 +1,7 @@
 //! Bug-compatibility mode.
 //!
 //! Upstream Lanelet2 has a number of outright defects (misnamed keyword arguments,
-//! a `__hash__` that contradicts `__eq__`, a filter predicate that is a no-op, ...).
+//! a filter predicate that is a no-op, ...).
 //! By default this library fixes them. Setting the environment variable
 //! `LANELET2_BUG_COMPAT` to a truthy value restores the upstream behaviour exactly,
 //! which is what the cross-implementation diff tests run against.
@@ -52,14 +52,6 @@ pub fn force_for_test(value: bool) -> bool {
 // than inlining `bug_compat()` makes every switch point greppable and makes the
 // compat matrix in tests/compat_matrix.toml auditable against the source.
 // ---------------------------------------------------------------------------
-
-/// Upstream `HashBase` hashes the id only, which contradicts `operator==`
-/// (identity-based). Fixed mode hashes identity so `__hash__`/`__eq__` agree.
-///
-/// Upstream: `lanelet2_core/include/lanelet2_core/primitives/Primitive.h:328-330`
-pub fn hash_by_id_only() -> bool {
-    bug_compat()
-}
 
 /// Upstream `makeAreaRepr` hardcodes the display name to `Area`, so
 /// `repr(ConstArea(...))` claims to be an `Area`.

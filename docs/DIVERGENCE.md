@@ -38,11 +38,16 @@ time and re-reading `os.environ` afterwards has no effect.
 | 8 | The `withoutConflicting` edge filter computes `allRelations() \| ~Conflicting` = `0xFF`, matching every relation — it does nothing | conflicting edges are actually excluded | runtime |
 | 9 | `canPass(Area, Area)` guards with `!canPass(from) && canPass(to)`, almost certainly a typo | `\|\|` | runtime |
 | 10 | `followingRelations` dereferences an optional without checking it | missing entries are skipped | runtime |
-| 11 | `__hash__` hashes the id only, contradicting the identity-based `__eq__` and violating Python's hash/eq contract | hashes identity, so `__hash__` and `__eq__` agree | runtime |
-| 12 | `ConstPoint2d::basicPoint()` returns a mutable internal reference, so you can write through a `Const` handle | `Const` types return a read-only view | runtime |
-| 13 | The shipped `.pyi` stubs disagree with the actual bindings in a dozen places | generated from the implementation | — |
+| 11 | `ConstPoint2d::basicPoint()` returns a mutable internal reference, so you can write through a `Const` handle | `Const` types return a read-only view | runtime |
+| 12 | The shipped `.pyi` stubs disagree with the actual bindings in a dozen places | generated from the implementation | — |
 
-Item 13 has no runtime effect and therefore no `compat_matrix.toml` entry.
+`__hash__` is **not** listed here: it hashes the id in both modes, matching
+upstream. `__eq__` compares storage identity, and equal storage always shares an
+id, so `a == b` still implies `hash(a) == hash(b)` — the only direction Python's
+contract requires. Hashing by id keeps set/dict iteration order identical to
+upstream, which order-sensitive consumers rely on.
+
+Item 12 has no runtime effect and therefore no `compat_matrix.toml` entry.
 
 ## 2. Out of scope
 

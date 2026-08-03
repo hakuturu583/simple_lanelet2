@@ -7,7 +7,6 @@
 //!
 //! Upstream: `lanelet2_python/python_api/core.cpp:998-1082`
 
-use ll2_core::compat;
 use ll2_core::lanelet::Lanelet;
 use ll2_core::linestring::LineString;
 use pyo3::exceptions::PyAttributeError;
@@ -316,11 +315,13 @@ macro_rules! lanelet_class {
             }
 
             fn __hash__(&self) -> i64 {
-                if compat::hash_by_id_only() {
-                    self.lanelet.id()
-                } else {
-                    self.lanelet.identity() as i64
-                }
+                // Hash by id, matching upstream Lanelet2. `__eq__` compares
+                // storage identity, and equal storage always shares an id, so
+                // `a == b` still implies `hash(a) == hash(b)` -- the only
+                // direction Python's contract requires. Hashing by id keeps
+                // set/dict iteration order identical to upstream, which
+                // order-sensitive consumers depend on.
+                self.lanelet.id()
             }
 
             fn __str__(&self) -> String {
