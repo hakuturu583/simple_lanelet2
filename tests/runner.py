@@ -41,6 +41,7 @@ import difflib
 import json
 import math
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -77,6 +78,13 @@ CASE_TIMEOUT = 300
 TOL_RE = re.compile(r"^#\s*TOL:\s*(.*)$", re.MULTILINE)
 EXPECT_RE = re.compile(r"^#\s*EXPECT:\s*(\w+)\s*$", re.MULTILINE)
 ORACLE_RE = re.compile(r"^#\s*ORACLE:\s*(\w+)\s*$", re.MULTILINE)
+NEEDS_RE = re.compile(r"^#\s*NEEDS:\s*(\w[\w-]*)\s*$", re.MULTILINE)
+
+#: External inputs a case may need that this repository cannot ship, each mapped to
+#: the environment variable that points at one. A real Autoware map is the only such
+#: input so far: the one this was developed against is CC BY-NC licensed, so it can be
+#: neither vendored here nor downloaded by CI.
+EXTERNAL_INPUTS = {"aw-map": "SIMPLE_LL2_AW_MAP"}
 
 #: Iterating a map layer without sorting is the single most common source of
 #: flaky cases, because upstream layers are ``std::unordered_map``. Catch it
@@ -361,6 +369,7 @@ def parse_directives(source: str) -> tuple[float, float, str, str]:
         abs_tol,
         (expect.group(1) if expect else "exact"),
         (oracle.group(1) if oracle else "pypi"),
+        [m.group(1) for m in NEEDS_RE.finditer(source)],
     )
 
 
@@ -383,7 +392,7 @@ def check_case(
 ) -> CaseOutcome:
     name = case.stem
     source = case.read_text(encoding="utf-8")
-    rel_tol, abs_tol, expect, oracle = parse_directives(source)
+    rel_tol, abs_tol, expect, oracle, _needs = parse_directives(source)
 
     lint_problems = lint_case(source)
     if lint_problems:
@@ -547,11 +556,12 @@ def main() -> int:
         print("no cases matched", file=sys.stderr)
         return 2
 
+    oracle_ready = AW_OUR_PYTHON.exists() and AW_SETUP is not None and AW_SETUP.exists()
     missing = [
         case
         for case in cases
         if parse_directives(case.read_text(encoding="utf-8"))[3] != "pypi"
-        and not (AW_OUR_PYTHON.exists() and AW_SETUP is not None and AW_SETUP.exists())
+        and not oracle_ready
     ]
     if missing:
         names = ", ".join(case.stem for case in missing)
@@ -561,6 +571,25 @@ def main() -> int:
             file=sys.stderr,
         )
         cases = [case for case in cases if case not in missing]
+
+    # Cases that need an input this repository cannot ship skip themselves the same
+    # way, rather than failing with two different "file not found" messages.
+    for resource, variable in EXTERNAL_INPUTS.items():
+        path = os.environ.get(variable)
+        if path and pathlib.Path(path).exists():
+            continue
+        needy = [
+            case
+            for case in cases
+            if resource in parse_directives(case.read_text(encoding="utf-8"))[4]
+        ]
+        if needy:
+            names = ", ".join(case.stem for case in needy)
+            print(
+                f"{variable} is not set or does not exist, skipping: {names}",
+                file=sys.stderr,
+            )
+            cases = [case for case in cases if case not in needy]
 
     outcomes = [
         check_case(case, args.mode, divergences, compat_matrix, oracle_skew)

@@ -113,7 +113,13 @@ Four jobs, arranged around the compatibility claim rather than around the test s
 | `check` | it builds, lints, and the wheel installs into an empty venv and imports | nothing |
 | `diff` | 20 cases against the PyPI `lanelet2==1.2.3`, plus upstream's vendored tests | a wheel |
 | `upstream` | upstream's *own* tests, cloned at HEAD each run, unmodified, both modes | network |
-| `oracle` | all 32 cases, including the Autoware extension and the two-reference skew check | pixi + colcon |
+| `oracle` | 31 cases, including the Autoware extension and the two-reference skew check | pixi + colcon |
+
+One case is not in that count. `1150_aw_map` loads a real 10.5 MB Autoware map and
+checks it writes back byte for byte; the map it was developed against is CC BY-NC
+licensed, so it can neither be vendored here nor fetched by CI. Point
+`SIMPLE_LL2_AW_MAP` at a real Autoware map to run it. `1160_aw_synthetic_map` covers
+the same behaviour on a map small enough to write inline, and does run in CI.
 
 One caveat on what `upstream` proves. Lanelet2's own tests are substantive; the
 Autoware extension's Python tests are import smoke tests, and its real suite is C++

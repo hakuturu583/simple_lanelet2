@@ -6,20 +6,21 @@ Each of these is one filter over one layer, but the filters are not guessable:
 `getAllPartitions` accepts three type values, and the two pedestrian-marking queries
 split on the linestring's *point count* rather than on any attribute. They were read
 out of `lib/query.cpp` and are checked here against a map that actually exercises
-them -- 1327 pedestrian polygon markings, 884 road lanelets.
+them. The vendored example map is used rather than a real Autoware one: every query
+here is exercised by it, and it is the map CI can actually get hold of.
 
 Results are compared by id, because upstream walks `std::unordered_map` layers and
 its order is not reproducible.
 """
 
-from canon import emit, expect_raises, run
+from canon import data_path, emit, expect_raises, run
 
 import autoware_lanelet2_extension_python.regulatory_elements  # noqa: F401
 import autoware_lanelet2_extension_python.utility.query as query
 from lanelet2.io import Origin, loadRobust
 from lanelet2.projection import UtmProjector
 
-MAP = "/home/masaya/workspace/torchdrivesim/nishishinjuku_autoware_map/lanelet2_map.osm"
+
 
 
 def ids(primitives):
@@ -27,7 +28,7 @@ def ids(primitives):
 
 
 def main():
-    map_, _ = loadRobust(MAP, UtmProjector(Origin(35.6895, 139.6917, 0.0)))
+    map_, _ = loadRobust(data_path("mapping_example.osm"), UtmProjector(Origin(49.0, 8.4, 0.0)))
 
     lanelets = query.laneletLayer(map_)
     emit("lanelet_layer_count", len(lanelets))

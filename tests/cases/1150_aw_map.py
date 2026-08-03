@@ -1,6 +1,7 @@
 """A real Autoware map, read with the extension registered.
 
 # ORACLE: aw
+# NEEDS: aw-map
 
 The Nishi-Shinjuku map carries 33 regulatory elements whose subtypes stock Lanelet2
 has no class for. With the extension imported they resolve; without it the map is
@@ -11,6 +12,7 @@ bytes back out.
 """
 
 import hashlib
+import os
 
 from canon import by_id, emit, run
 
@@ -19,7 +21,11 @@ import autoware_lanelet2_extension_python.regulatory_elements  # noqa: F401
 from lanelet2.io import Origin, loadRobust, write
 from lanelet2.projection import UtmProjector
 
-MAP = "/home/masaya/workspace/torchdrivesim/nishishinjuku_autoware_map/lanelet2_map.osm"
+# The map this was developed against is CC BY-NC 4.0, so it can be neither vendored
+# here nor fetched by CI. Point SIMPLE_LL2_AW_MAP at a real Autoware map to run this;
+# without it the case skips itself. 1160 covers the same behaviour on a map built to
+# order, which is what CI actually exercises.
+MAP = os.environ["SIMPLE_LL2_AW_MAP"]
 
 
 def main():

@@ -225,10 +225,19 @@ _SEQUENCES = "std::vector<%s, std::allocator<%s > >" % (_LANELETS, _LANELETS)
 
 
 def _regelems_of(lanelets, accessor):
-    """The regulatory elements of one kind across a run of lanelets."""
+    """The regulatory elements of one kind across a run of lanelets, each once.
+
+    Deduplicated by id, in first-seen order. One element commonly governs several
+    lanelets -- a traffic light at a junction governs every approach -- so without
+    this it would be returned once per lanelet that references it.
+    """
+    seen = set()
     out = []
     for lanelet in lanelets:
-        out.extend(getattr(lanelet, accessor)())
+        for element in getattr(lanelet, accessor)():
+            if element.id not in seen:
+                seen.add(element.id)
+                out.append(element)
     return out
 
 
@@ -247,19 +256,19 @@ def autowareTrafficLights(lanelets):
 
 
 def _regelems_named(lanelets, class_name):
-    """Regulatory elements of one extension class across a run of lanelets.
+    """Regulatory elements of one extension class across a run of lanelets, each once.
 
     Selected by class name rather than by a typed accessor, because the extension's
     elements have no `lanelet.detectionAreas()` of their own -- the stock accessors
-    only cover the stock kinds.
+    only cover the stock kinds. Deduplicated by id like the rest.
     """
+    seen = set()
     out = []
     for lanelet in lanelets:
-        out.extend(
-            element
-            for element in lanelet.regulatoryElements
-            if type(element).__name__ == class_name
-        )
+        for element in lanelet.regulatoryElements:
+            if type(element).__name__ == class_name and element.id not in seen:
+                seen.add(element.id)
+                out.append(element)
     return out
 
 

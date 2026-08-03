@@ -202,9 +202,10 @@ jobs:
           uv venv --python "$PYVER" .venv-aw
           uv pip install --python .venv-aw --reinstall target/wheels/*.whl
 
-      # All 32 cases: the 20 the `diff` job also covers, plus the 10 `# ORACLE: aw`
-      # ones for the extension and the 2 `# ORACLE: skew` ones that compare the two
-      # references against each other.
+      # Every case except 1150, which needs a real Autoware map. The one this was
+      # developed against is CC BY-NC licensed, so it can be neither vendored nor
+      # fetched here; the case skips itself and 1160 covers the same behaviour on a
+      # map built to order. Set SIMPLE_LL2_AW_MAP locally to run it.
       - name: the whole suite, both oracles
         env:
           SIMPLE_LL2_AW_SETUP: ${{ github.workspace }}/tests/oracle/install/setup.bash
