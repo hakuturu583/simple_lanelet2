@@ -148,6 +148,19 @@ def main():
     emit("side_left_relations", relations(side_graph.leftRelations(lower[0])))
     emit("side_following_with_changes", sorted(ids(side_graph.following(upper[0], True))))
 
+    # A neighbour handed back by the graph is a ConstLanelet, but it is the *same*
+    # lanelet as the mutable one in the map. Const and mutable handles compare equal
+    # -- upstream's operator== is on the shared data, not the handle's mutability --
+    # so a graph neighbour is a member of a set of layer lanelets. Regression: it
+    # used to differ despite an equal id and hash, breaking `neighbour in {...}`.
+    neighbour = side_graph.right(upper[0])
+    layer_lower = side_map.laneletLayer.get(lower[0].id)
+    emit("neighbour_types", [type(neighbour).__name__, type(layer_lower).__name__])
+    emit("neighbour_eq_layer", neighbour == layer_lower)
+    emit("neighbour_eq_input", neighbour == lower[0])
+    emit("neighbour_hash_matches", hash(neighbour) == hash(layer_lower))
+    emit("neighbour_in_layer_set", neighbour in set(lower))
+
     # --- routing costs -------------------------------------------------------
     custom = routing.RoutingGraph(map, rules,
                                   [routing.RoutingCostDistance(20.0),
