@@ -3,10 +3,11 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 license = "BSD-3-Clause"
-repository = "https://github.com/masaya/simple_lanelet2"
+repository = "https://github.com/hakuturu583/simple_lanelet2"
+homepage = "https://github.com/hakuturu583/simple_lanelet2"
 rust-version = "1.85"
 
 [workspace.dependencies]

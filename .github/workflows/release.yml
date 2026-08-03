@@ -1,0 +1,109 @@
+# Publishes to PyPI when a v* tag is pushed.
+#
+# Authentication is Trusted Publishing, so there is no API token in this repository's
+# secrets. That has to be configured once on PyPI's side -- Publishing -> add a pending
+# publisher with owner `hakuturu583`, repository `simple_lanelet2`, workflow
+# `release.yml`, environment `pypi`. Until that exists the publish step fails and the
+# wheels are still available as artifacts, which is the right way round: nothing
+# reaches PyPI without a deliberate action outside this repository.
+#
+# A version can never be replaced on PyPI, so the tests run again here rather than
+# trusting that CI was green on the same commit.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Builds the artifacts without publishing, for checking a release before tagging.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: test the tagged commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v5
+
+      - name: the version in the tag must be the version in the package
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          CRATE=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          echo "tag=$TAG pyproject=$PKG cargo=$CRATE"
+          test "$TAG" = "$PKG" && test "$TAG" = "$CRATE"
+
+      - run: cargo test --workspace
+
+      - name: the diff harness against the PyPI reference
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv maturin pytest
+          uv venv --python 3.11 .venv-ref
+          uv pip install --python .venv-ref -r tests/ref-requirements.txt
+          uv run --no-sync --python .venv maturin develop --uv
+          ./.venv/bin/python tests/runner.py
+          ./.venv/bin/python -m pytest tests/upstream tests/upstream-awext -q
+          LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream tests/upstream-awext -q
+
+  wheels:
+    name: wheel (${{ matrix.target }})
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      # abi3-py39, so one wheel per architecture serves 3.9 through 3.13.
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: auto
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist
+
+  sdist:
+    name: sdist
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Only Linux wheels are built, because Linux is where this has been verified
+      # against the reference. The sdist is what lets anyone else build it -- it needs
+      # a Rust toolchain, which maturin bootstraps.
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+  publish:
+    name: publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/simple-lanelet2
+    permissions:
+      id-token: write   # Trusted Publishing; no token in secrets.
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      - uses: pypa/gh-action-pypi-publish@release/v1

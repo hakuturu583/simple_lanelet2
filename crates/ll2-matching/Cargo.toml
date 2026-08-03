@@ -2,6 +2,8 @@
 name = "ll2-matching"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
 license.workspace = true
 rust-version.workspace = true
 description = "Matching objects to lanelets for a Lanelet2-compatible library"

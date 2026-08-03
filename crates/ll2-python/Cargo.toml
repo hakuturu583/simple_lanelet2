@@ -2,6 +2,8 @@
 name = "ll2-python"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
 license.workspace = true
 rust-version.workspace = true
 description = "PyO3 bindings exposing ll2-core as the `lanelet2` Python package"
