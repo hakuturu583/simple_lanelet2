@@ -114,4 +114,10 @@ jobs:
       - name: check the metadata before uploading
         run: pipx run twine check --strict dist/*
 
+      # PyPI refuses to replace a file but accepts new ones for an existing release,
+      # so skipping what is already there lets a re-run add what an earlier attempt
+      # failed to upload -- which is how the sdist reached 1.0.0 after the wheels had
+      # gone up without it.
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
