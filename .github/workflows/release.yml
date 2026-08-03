@@ -106,4 +106,12 @@ jobs:
           path: dist
           merge-multiple: true
       - run: ls -l dist
+
+      # PyPI rejects an upload whose metadata names a file the archive does not
+      # contain, and it does so after the artifacts are built and the OIDC exchange
+      # has succeeded -- so the same check runs here first, where failing costs
+      # nothing. This caught the sdist declaring License-File without carrying it.
+      - name: check the metadata before uploading
+        run: pipx run twine check --strict dist/*
+
       - uses: pypa/gh-action-pypi-publish@release/v1

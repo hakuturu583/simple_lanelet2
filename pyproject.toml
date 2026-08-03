@@ -40,4 +40,12 @@ python-source = "python"
 # later as an ImportError in the one venv built from a wheel rather than in place.
 python-packages = ["lanelet2", "autoware_lanelet2_extension_python"]
 features = ["pyo3/extension-module"]
+# The sdist is built from what cargo would package, and cargo packages a crate rather
+# than the repository, so files at the root are not in it. The metadata declares
+# License-File regardless, and PyPI rejects an upload whose metadata names a file the
+# archive does not contain.
+include = [
+    { path = "LICENSE", format = "sdist" },
+    { path = "NOTICE", format = "sdist" },
+]
 strip = true
