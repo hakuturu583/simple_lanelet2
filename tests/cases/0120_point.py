@@ -7,8 +7,9 @@ The load-bearing facts pinned here:
   the 2D view leaves `z` alone.
 * `==` compares the identity of the underlying storage, not the id. Two points
   built separately with the same id are not equal.
-* `__hash__` upstream hashes the id alone, contradicting `__eq__`. We hash identity
-  by default and restore upstream's behaviour under LANELET2_BUG_COMPAT.
+* `__hash__` hashes the id, matching upstream. `__eq__` compares storage identity,
+  and equal storage always shares an id, so `a == b` still implies equal hash
+  (the only direction Python requires); distinct same-id points may collide.
 * `.attributes` is a live proxy; mutating it mutates the point.
 """
 

@@ -367,11 +367,12 @@ macro_rules! area_class {
             }
 
             fn __hash__(&self) -> i64 {
-                if compat::hash_by_id_only() {
-                    self.area.id()
-                } else {
-                    self.area.identity() as i64
-                }
+                // Hash by id, matching upstream. `__eq__` compares storage
+                // identity, and equal storage always shares an id, so `a == b`
+                // still implies `hash(a) == hash(b)` -- the only direction
+                // Python requires. Id hashing keeps set/dict iteration order
+                // matching upstream for order-sensitive consumers.
+                self.area.id()
             }
 
             fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
