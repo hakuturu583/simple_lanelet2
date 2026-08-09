@@ -43,7 +43,7 @@ viewer.addEventListener('loadstart', (event) => {
 viewer.addEventListener('load', (event) => {
   hideStatus();
   showFacts(event.detail);
-  showErrors(event.detail.errors);
+  showErrors(event.detail.errors, event.detail.problems);
   showLayerToggles();
   showLegend();
   elements.dropzone.hidden = true;
@@ -114,7 +114,10 @@ function wireUp() {
   });
 }
 
+/// The viewer reads the dropped file; the page's share is the highlight, which is
+/// the only part of this that is about a page rather than about a map.
 function installDragAndDrop() {
+  viewer.acceptDrops(window);
   let depth = 0;
   window.addEventListener('dragenter', (event) => {
     event.preventDefault();
@@ -122,7 +125,6 @@ function installDragAndDrop() {
     document.body.classList.add('dragging');
   });
   window.addEventListener('dragover', (event) => {
-    event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
   });
   window.addEventListener('dragleave', (event) => {
@@ -130,12 +132,9 @@ function installDragAndDrop() {
     depth = Math.max(0, depth - 1);
     if (depth === 0) document.body.classList.remove('dragging');
   });
-  window.addEventListener('drop', (event) => {
-    event.preventDefault();
+  window.addEventListener('drop', () => {
     depth = 0;
     document.body.classList.remove('dragging');
-    const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
-    if (file) viewer.loadFile(file);
   });
 }
 
@@ -216,14 +215,12 @@ function showLegend() {
   elements.legendBlock.hidden = items.length === 0;
 }
 
-function showErrors(errors) {
+function showErrors(errors, problems) {
   if (!errors.length) {
     elements.errorsBlock.hidden = true;
     return;
   }
-  // The first line is the header `loadRobust` puts on the list; the rest are the
-  // individual problems, so the count is one less than the number of lines.
-  elements.errorsCount.textContent = `(${errors.length - 1})`;
+  elements.errorsCount.textContent = `(${problems})`;
   elements.errors.textContent = errors.join('\n');
   elements.errorsBlock.hidden = false;
 }

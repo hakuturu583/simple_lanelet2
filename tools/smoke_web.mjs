@@ -57,7 +57,7 @@ const layers = scene.layers();
 const closed = scene.closed();
 const ids = scene.ids();
 const styleTable = JSON.parse(scene.styles_json());
-const layerTable = JSON.parse(scene.layers_json());
+const layerTable = JSON.parse(wasm.layers());
 const count = scene.shape_count();
 
 console.log(
@@ -92,6 +92,15 @@ check(
   layerTable.map((layer) => layer.key).includes('lanelet_fill'),
   'the layer table names its layers',
 );
+check(
+  layerTable[0].key === 'lanelet_fill' && typeof layerTable[0].default === 'boolean',
+  'the layer table is ordered and carries the default visible set',
+);
+check(
+  styleTable.every((s) => typeof s.hideBelowScale === 'number' && typeof s.solidBelowScale === 'number'),
+  'styles carry their level-of-detail thresholds',
+);
+check(/^#[0-9a-f]{6}$/.test(scene.highlight()), 'the theme reports a highlight colour');
 check(scene.label(0).length > 0, 'shapes carry a label');
 check(scene.label(count + 10) === '', 'an out-of-range label is empty, not a throw');
 check(/^#[0-9a-f]{6}$/.test(scene.background()), 'the theme reports a background colour');

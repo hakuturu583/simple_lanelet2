@@ -9,6 +9,10 @@
 //! `pedestrian_marking`, `road_shoulder`, the `crosswalk_polygon` areas). Anything
 //! unrecognised still renders, in a neutral colour, rather than disappearing.
 
+/// A traffic lane, in metres. Only ever used to turn a zoom into a statement
+/// about how much of a map a viewer can actually make out.
+pub const LANE_WIDTH_M: f32 = 3.5;
+
 /// An sRGB colour.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Color(pub u8, pub u8, pub u8);
@@ -22,8 +26,11 @@ impl Color {
 /// Which toggleable group a shape belongs to.
 ///
 /// The demo turns these on and off, and the SVG writer emits one `<g>` per layer,
-/// so the discriminants are part of the wire format and must stay stable.
+/// so the discriminants are part of the wire format and must stay stable. `repr`
+/// makes that literally true: the number a renderer indexes by is the declaration
+/// order, rather than a second list that has to be kept in step with it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u32)]
 pub enum VizLayer {
     LaneletFill,
     Area,
@@ -48,16 +55,7 @@ impl VizLayer {
     ];
 
     pub fn index(self) -> u32 {
-        match self {
-            VizLayer::LaneletFill => 0,
-            VizLayer::Area => 1,
-            VizLayer::Polygon => 2,
-            VizLayer::Bound => 3,
-            VizLayer::Regulatory => 4,
-            VizLayer::Centerline => 5,
-            VizLayer::Direction => 6,
-            VizLayer::Point => 7,
-        }
+        self as u32
     }
 
     /// The identifier a caller toggles by, also used as the SVG group id.
@@ -98,8 +96,9 @@ impl VizLayer {
 pub struct Style {
     /// Stable identifier, unique within a table.
     pub name: String,
-    /// Shown in the legend.
-    pub label: String,
+    /// Shown in the legend. Always a literal, so a scene with a million shapes
+    /// does not allocate a million copies of "Lane marking".
+    pub label: &'static str,
     pub stroke: Option<Color>,
     pub stroke_opacity: f32,
     pub stroke_width: f32,
@@ -110,13 +109,19 @@ pub struct Style {
     pub z: i32,
     /// Whether the legend should list it.
     pub in_legend: bool,
+    /// Pixels per metre below which this style is not worth drawing at all.
+    /// Zero means always.
+    pub hide_below_scale: f32,
+    /// Pixels per metre below which the dash pattern is dropped for a plain
+    /// stroke. Zero means never.
+    pub solid_below_scale: f32,
 }
 
 impl Style {
-    fn new(name: &str, label: &str, z: i32) -> Self {
+    fn new(name: &str, label: &'static str, z: i32) -> Self {
         Style {
             name: name.to_owned(),
-            label: label.to_owned(),
+            label,
             stroke: None,
             stroke_opacity: 1.0,
             stroke_width: 1.0,
@@ -125,7 +130,15 @@ impl Style {
             fill_opacity: 1.0,
             z,
             in_legend: true,
+            hide_below_scale: 0.0,
+            solid_below_scale: 0.0,
         }
+    }
+
+    /// Below `pixels` on-screen pixels per `LANE_WIDTH_M`, stop drawing this.
+    fn hidden_below(mut self, pixels: f32) -> Self {
+        self.hide_below_scale = pixels / LANE_WIDTH_M;
+        self
     }
 
     fn stroke(mut self, color: Color, width: f32) -> Self {
@@ -139,8 +152,17 @@ impl Style {
         self
     }
 
+    /// A dash pattern, and the zoom below which it stops being worth drawing.
+    ///
+    /// Dashing a city's worth of lane markings costs more than every fill and
+    /// solid stroke in the map put together, and at a zoom where a whole lane is
+    /// five pixels across it buys a grey smear over lines that already overlap.
+    /// Which is a fact about *this dash pattern*, so it is recorded next to it
+    /// rather than left for each renderer to invent — the reason the canvas and
+    /// the SVG export agree about what a map looks like.
     fn dashed(mut self, on: f32, off: f32) -> Self {
         self.dash = Some(vec![on, off]);
+        self.solid_below_scale = 5.0 / LANE_WIDTH_M;
         self
     }
 
@@ -275,6 +297,10 @@ impl Theme {
 #[derive(Default)]
 pub struct StyleTable {
     styles: Vec<Style>,
+    /// Name to index. A linear scan would be ~30 string comparisons per shape,
+    /// which on a city map is tens of millions of them for a table that settles
+    /// at a few dozen entries within the first hundred shapes.
+    index: std::collections::HashMap<String, usize>,
 }
 
 impl StyleTable {
@@ -284,11 +310,21 @@ impl StyleTable {
 
     /// Returns the index of `style`, adding it if it is new.
     pub fn intern(&mut self, style: Style) -> usize {
-        if let Some(index) = self.styles.iter().position(|s| s.name == style.name) {
-            return index;
+        if let Some(index) = self.index.get(&style.name) {
+            return *index;
         }
+        let index = self.styles.len();
+        self.index.insert(style.name.clone(), index);
         self.styles.push(style);
-        self.styles.len() - 1
+        index
+    }
+
+    /// The index of an already-interned style, without building one to ask with.
+    ///
+    /// What lets a caller with many shapes of one kind — every arrowhead in the
+    /// map — pay for the `Style` once and then look it up by name.
+    pub fn lookup(&self, name: &str) -> Option<usize> {
+        self.index.get(name).copied()
     }
 
     pub fn get(&self, index: usize) -> Option<&Style> {
@@ -329,9 +365,6 @@ pub fn lanelet_style(subtype: &str, palette: &Palette) -> Style {
         "walkway" | "pedestrian_lane" => (palette.walkway, 0.55, "Walkway"),
         "bicycle_lane" => (palette.bicycle, 0.6, "Bicycle lane"),
         "bus_lane" => (palette.bus_lane, 0.7, "Bus lane"),
-        "play_street" | "emergency_lane" | "exit" | "stairs" => {
-            (palette.lanelet_other, 0.7, "Other lanelet")
-        }
         _ => (palette.lanelet_other, 0.7, "Other lanelet"),
     };
     let name = format!(
@@ -349,9 +382,6 @@ pub fn area_style(subtype: &str, palette: &Palette) -> Style {
         }
         "keepout" | "no_parking_area" | "no_stopping_area" => {
             (palette.keepout, 0.5, "Keepout area")
-        }
-        "traffic_island" | "vegetation" | "building" | "freespace" => {
-            (palette.area_other, 0.6, "Other area")
         }
         _ => (palette.area_other, 0.6, "Other area"),
     };
@@ -474,6 +504,8 @@ pub fn direction_style(palette: &Palette) -> Style {
     Style::new("direction", "Driving direction", Z_DIRECTION)
         .fill(palette.direction, 0.9)
         .hidden_from_legend()
+        // An arrowhead is a speck once a lane is four pixels wide.
+        .hidden_below(4.0)
 }
 
 /// Individual map points, off by default because a city map has millions.

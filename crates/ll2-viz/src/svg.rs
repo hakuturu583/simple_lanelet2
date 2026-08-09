@@ -89,6 +89,11 @@ pub fn render_svg(scene: &Scene, options: &SvgOptions) -> String {
         let Some(style) = scene.styles.get(shape.style) else {
             continue;
         };
+        // The same thresholds the canvas renderer applies, from the same place —
+        // which is what "the export is what you see" has to mean.
+        if style.hide_below_scale > 0.0 && (scale as f32) < style.hide_below_scale {
+            continue;
+        }
         if current != Some(shape.layer) {
             if current.is_some() {
                 out.push_str("</g>\n");
@@ -101,7 +106,8 @@ pub fn render_svg(scene: &Scene, options: &SvgOptions) -> String {
             );
             current = Some(shape.layer);
         }
-        write_shape(&mut out, shape, style);
+        let dashed = (scale as f32) >= style.solid_below_scale;
+        write_shape(&mut out, shape, style, dashed);
     }
     if current.is_some() {
         out.push_str("</g>\n");
@@ -111,7 +117,7 @@ pub fn render_svg(scene: &Scene, options: &SvgOptions) -> String {
     out
 }
 
-fn write_shape(out: &mut String, shape: &crate::scene::Shape, style: &Style) {
+fn write_shape(out: &mut String, shape: &crate::scene::Shape, style: &Style, dashed: bool) {
     if shape.points.is_empty() {
         return;
     }
@@ -170,7 +176,7 @@ fn write_shape(out: &mut String, shape: &crate::scene::Shape, style: &Style) {
             style.stroke_opacity,
             style.stroke_width
         );
-        if let Some(dash) = &style.dash {
+        if let Some(dash) = style.dash.as_ref().filter(|_| dashed) {
             let pattern: Vec<String> = dash.iter().map(|value| number(*value as f64)).collect();
             let _ = write!(out, " stroke-dasharray=\"{}\"", pattern.join(" "));
         }
@@ -255,6 +261,33 @@ mod tests {
     fn a_dashed_subtype_survives_into_the_output() {
         let svg = svg_of(&VizOptions::default());
         assert!(svg.contains("stroke-dasharray="));
+    }
+
+    /// The level-of-detail thresholds live on the style, so the export drops the
+    /// same things the canvas does. A page big enough to show a lane loses
+    /// nothing; a postage stamp loses the dashes and the arrowheads.
+    #[test]
+    fn zooming_out_drops_the_detail_that_is_no_longer_legible() {
+        let loaded = load_osm_str(MAP, &LoadOptions::default()).unwrap();
+        let scene = Scene::from_map(&loaded.map, &VizOptions::default());
+
+        let large = render_svg(&scene, &SvgOptions::default());
+        assert!(large.contains("stroke-dasharray="));
+        assert!(large.contains("data-layer=\"direction\""));
+
+        let stamp = render_svg(
+            &scene,
+            &SvgOptions {
+                width: 60.0,
+                height: 40.0,
+                margin: 2.0,
+                ..SvgOptions::default()
+            },
+        );
+        assert!(!stamp.contains("stroke-dasharray="));
+        assert!(!stamp.contains("data-layer=\"direction\""));
+        // The road itself is still there — this is detail, not the map.
+        assert!(stamp.contains("data-layer=\"lanelet_fill\""));
     }
 
     #[test]

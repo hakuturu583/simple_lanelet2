@@ -29,35 +29,23 @@
 //   <script type="module" src="./viewer.js"></script>
 //   <lanelet2-viewer src="map.osm" theme="auto"></lanelet2-viewer>
 
-import init, { load_osm, SceneOptions, version } from './pkg/ll2_wasm.js';
+import init, { layers as layerTable, load_osm, SceneOptions, version } from './pkg/ll2_wasm.js';
 
-/// The layer keys, in the order the Rust side indexes them. Anything that toggles
-/// layers — a host application included — works in these terms.
-export const LAYERS = [
-  { key: 'lanelet_fill', label: 'Lanelets' },
-  { key: 'area', label: 'Areas' },
-  { key: 'polygon', label: 'Polygons' },
-  { key: 'bound', label: 'Boundaries' },
-  { key: 'regulatory', label: 'Regulatory elements' },
-  { key: 'centerline', label: 'Centerlines' },
-  { key: 'direction', label: 'Driving direction' },
-  { key: 'point', label: 'Points' },
-];
+/// The layer table, `[{key, label, default}]`, in the order the Rust side indexes
+/// layers by. Empty until [`initWasm`] resolves, because it *is* the Rust table —
+/// restating it here would be a cross-language ordering invariant with nothing to
+/// enforce it, and adding a layer would silently mislabel every shape.
+export const LAYERS = [];
 
-/// Which layers a viewer shows when nobody says otherwise.
-export const DEFAULT_LAYERS = [
-  'lanelet_fill',
-  'area',
-  'polygon',
-  'bound',
-  'regulatory',
-  'direction',
-  'point',
-];
+/// The keys of the layers a viewer shows when nobody says otherwise. Also from
+/// Rust: it is `VizOptions::default()`.
+export function defaultLayers() {
+  return LAYERS.filter((layer) => layer.default).map((layer) => layer.key);
+}
 
-/// A traffic lane, in metres. Only ever used to turn the zoom into a statement
-/// about how much of the map a viewer can actually make out.
-const LANE_WIDTH = 3.5;
+/// The one layer a viewer builds on demand rather than building and hiding: a
+/// city map has millions of points and a shape each is not free.
+const EXPENSIVE_LAYER = 'point';
 
 let wasmPromise = null;
 
@@ -73,7 +61,10 @@ let wasmPromise = null;
 export function initWasm(options = {}) {
   if (!wasmPromise) {
     wasmPromise = init(options.wasmUrl ? { module_or_path: options.wasmUrl } : undefined)
-      .then(() => ({ version: version() }))
+      .then(() => {
+        LAYERS.splice(0, LAYERS.length, ...JSON.parse(layerTable()));
+        return { version: version() };
+      })
       .catch((error) => {
         // A failed instantiation must not be cached as a resolved promise, or every
         // later viewer on the page silently renders nothing.
@@ -148,7 +139,7 @@ const CHROME = {
  * | event | `detail` |
  * | --- | --- |
  * | `loadstart` | `{name}` |
- * | `load` | `{name, stats, errors, coordinateSource, projection, origin, bounds}` |
+ * | `load` | `{name, stats, errors, problems, coordinateSource, projection, origin, bounds}` |
  * | `error` | `{message}` |
  * | `hover` | `{id, label, layer} \| null` |
  * | `select` | `{id, label, layer} \| null` |
@@ -167,7 +158,9 @@ export class LaneletViewer extends EventTarget {
     this.options = {
       theme: 'dark', // 'dark' | 'light' | 'auto'
       coordinates: 'auto', // 'auto' | 'projected' | 'local'
-      layers: DEFAULT_LAYERS.slice(),
+      /// Layer keys to show. `null` means the Rust defaults, which are not known
+      /// until the module is up.
+      layers: null,
       drawPoints: false,
       controls: true,
       tooltip: true,
@@ -181,7 +174,7 @@ export class LaneletViewer extends EventTarget {
     };
 
     this.container = container;
-    this._visible = new Set(this.options.layers);
+    this._visible = new Set(this.options.layers ?? []);
     this._groups = [];
     this._geometry = null;
     this._scene = null;
@@ -193,7 +186,7 @@ export class LaneletViewer extends EventTarget {
     this._highlight = new Set();
     this._frame = 0;
     this._destroyed = false;
-    this._lastText = null;
+    this._source = null;
     this._name = null;
     this.stats = null;
     this.legend = [];
@@ -203,10 +196,17 @@ export class LaneletViewer extends EventTarget {
     this._observeTheme();
     this._installPointerHandlers();
 
-    this.ready = initWasm({ wasmUrl: this.options.wasmUrl }).catch((error) => {
-      this._fail(`The WebAssembly module failed to load: ${message(error)}`);
-      throw error;
-    });
+    this.ready = initWasm({ wasmUrl: this.options.wasmUrl })
+      .then((info) => {
+        // The default visible set lives in Rust with the layer table, so it can
+        // only be resolved once the module is up. Nothing draws before then.
+        if (this.options.layers === null) this._visible = new Set(defaultLayers());
+        return info;
+      })
+      .catch((error) => {
+        this._fail(`The WebAssembly module failed to load: ${message(error)}`);
+        throw error;
+      });
   }
 
   // --- lifecycle -------------------------------------------------------------
@@ -288,7 +288,7 @@ export class LaneletViewer extends EventTarget {
     if (typeof matchMedia !== 'function') return;
     this._media = matchMedia('(prefers-color-scheme: dark)');
     this._onMediaChange = () => {
-      if (this.options.theme === 'auto') this._rebuild({ keepView: true });
+      if (this.options.theme === 'auto') this._restyle();
     };
     // Safari before 14 has only the deprecated form.
     if (this._media.addEventListener) this._media.addEventListener('change', this._onMediaChange);
@@ -311,7 +311,7 @@ export class LaneletViewer extends EventTarget {
     this._groups = [];
     this._geometry = null;
     this._index = null;
-    this._lastText = null;
+    this._source = null;
   }
 
   _freeScene() {
@@ -360,7 +360,10 @@ export class LaneletViewer extends EventTarget {
     }
     this._freeHandle();
     this._handle = handle;
-    this._lastText = text;
+    // Only kept when there is nothing else to re-read from: for a 50 MB map this
+    // is 100 MB of UTF-16 held for the viewer's lifetime, on top of the copy
+    // wasm already made.
+    this._source = options.source ?? { text };
 
     this._rebuild({ keepView: options.keepView === true });
 
@@ -368,6 +371,7 @@ export class LaneletViewer extends EventTarget {
       name,
       stats: JSON.parse(handle.stats_json()),
       errors: handle.errors(),
+      problems: handle.error_count(),
       coordinateSource: handle.coordinate_source(),
       projection: handle.projection(),
       origin: { lat: handle.origin_lat(), lon: handle.origin_lon() },
@@ -395,13 +399,34 @@ export class LaneletViewer extends EventTarget {
       this._fail(`Could not fetch ${url}: ${message(error)}`);
       return null;
     }
-    return this.loadOsm(text, { ...options, name });
+    return this.loadOsm(text, { ...options, name, source: { url } });
   }
 
   /** Reads a `File` or `Blob` — what a drop handler or an `<input type=file>` has. */
   async loadFile(file, options = {}) {
     const name = options.name ?? (file.name ? basename(file.name) : 'map');
-    return this.loadOsm(await file.text(), { ...options, name });
+    return this.loadOsm(await file.text(), { ...options, name, source: { file } });
+  }
+
+  /**
+   * Loads any `.osm` dropped on `target`, and returns a function that stops.
+   *
+   * The half of a drop handler that is about maps rather than about a page, so
+   * both the demo and the iframe get it from here instead of writing it twice.
+   */
+  acceptDrops(target = this.container) {
+    const over = (event) => event.preventDefault();
+    const drop = (event) => {
+      event.preventDefault();
+      const file = event.dataTransfer?.files?.[0];
+      if (file) this.loadFile(file);
+    };
+    target.addEventListener('dragover', over);
+    target.addEventListener('drop', drop);
+    return () => {
+      target.removeEventListener('dragover', over);
+      target.removeEventListener('drop', drop);
+    };
   }
 
   /** Discards the current map, leaving an empty viewer. */
@@ -411,7 +436,7 @@ export class LaneletViewer extends EventTarget {
     this._groups = [];
     this._geometry = null;
     this._index = null;
-    this._lastText = null;
+    this._source = null;
     this.stats = null;
     this.legend = [];
     this._hover = -1;
@@ -428,7 +453,7 @@ export class LaneletViewer extends EventTarget {
     if (!['dark', 'light', 'auto'].includes(theme)) return;
     this.options.theme = theme;
     this._applyChrome();
-    if (this._handle) this._rebuild({ keepView: true });
+    if (this._handle) this._restyle();
     else this._draw();
   }
 
@@ -453,7 +478,6 @@ export class LaneletViewer extends EventTarget {
         else this._visible.delete(key);
       }
     }
-    this.options.layers = [...this._visible];
     this._hover = -1;
     this._tooltip.hidden = true;
     this._draw();
@@ -480,7 +504,11 @@ export class LaneletViewer extends EventTarget {
   /** `'auto'`, `'projected'` or `'local'`. Re-parses the file that is loaded. */
   async setCoordinates(source) {
     this.options.coordinates = source;
-    if (this._lastText) await this.loadOsm(this._lastText, { keepView: false });
+    if (!this._source) return;
+    const { text, file, url } = this._source;
+    if (file) await this.loadFile(file);
+    else if (url) await this.loadUrl(url);
+    else await this.loadOsm(text, { source: this._source });
   }
 
   /** A CSS colour, `'transparent'` to show the host's own background, or `null`. */
@@ -497,6 +525,19 @@ export class LaneletViewer extends EventTarget {
   get backgroundColor() {
     if (this.options.background) return this.options.background;
     return this._sceneBackground ?? (this.theme === 'light' ? '#f7f8fa' : '#11141a');
+  }
+
+  /**
+   * Shows or hides the viewer's own overlays.
+   *
+   * @param {{controls?: boolean, tooltip?: boolean, scalebar?: boolean}} chrome
+   */
+  setChrome(chrome = {}) {
+    for (const key of ['controls', 'tooltip', 'scalebar']) {
+      if (chrome[key] !== undefined) this.options[key] = Boolean(chrome[key]);
+    }
+    this._applyChromeVisibility();
+    this._draw();
   }
 
   /** Turns pan, zoom and picking off — for a thumbnail, or a host-driven view. */
@@ -561,6 +602,21 @@ export class LaneletViewer extends EventTarget {
   setHighlight(ids) {
     const list = ids === null || ids === undefined ? [] : Array.isArray(ids) ? ids : [ids];
     this._highlight = new Set(list.map(Number));
+    // Resolved to a path here rather than in the frame: a host tracking an ego
+    // vehicle calls this continuously, and scanning every shape in the map on
+    // every frame is the difference between free and unusable.
+    this._highlightPath = null;
+    if (this._highlight.size && this._geometry) {
+      const path = new Path2D();
+      let any = false;
+      for (const id of this._highlight) {
+        for (const shape of this._byId.get(id) ?? []) {
+          appendShapeTo(path, this._geometry, shape);
+          any = true;
+        }
+      }
+      if (any) this._highlightPath = path;
+    }
     this._draw();
   }
 
@@ -568,7 +624,7 @@ export class LaneletViewer extends EventTarget {
   focusOn(id, { fraction = 0.4 } = {}) {
     const shape = this._findShape(Number(id));
     if (shape < 0) return false;
-    const box = this._shapeBounds(shape);
+    const box = shapeBounds(this._geometry, shape);
     const centre = this._geometry.centre;
     const spanX = Math.max(box[2] - box[0], 5);
     const spanY = Math.max(box[3] - box[1], 5);
@@ -605,16 +661,42 @@ export class LaneletViewer extends EventTarget {
   _sceneOptions({ forExport = false } = {}) {
     const options = new SceneOptions();
     options.theme = this.theme;
-    const wants = (key) => !forExport || this._visible.has(key);
-    options.lanelet_fill = wants('lanelet_fill');
-    options.areas = wants('area');
-    options.polygons = wants('polygon');
-    options.bounds = wants('bound');
-    options.regulatory = wants('regulatory');
-    options.centerlines = wants('centerline');
-    options.direction_arrows = wants('direction');
-    options.points = this.options.drawPoints && wants('point');
+    for (const { key } of LAYERS) {
+      // Points are the one layer that costs enough to build on demand; the rest
+      // are always built and hidden, so a toggle is a repaint.
+      const wanted = key === EXPENSIVE_LAYER ? this.options.drawPoints : true;
+      options.set_layer(key, wanted && (!forExport || this._visible.has(key)));
+    }
     return options;
+  }
+
+  /// Re-colours the scene without rebuilding it.
+  ///
+  /// A style's *name* comes from the map's tags, never from the palette, so a
+  /// scene built under either theme interns the same names in the same order and
+  /// every `styleOf` index still points at the right entry. That makes a theme
+  /// change a table swap rather than a re-flatten of every vertex, a re-copy of
+  /// six arrays across the boundary, and a rebuild of every path and the spatial
+  /// index. The length check is the guard: if that ever stops being true, this
+  /// falls back to the honest thing.
+  _restyle() {
+    const options = this._sceneOptions();
+    const data = this._handle.build_scene(options);
+    options.free();
+    const styles = JSON.parse(data.styles_json());
+    if (styles.length !== this._geometry.styles.length) {
+      data.free();
+      this._rebuild({ keepView: true });
+      return;
+    }
+    this._geometry.styles = styles;
+    for (const group of this._groups) group.style = styles[group.styleIndex];
+    this._sceneBackground = data.background();
+    this._highlightColour = data.highlight();
+    this.legend = buildLegend(this._geometry);
+    this._freeScene();
+    this._scene = data;
+    this._draw();
   }
 
   _rebuild({ keepView }) {
@@ -639,8 +721,11 @@ export class LaneletViewer extends EventTarget {
     };
     this._geometry = geometry;
     this._sceneBackground = data.background();
+    this._highlightColour = data.highlight();
     this._groups = buildGroups(geometry);
     this._index = buildIndex(geometry);
+    this._byId = buildIdIndex(geometry);
+    this._highlightPath = null;
     this._layerCounts = countLayers(geometry);
     this.legend = buildLegend(geometry);
     this._hover = -1;
@@ -660,6 +745,14 @@ export class LaneletViewer extends EventTarget {
     this._ratio = Math.min(globalThis.devicePixelRatio || 1, 2);
     this._canvas.width = Math.round(this._width * this._ratio);
     this._canvas.height = Math.round(this._height * this._ratio);
+    this._rect = rect;
+  }
+
+  /// The canvas rect, without forcing a layout on every pointer event. Scrolling
+  /// or a host reflow moves it without resizing it, so it is re-measured when the
+  /// cached one no longer agrees with the pointer's own coordinates.
+  _canvasRect() {
+    return this._rect ?? this._canvas.getBoundingClientRect();
   }
 
   _draw() {
@@ -677,7 +770,7 @@ export class LaneletViewer extends EventTarget {
 
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, this._canvas.width, this._canvas.height);
-    const background = this.options.background ?? this._sceneBackground ?? '#11141a';
+    const background = this.backgroundColor;
     if (background !== 'transparent') {
       context.fillStyle = background;
       context.fillRect(0, 0, this._canvas.width, this._canvas.height);
@@ -692,19 +785,13 @@ export class LaneletViewer extends EventTarget {
     context.lineJoin = 'round';
     context.lineCap = 'round';
 
-    // Two pieces of detail are dropped when a lane is only a few pixels across.
-    // Both are honest: at that zoom a dash pattern is a grey smear over lines that
-    // already overlap, and an arrowhead is a speck. Both are also, measurably, most
-    // of the frame — dashing a city's worth of lane markings costs more than every
-    // fill and solid stroke in the map put together.
-    const laneWidthInPixels = scale * LANE_WIDTH;
-    const dashesAreLegible = laneWidthInPixels >= 5;
-    const arrowsAreLegible = laneWidthInPixels >= 4;
-
     for (const group of this._groups) {
       if (!this._visible.has(group.layerKey)) continue;
-      if (group.layerKey === 'direction' && !arrowsAreLegible) continue;
       const style = group.style;
+      // Which detail survives which zoom is a property of the style, decided in
+      // Rust beside the dash pattern it overrides — so the SVG export drops the
+      // same things this does, and nothing here knows what a `line_thin` is.
+      if (style.hideBelowScale > 0 && scale < style.hideBelowScale) continue;
       if (style.fill) {
         context.globalAlpha = style.fillOpacity;
         context.fillStyle = style.fill;
@@ -716,7 +803,7 @@ export class LaneletViewer extends EventTarget {
         // Widths and dashes are specified in pixels; dividing by the scale is what
         // keeps them that way through the transform.
         context.lineWidth = style.strokeWidth / scale;
-        const dash = style.dash && dashesAreLegible;
+        const dash = style.dash && scale >= style.solidBelowScale;
         context.setLineDash(dash ? style.dash.map((value) => value / scale) : []);
         context.stroke(group.path);
       }
@@ -730,28 +817,22 @@ export class LaneletViewer extends EventTarget {
   }
 
   _drawEmphasis() {
-    const context = this._context;
-    const geometry = this._geometry;
-    const colour = CHROME[this.theme].highlight;
-    const emphasised = [];
-    if (this._highlight.size) {
-      for (let shape = 0; shape < geometry.count; shape += 1) {
-        if (this._highlight.has(geometry.ids[shape])) emphasised.push(shape);
-      }
-    }
     const focused = this._pinned ?? this._hover;
-    if (focused >= 0) emphasised.push(focused);
-    if (!emphasised.length) return;
+    if (!this._highlightPath && focused < 0) return;
 
-    const path = new Path2D();
-    for (const shape of emphasised) {
-      appendShape(path, geometry.coords, geometry.offsets[shape], geometry.offsets[shape + 1], geometry.closed[shape] === 1);
-    }
+    const context = this._context;
     context.globalAlpha = 1;
-    context.strokeStyle = colour;
+    // The colour is a decision about what the map looks like, so it comes from
+    // the palette with every other one rather than from the rasteriser.
+    context.strokeStyle = this._highlightColour ?? '#ffd74a';
     context.lineWidth = 3 / this._view.scale;
     context.setLineDash([]);
-    context.stroke(path);
+    if (this._highlightPath) context.stroke(this._highlightPath);
+    if (focused >= 0) {
+      const path = new Path2D();
+      appendShapeTo(path, this._geometry, focused);
+      context.stroke(path);
+    }
   }
 
   _updateScalebar() {
@@ -849,7 +930,7 @@ export class LaneletViewer extends EventTarget {
       (event) => {
         if (!this.options.interactive) return;
         event.preventDefault();
-        const rect = canvas.getBoundingClientRect();
+        const rect = this._canvasRect();
         // Trackpads report pixels and mice report lines; normalising keeps one
         // notch of a wheel worth about the same as a short two-finger swipe.
         const step = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
@@ -863,7 +944,7 @@ export class LaneletViewer extends EventTarget {
 
   _pinchState(pointers) {
     const [a, b] = [...pointers.values()];
-    const rect = this._canvas.getBoundingClientRect();
+    const rect = this._canvasRect();
     return {
       x: (a.x + b.x) / 2 - rect.left,
       y: (a.y + b.y) / 2 - rect.top,
@@ -883,7 +964,7 @@ export class LaneletViewer extends EventTarget {
 
   _hoverAt(event) {
     if (!this._geometry) return;
-    const rect = this._canvas.getBoundingClientRect();
+    const rect = this._canvasRect();
     const screenX = event.clientX - rect.left;
     const screenY = event.clientY - rect.top;
     const worldX = (screenX - this._view.tx) / this._view.scale;
@@ -892,14 +973,17 @@ export class LaneletViewer extends EventTarget {
     const found = this._pick(worldX, worldY, 6 / this._view.scale);
     if (found !== this._hover) {
       this._hover = found;
-      this._emit('hover', this._describeShape(found >= 0 ? found : null));
+      // One crossing of the wasm boundary for the label, shared by the event and
+      // the tooltip; it is the same string.
+      this._hoverLabel = found >= 0 ? this._scene.label(found) : '';
+      this._emit('hover', found >= 0 ? this._describeShape(found, this._hoverLabel) : null);
       this._draw();
     }
     if (found < 0 || !this.options.tooltip) {
       this._tooltip.hidden = true;
       return;
     }
-    this._showTooltip(this._scene.label(found), screenX, screenY);
+    this._showTooltip(this._hoverLabel, screenX, screenY);
   }
 
   _showTooltip(text, x, y) {
@@ -915,32 +999,17 @@ export class LaneletViewer extends EventTarget {
     this._tooltip.style.top = `${clamp(y + 14, 4, Math.max(4, this._height - height - 4))}px`;
   }
 
-  _describeShape(shape) {
+  _describeShape(shape, label) {
     if (shape === null || shape === undefined || shape < 0 || !this._geometry) return null;
     return {
       id: this._geometry.ids[shape],
-      label: this._scene.label(shape),
+      label: label ?? this._scene.label(shape),
       layer: LAYERS[this._geometry.layerOf[shape]].key,
     };
   }
 
   _findShape(id) {
-    if (!this._geometry) return -1;
-    for (let shape = 0; shape < this._geometry.count; shape += 1) {
-      if (this._geometry.ids[shape] === id) return shape;
-    }
-    return -1;
-  }
-
-  _shapeBounds(shape) {
-    const { coords, offsets } = this._geometry;
-    let box = [Infinity, Infinity, -Infinity, -Infinity];
-    for (let vertex = offsets[shape]; vertex < offsets[shape + 1]; vertex += 1) {
-      const x = coords[vertex * 2];
-      const y = coords[vertex * 2 + 1];
-      box = [Math.min(box[0], x), Math.min(box[1], y), Math.max(box[2], x), Math.max(box[3], y)];
-    }
-    return box;
+    return this._byId?.get(id)?.[0] ?? -1;
   }
 
   _pick(x, y, tolerance) {
@@ -1000,6 +1069,7 @@ function buildGroups(geometry) {
     if (group === undefined) {
       group = {
         layerKey: LAYERS[layer].key,
+        styleIndex: style,
         style: geometry.styles[style],
         path: new Path2D(),
       };
@@ -1014,6 +1084,49 @@ function buildGroups(geometry) {
     );
   }
   return [...byKey.values()].sort((a, b) => a.style.z - b.style.z);
+}
+
+/// Adds one shape of a scene to a path. The scene-indexed form, which is what
+/// every caller but `buildGroups` actually has.
+function appendShapeTo(path, geometry, shape) {
+  appendShape(
+    path,
+    geometry.coords,
+    geometry.offsets[shape],
+    geometry.offsets[shape + 1],
+    geometry.closed[shape] === 1,
+  );
+}
+
+/// A shape's bounding box, as `[minX, minY, maxX, maxY]`.
+function shapeBounds(geometry, shape) {
+  const { coords, offsets } = geometry;
+  let lowX = Infinity;
+  let lowY = Infinity;
+  let highX = -Infinity;
+  let highY = -Infinity;
+  for (let vertex = offsets[shape]; vertex < offsets[shape + 1]; vertex += 1) {
+    const x = coords[vertex * 2];
+    const y = coords[vertex * 2 + 1];
+    if (x < lowX) lowX = x;
+    if (x > highX) highX = x;
+    if (y < lowY) lowY = y;
+    if (y > highY) highY = y;
+  }
+  return [lowX, lowY, highX, highY];
+}
+
+/// Primitive id to the shapes drawn from it — a lanelet is a fill, a centerline
+/// and an arrowhead every 25 metres, all carrying its id.
+function buildIdIndex(geometry) {
+  const byId = new Map();
+  for (let shape = 0; shape < geometry.count; shape += 1) {
+    const id = geometry.ids[shape];
+    const shapes = byId.get(id);
+    if (shapes) shapes.push(shape);
+    else byId.set(id, [shape]);
+  }
+  return byId;
 }
 
 function appendShape(path, coords, start, end, closed) {
@@ -1074,21 +1187,8 @@ function buildIndex(geometry) {
   const originY = -spanY / 2;
 
   for (let shape = 0; shape < geometry.count; shape += 1) {
-    const start = geometry.offsets[shape];
-    const end = geometry.offsets[shape + 1];
-    if (end <= start) continue;
-    let lowX = Infinity;
-    let lowY = Infinity;
-    let highX = -Infinity;
-    let highY = -Infinity;
-    for (let vertex = start; vertex < end; vertex += 1) {
-      const x = geometry.coords[vertex * 2];
-      const y = geometry.coords[vertex * 2 + 1];
-      if (x < lowX) lowX = x;
-      if (x > highX) highX = x;
-      if (y < lowY) lowY = y;
-      if (y > highY) highY = y;
-    }
+    if (geometry.offsets[shape + 1] <= geometry.offsets[shape]) continue;
+    const [lowX, lowY, highX, highY] = shapeBounds(geometry, shape);
     const columnFrom = clamp(Math.floor((lowX - originX) / cell), 0, cols - 1);
     const columnTo = clamp(Math.floor((highX - originX) / cell), 0, cols - 1);
     const rowFrom = clamp(Math.floor((lowY - originY) / cell), 0, rows - 1);
@@ -1195,7 +1295,7 @@ export class Lanelet2ViewerElement extends HTMLElement {
     this.viewer = new LaneletViewer(this, {
       theme: this.getAttribute('theme') || 'dark',
       coordinates: this.getAttribute('coordinates') || 'auto',
-      layers: this.hasAttribute('layers') ? splitList(this.getAttribute('layers')) : DEFAULT_LAYERS.slice(),
+      layers: this.hasAttribute('layers') ? splitList(this.getAttribute('layers')) : null,
       background: this.getAttribute('background'),
       controls: flag(this, 'controls', true),
       tooltip: flag(this, 'tooltip', true),
@@ -1230,7 +1330,7 @@ export class Lanelet2ViewerElement extends HTMLElement {
         viewer.setTheme(value || 'dark');
         break;
       case 'layers':
-        viewer.setLayers(value === null ? DEFAULT_LAYERS.slice() : splitList(value));
+        viewer.setLayers(value === null ? defaultLayers() : splitList(value));
         break;
       case 'coordinates':
         viewer.setCoordinates(value || 'auto');
@@ -1245,8 +1345,7 @@ export class Lanelet2ViewerElement extends HTMLElement {
         viewer.setInteractive(flag(this, 'interactive', true));
         break;
       default:
-        viewer.options[name] = flag(this, name, true);
-        viewer._applyChromeVisibility();
+        viewer.setChrome({ [name]: flag(this, name, true) });
         break;
     }
   }
@@ -1257,16 +1356,23 @@ export class Lanelet2ViewerElement extends HTMLElement {
   }
 }
 
-function splitList(value) {
+/// Splits a comma- or space-separated list, as `layers="a,b"` and `?layers=a,b`
+/// both use. Exported so the iframe page parses them by the same rule.
+export function splitList(value) {
   return String(value ?? '')
     .split(/[\s,]+/)
     .filter(Boolean);
 }
 
-function flag(element, name, fallback) {
-  if (!element.hasAttribute(name)) return fallback;
-  const value = element.getAttribute(name);
+/// The truthiness rule shared by attributes and query parameters: absent means
+/// the default, and `false`/`0`/`off` are the only ways to say no.
+export function readFlag(value, fallback) {
+  if (value === null || value === undefined) return fallback;
   return value !== 'false' && value !== '0' && value !== 'off';
+}
+
+function flag(element, name, fallback) {
+  return readFlag(element.hasAttribute(name) ? element.getAttribute(name) : null, fallback);
 }
 
 if (typeof customElements !== 'undefined' && !customElements.get('lanelet2-viewer')) {

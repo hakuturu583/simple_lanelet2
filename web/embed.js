@@ -30,7 +30,8 @@
 //
 //   { type: 'lanelet2.load',       osm: '<?xml …', name?, coordinates? }
 //   { type: 'lanelet2.loadUrl',    url: 'https://…/map.osm', name? }
-//   { type: 'lanelet2.setOptions', theme?, layers?, points?, background?, interactive?, coordinates? }
+//   { type: 'lanelet2.setOptions', theme?, layers?, points?, background?, interactive?,
+//                                  coordinates?, controls?, tooltip?, scalebar? }
 //   { type: 'lanelet2.setView',    x?, y?, scale? }        // map coordinates
 //   { type: 'lanelet2.fit' }
 //   { type: 'lanelet2.highlight',  ids: [123, 456] }
@@ -68,7 +69,7 @@
 // arrives. Genuine transparency is available, reliably, by importing `viewer.js`
 // into the host document rather than framing this page.
 
-import { LaneletViewer, DEFAULT_LAYERS } from './viewer.js';
+import { LaneletViewer, readFlag, splitList } from './viewer.js';
 
 const parameters = new URLSearchParams(location.search);
 const messageElement = document.getElementById('message');
@@ -81,7 +82,7 @@ const targetOrigin = parameters.get('origin') || '*';
 const viewer = new LaneletViewer(document.getElementById('viewer'), {
   theme: parameters.get('theme') || 'dark',
   coordinates: parameters.get('coordinates') || 'auto',
-  layers: parameters.has('layers') ? splitList(parameters.get('layers')) : DEFAULT_LAYERS.slice(),
+  layers: parameters.has('layers') ? splitList(parameters.get('layers')) : null,
   drawPoints: flag('points', false),
   controls: flag('controls', true),
   tooltip: flag('tooltip', true),
@@ -132,7 +133,7 @@ viewer.ready
     /* reported through the viewer's error event */
   });
 
-if (flag('dnd', false)) installDragAndDrop();
+if (flag('dnd', false)) viewer.acceptDrops(window);
 
 window.addEventListener('message', (event) => {
   const data = event.data;
@@ -158,6 +159,7 @@ function handle(data, reply) {
       if (data.points !== undefined) viewer.setDrawPoints(data.points);
       if (data.background !== undefined) viewer.setBackground(data.background);
       if (data.interactive !== undefined) viewer.setInteractive(data.interactive);
+      viewer.setChrome(data);
       if (data.coordinates) viewer.setCoordinates(data.coordinates);
       // After the options have landed, so the page follows whatever they made of
       // the background rather than what it was a moment ago.
@@ -191,16 +193,6 @@ function handle(data, reply) {
   }
 }
 
-function installDragAndDrop() {
-  const stop = (event) => event.preventDefault();
-  window.addEventListener('dragover', stop);
-  window.addEventListener('drop', (event) => {
-    event.preventDefault();
-    const file = event.dataTransfer?.files?.[0];
-    if (file) viewer.loadFile(file);
-  });
-}
-
 function post(payload) {
   // `parent` is `window` itself when the page is opened directly, and posting to
   // yourself is harmless — it just means a standalone embed.html is inspectable.
@@ -213,14 +205,9 @@ function setMessage(text, isError = false) {
   messageElement.classList.toggle('error', Boolean(isError));
 }
 
-function splitList(value) {
-  return String(value ?? '')
-    .split(/[\s,]+/)
-    .filter(Boolean);
-}
-
+/// `?controls=0` and `<lanelet2-viewer controls="0">` have to mean the same thing,
+/// so the rule that decides it lives in one place — `viewer.js` — and each entry
+/// point supplies its own lookup.
 function flag(name, fallback) {
-  if (!parameters.has(name)) return fallback;
-  const value = parameters.get(name);
-  return value !== 'false' && value !== '0' && value !== 'off';
+  return readFlag(parameters.has(name) ? parameters.get(name) : null, fallback);
 }

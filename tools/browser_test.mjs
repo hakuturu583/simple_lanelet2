@@ -202,6 +202,32 @@ try {
       '<lanelet2-viewer src=…> loads on its own',
     );
     check(await page.$eval('#element', (n) => Boolean(n.viewer)), 'the element exposes its viewer');
+    // A theme change re-colours the scene without rebuilding it, and the guard
+    // that makes that safe has to actually hold on a real map.
+    const themed = await page.$eval('#element', async (element) => {
+      const viewer = element.viewer;
+      const before = {
+        // Not `backgroundColor`: this element asks for a transparent one, which
+        // is the same under either theme. The road's own colour is the signal.
+        roadFill: viewer._geometry.styles.map((style) => style.fill).join(),
+        vertices: viewer._geometry.coords,
+        styles: viewer._geometry.styles.length,
+        legend: viewer.legend.length,
+      };
+      viewer.setTheme('light');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return {
+        changed: viewer._geometry.styles.map((style) => style.fill).join() !== before.roadFill,
+        sameBuffer: viewer._geometry.coords === before.vertices,
+        sameStyles: viewer._geometry.styles.length === before.styles,
+        sameLegend: viewer.legend.length === before.legend,
+      };
+    });
+    check(themed.changed, 'a theme change re-colours the map');
+    check(themed.sameBuffer, 'and does so without re-flattening the geometry');
+    check(themed.sameStyles && themed.sameLegend, 'and keeps the style table aligned');
+    await page.$eval('#element', (element) => element.viewer.setTheme('dark'));
+
     await page.click('#element-centerlines');
     await page.waitForTimeout(200);
     check(

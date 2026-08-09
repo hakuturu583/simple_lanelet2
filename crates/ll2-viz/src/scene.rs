@@ -9,10 +9,12 @@
 
 use ll2_core::area::Area;
 use ll2_core::geometry::bbox::BoundingBox2d;
+use ll2_core::geometry::distance::distance_2d_point_point;
+use ll2_core::geometry::lanelet::{centerline_2d, outline_2d};
 use ll2_core::id::Id;
 use ll2_core::lanelet::Lanelet;
 use ll2_core::linestring::LineString;
-use ll2_core::map::{LaneletMap, Primitive, as_area, as_lanelet, as_linestring, as_point};
+use ll2_core::map::{LaneletMap, as_area, as_lanelet, as_linestring, as_point};
 
 use crate::style::{self, Palette, Style, StyleTable, Theme, VizLayer};
 
@@ -50,16 +52,9 @@ impl Default for VizOptions {
 }
 
 impl VizOptions {
-    /// Everything on, for a static export where there is no toggle to reach for.
-    pub fn everything() -> Self {
-        VizOptions {
-            centerlines: true,
-            points: true,
-            ..VizOptions::default()
-        }
-    }
-
-    fn wants(&self, layer: VizLayer) -> bool {
+    /// Whether a layer is drawn. Public because the layer key, not the field
+    /// name, is the vocabulary every renderer and every wire format uses.
+    pub fn wants_layer(&self, layer: VizLayer) -> bool {
         match layer {
             VizLayer::LaneletFill => self.lanelet_fill,
             VizLayer::Area => self.areas,
@@ -215,10 +210,24 @@ impl Builder<'_> {
         points: Vec<[f64; 2]>,
         closed: bool,
     ) {
+        let style = self.styles.intern(style);
+        self.push_interned(layer, style, id, label, points, closed);
+    }
+
+    /// The same, for a caller that has already interned its style — every
+    /// arrowhead on a lanelet shares one, and a road map is mostly arrowheads.
+    fn push_interned(
+        &mut self,
+        layer: VizLayer,
+        style: usize,
+        id: Id,
+        label: String,
+        points: Vec<[f64; 2]>,
+        closed: bool,
+    ) {
         if points.len() < 2 && !matches!(layer, VizLayer::Point) {
             return;
         }
-        let style = self.styles.intern(style);
         self.shapes.push(Shape {
             id,
             layer,
@@ -230,9 +239,9 @@ impl Builder<'_> {
     }
 
     fn add_lanelets(&mut self, map: &LaneletMap) {
-        let wants_fill = self.options.wants(VizLayer::LaneletFill);
-        let wants_centerline = self.options.wants(VizLayer::Centerline);
-        let wants_arrows = self.options.wants(VizLayer::Direction);
+        let wants_fill = self.options.wants_layer(VizLayer::LaneletFill);
+        let wants_centerline = self.options.wants_layer(VizLayer::Centerline);
+        let wants_arrows = self.options.wants_layer(VizLayer::Direction);
         if !(wants_fill || wants_centerline || wants_arrows) {
             return;
         }
@@ -249,7 +258,7 @@ impl Builder<'_> {
             let description = describe_lanelet(lanelet, &subtype);
 
             if wants_fill {
-                let outline = lanelet_outline(lanelet);
+                let outline = outline_2d(lanelet);
                 if outline.len() >= 3 {
                     let style = style::lanelet_style(&subtype, &self.palette);
                     self.push(
@@ -264,7 +273,7 @@ impl Builder<'_> {
             }
 
             if wants_centerline || wants_arrows {
-                let centerline = points_of(&lanelet.centerline());
+                let centerline = centerline_2d(lanelet);
                 if wants_centerline && centerline.len() >= 2 {
                     let style = style::centerline_style(&self.palette);
                     self.push(
@@ -291,14 +300,14 @@ impl Builder<'_> {
         }
         let width = lanelet_width(lanelet).clamp(1.0, 6.0);
         let size = (width * 0.45).clamp(0.6, 2.5);
-        let style = style::direction_style(&self.palette);
+        let style = self.direction_style();
         let label = format!("{description} ▸");
 
         for (position, heading) in sample_along(centerline, self.options.arrow_spacing) {
             let triangle = arrowhead(position, heading, size);
-            self.push(
+            self.push_interned(
                 VizLayer::Direction,
-                style.clone(),
+                style,
                 lanelet.id(),
                 label.clone(),
                 triangle,
@@ -307,8 +316,17 @@ impl Builder<'_> {
         }
     }
 
+    /// Every arrowhead in the map shares one style; building it per arrow would
+    /// mean four allocations and a hash lookup for a value that never varies.
+    fn direction_style(&mut self) -> usize {
+        match self.styles.lookup("direction") {
+            Some(index) => index,
+            None => self.styles.intern(style::direction_style(&self.palette)),
+        }
+    }
+
     fn add_areas(&mut self, map: &LaneletMap) {
-        if !self.options.wants(VizLayer::Area) {
+        if !self.options.wants_layer(VizLayer::Area) {
             return;
         }
         for primitive in map.areas.all() {
@@ -332,7 +350,7 @@ impl Builder<'_> {
     }
 
     fn add_polygons(&mut self, map: &LaneletMap) {
-        if !self.options.wants(VizLayer::Polygon) {
+        if !self.options.wants_layer(VizLayer::Polygon) {
             return;
         }
         for primitive in map.polygons.all() {
@@ -363,8 +381,8 @@ impl Builder<'_> {
     }
 
     fn add_linestrings(&mut self, map: &LaneletMap) {
-        let wants_bounds = self.options.wants(VizLayer::Bound);
-        let wants_regulatory = self.options.wants(VizLayer::Regulatory);
+        let wants_bounds = self.options.wants_layer(VizLayer::Bound);
+        let wants_regulatory = self.options.wants_layer(VizLayer::Regulatory);
         if !(wants_bounds || wants_regulatory) {
             return;
         }
@@ -380,7 +398,7 @@ impl Builder<'_> {
             } else {
                 VizLayer::Bound
             };
-            if !self.options.wants(layer) {
+            if !self.options.wants_layer(layer) {
                 continue;
             }
             let style = style::linestring_style(&kind, &subtype, &self.palette);
@@ -390,7 +408,7 @@ impl Builder<'_> {
     }
 
     fn add_points(&mut self, map: &LaneletMap) {
-        if !self.options.wants(VizLayer::Point) {
+        if !self.options.wants_layer(VizLayer::Point) {
             return;
         }
         let style = style::point_style(&self.palette);
@@ -431,19 +449,6 @@ fn points_of(line: &LineString) -> Vec<[f64; 2]> {
         .collect()
 }
 
-/// The closed ring around a lanelet: left bound forwards, right bound backwards.
-///
-/// `Lanelet::polygon()` is the upstream way to ask, but it hands back a compound
-/// linestring whose points must be read out anyway, so this goes straight to the
-/// bounds and saves the intermediate object on every lanelet in the map.
-fn lanelet_outline(lanelet: &Lanelet) -> Vec<[f64; 2]> {
-    let mut outline = points_of(&lanelet.left_bound());
-    let mut right = points_of(&lanelet.right_bound());
-    right.reverse();
-    outline.append(&mut right);
-    outline
-}
-
 fn area_outline(area: &Area) -> Vec<[f64; 2]> {
     let mut outline: Vec<[f64; 2]> = Vec::new();
     for line in area.outer_bound() {
@@ -458,22 +463,23 @@ fn area_outline(area: &Area) -> Vec<[f64; 2]> {
 }
 
 /// A lanelet's mean width, from the gap between its bounds at each end.
+///
+/// Four points, so it asks for four points: materialising both boundaries to read
+/// their ends would clone an `Arc` and take a lock per vertex, once per lanelet,
+/// for numbers already thrown away.
 fn lanelet_width(lanelet: &Lanelet) -> f64 {
-    let left = points_of(&lanelet.left_bound());
-    let right = points_of(&lanelet.right_bound());
+    let (left, right) = (lanelet.left_bound(), lanelet.right_bound());
+    let ends = [(left.front(), right.front()), (left.back(), right.back())];
     let mut total = 0.0;
     let mut count = 0.0;
-    for (a, b) in [(left.first(), right.first()), (left.last(), right.last())] {
+    for (a, b) in ends {
         if let (Some(a), Some(b)) = (a, b) {
-            total += distance(*a, *b);
+            let ([ax, ay, _], [bx, by, _]) = (a.xyz(), b.xyz());
+            total += distance_2d_point_point([ax, ay], [bx, by]);
             count += 1.0;
         }
     }
     if count == 0.0 { 3.0 } else { total / count }
-}
-
-fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
-    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
 }
 
 /// Positions and headings at roughly `spacing` metres along a polyline.
@@ -489,7 +495,7 @@ fn sample_along(points: &[[f64; 2]], spacing: f64) -> Vec<([f64; 2], [f64; 2])> 
     };
     let lengths: Vec<f64> = points
         .windows(2)
-        .map(|pair| distance(pair[0], pair[1]))
+        .map(|pair| distance_2d_point_point(pair[0], pair[1]))
         .collect();
     let total: f64 = lengths.iter().sum();
     if total <= 0.0 {
@@ -572,23 +578,6 @@ fn describe_lanelet(lanelet: &Lanelet, subtype: &str) -> String {
         text.push_str(&format!(" · {regelems} reg. elem."));
     }
     text
-}
-
-/// Every primitive kind a scene can carry, in the order the legend lists them.
-pub fn layer_order() -> [VizLayer; 8] {
-    VizLayer::ALL
-}
-
-/// Convenience for callers that only have a `Primitive` in hand.
-pub fn primitive_label(primitive: &Primitive) -> String {
-    match primitive {
-        Primitive::Point(point) => format!("point {}", point.id()),
-        Primitive::LineString(line) => format!("linestring {}", line.id()),
-        Primitive::Polygon(line) => format!("polygon {}", line.id()),
-        Primitive::Lanelet(lanelet) => format!("lanelet {}", lanelet.id()),
-        Primitive::Area(area) => format!("area {}", area.id()),
-        Primitive::RegulatoryElement(element) => format!("regulatory element {}", element.id()),
-    }
 }
 
 #[cfg(test)]

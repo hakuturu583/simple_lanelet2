@@ -72,17 +72,25 @@ await viewer.loadOsm(osmText);
 | `setCoordinates('auto'\|'projected'\|'local')` | re-reads the file |
 | `setBackground(colour\|'transparent'\|null)` | `null` uses the theme's own |
 | `setInteractive(bool)` | off for a static picture |
+| `setChrome({controls, tooltip, scalebar})` | show or hide the viewer's own overlays |
+| `acceptDrops(target)` | load any `.osm` dropped on `target`; returns a teardown function |
 | `fit()` / `getView()` / `setView({x, y, scale})` | the view, in map coordinates |
 | `setHighlight(ids)` / `focusOn(id)` | outline or centre on primitives by id |
 | `toSVG({width, height})` | a standalone SVG, from the same Rust renderer |
 | `viewer.stats`, `viewer.legend`, `viewer.backgroundColor` | after `load` |
+| `LAYERS`, `defaultLayers()` | the layer table and the default visible set, from Rust — populated once `ready` resolves |
 | `destroy()` | |
 
 Events, as `CustomEvent`s: `loadstart`, `load`, `error`, `hover`, `select`,
-`viewchange`. `hover` and `select` carry `{id, label, layer}` or `null`.
+`viewchange`. `hover` and `select` carry `{id, label, layer}` or `null`; `load`
+carries `{name, stats, errors, problems, coordinateSource, projection, origin,
+bounds}`, where `errors` is upstream's `loadRobust` shape — a header line then one
+line per problem — and `problems` is how many that is.
 
 Layer keys: `lanelet_fill`, `area`, `polygon`, `bound`, `regulatory`,
-`centerline`, `direction`, `point`.
+`centerline`, `direction`, `point`. The list is not written down here twice: it
+comes from Rust through `LAYERS`, so adding a layer cannot desynchronise the two
+sides.
 
 ### Foxglove
 
@@ -167,7 +175,7 @@ frame.contentWindow.postMessage({ type: 'lanelet2.load', osm: text }, '*');
 | --- | --- |
 | `lanelet2.load` | `{osm, name?, coordinates?}` |
 | `lanelet2.loadUrl` | `{url, name?}` |
-| `lanelet2.setOptions` | `{theme?, layers?, points?, background?, interactive?, coordinates?}` |
+| `lanelet2.setOptions` | `{theme?, layers?, points?, background?, interactive?, coordinates?, controls?, tooltip?, scalebar?}` |
 | `lanelet2.setView` | `{x?, y?, scale?}` in map coordinates |
 | `lanelet2.fit` | |
 | `lanelet2.highlight` | `{ids: [123, 456]}` |

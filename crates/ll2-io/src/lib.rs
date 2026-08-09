@@ -99,10 +99,7 @@ pub fn load_str_robust(
     let (document, mut errors) = osm::parse(text).map_err(IoError::Parse)?;
     let (map, load_errors) = load::to_map(&document, projector);
     errors.extend(load_errors);
-    Ok((
-        map,
-        wrap_errors("Errors ocurred while parsing Lanelet Map:", errors),
-    ))
+    Ok((map, wrap_errors(PARSE_ERROR_HEADER, errors)))
 }
 
 /// Loads a map from OSM XML already in memory, failing if anything went wrong.
@@ -157,13 +154,17 @@ pub fn write(
     Err(IoError::Write(join_errors(&errors)))
 }
 
+/// The header `loadRobust` puts on a non-empty problem list. The misspelling is
+/// upstream's, and is part of the output a caller compares against.
+pub const PARSE_ERROR_HEADER: &str = "Errors ocurred while parsing Lanelet Map:";
+
 /// Prefixes a header and bullets each entry, in place, leaving an empty list alone.
 ///
 /// `loadRobust` hands this list back verbatim, and the exception `load` raises is
 /// exactly these lines joined — measured from the reference, which reports
 /// `['Errors ocurred while parsing Lanelet Map:', '\t- Error parsing primitive 20: …']`
 /// (the misspelling is upstream's).
-fn wrap_errors(header: &str, errors: Vec<String>) -> Vec<String> {
+pub fn wrap_errors(header: &str, errors: Vec<String>) -> Vec<String> {
     if errors.is_empty() {
         return errors;
     }

@@ -63,8 +63,12 @@ pub struct LoadOptions {
 /// A loaded map, plus what had to be decided to load it.
 pub struct LoadedMap {
     pub map: Arc<LaneletMap>,
-    /// Non-fatal problems, in the shape `loadRobust` reports them.
+    /// Non-fatal problems, in the shape `loadRobust` reports them — a header line
+    /// followed by one bulleted line each.
     pub errors: Vec<String>,
+    /// How many problems that is. Reported here rather than left for a caller to
+    /// derive by subtracting one for the header it cannot see.
+    pub problems: usize,
     /// The origin the projection was anchored at.
     pub origin: GpsPoint,
     /// What `Auto` settled on, or what was asked for.
@@ -95,23 +99,33 @@ pub fn load_osm_str(text: &str, options: &LoadOptions) -> Result<LoadedMap, Stri
     let (map, load_errors) = ll2_io::load::to_map(&document, projector.as_ref());
     errors.extend(load_errors);
 
+    // Each of these walks the whole point layer, cloning an `Arc` per point, and
+    // `local_xy_extent` parses two attributes on top — so they are asked for only
+    // when the answer can change the outcome.
     let projected_extent = extent(&map);
-    let local_extent = local_xy_extent(&map);
-    let coordinates = resolve(options.coordinates, projected_extent, local_extent);
-    if coordinates == CoordinateSource::LocalXy {
+    let coordinates = match options.coordinates {
+        CoordinateSource::Auto => resolve_auto(projected_extent, local_xy_extent(&map)),
+        explicit => explicit,
+    };
+    let final_extent = if coordinates == CoordinateSource::LocalXy {
         apply_local_xy(&map);
-    }
+        extent(&map)
+    } else {
+        projected_extent
+    };
 
-    if extent(&map) <= 0.0 {
+    if final_extent <= 0.0 {
         return Err(
             "Every node in the file projects to the same place — the map has no extent to draw"
                 .to_owned(),
         );
     }
 
+    let problems = errors.len();
     Ok(LoadedMap {
         map,
-        errors: wrap(errors),
+        errors: ll2_io::wrap_errors(ll2_io::PARSE_ERROR_HEADER, errors),
+        problems,
         origin,
         coordinates,
         projection,
@@ -122,18 +136,10 @@ pub fn load_osm_str(text: &str, options: &LoadOptions) -> Result<LoadedMap, Stri
 ///
 /// The threshold is a metre: no real map is smaller than that, and a placeholder
 /// `lat`/`lon` of zero on every node projects to an extent of exactly zero.
-fn resolve(
-    requested: CoordinateSource,
-    projected_extent: f64,
-    local_extent: Option<f64>,
-) -> CoordinateSource {
-    match requested {
-        CoordinateSource::Projected => CoordinateSource::Projected,
-        CoordinateSource::LocalXy => CoordinateSource::LocalXy,
-        CoordinateSource::Auto => match local_extent {
-            Some(local) if projected_extent < 1.0 && local >= 1.0 => CoordinateSource::LocalXy,
-            _ => CoordinateSource::Projected,
-        },
+fn resolve_auto(projected_extent: f64, local_extent: Option<f64>) -> CoordinateSource {
+    match local_extent {
+        Some(local) if projected_extent < 1.0 && local >= 1.0 => CoordinateSource::LocalXy,
+        _ => CoordinateSource::Projected,
     }
 }
 
@@ -256,18 +262,6 @@ fn apply_local_xy(map: &LaneletMap) {
             lanelet.reset_cache();
         }
     }
-}
-
-/// `loadRobust`'s reporting shape, so a viewer's error list reads the same as the
-/// library's. The header is upstream's, misspelling included.
-fn wrap(errors: Vec<String>) -> Vec<String> {
-    if errors.is_empty() {
-        return errors;
-    }
-    let mut out = Vec::with_capacity(errors.len() + 1);
-    out.push("Errors ocurred while parsing Lanelet Map:".to_owned());
-    out.extend(errors.into_iter().map(|error| format!("\t- {error}")));
-    out
 }
 
 #[cfg(test)]

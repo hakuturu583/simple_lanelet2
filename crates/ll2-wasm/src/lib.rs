@@ -45,6 +45,31 @@ pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_owned()
 }
 
+/// The layer table: `[{"key":…,"label":…,"default":…}, …]`, indexed by the values
+/// in [`SceneData::layers`].
+///
+/// A free function rather than a method, so a renderer can learn the vocabulary
+/// as soon as the module is up and never has to restate it. `VizLayer` decides
+/// the order; anything that indexes by layer must take it from here.
+#[wasm_bindgen]
+pub fn layers() -> String {
+    let defaults = VizOptions::default();
+    let mut out = String::from("[");
+    for (index, layer) in VizLayer::ALL.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"key\":\"{}\",\"label\":\"{}\",\"default\":{}}}",
+            layer.key(),
+            layer.label(),
+            defaults.wants_layer(*layer)
+        ));
+    }
+    out.push(']');
+    out
+}
+
 /// What to draw. Construct with `new SceneOptions()` and assign to the fields.
 #[wasm_bindgen(getter_with_clone)]
 #[derive(Clone, Debug)]
@@ -86,6 +111,25 @@ impl SceneOptions {
     #[wasm_bindgen(constructor)]
     pub fn new() -> SceneOptions {
         SceneOptions::default()
+    }
+
+    /// Turns a layer on or off by the key [`layers`] reports.
+    ///
+    /// The named fields above are the Rust API; this is the one a renderer wants,
+    /// because it already holds layer keys and should not also have to know that
+    /// `bound` is spelled `bounds` here.
+    pub fn set_layer(&mut self, key: &str, on: bool) {
+        match key {
+            "lanelet_fill" => self.lanelet_fill = on,
+            "area" => self.areas = on,
+            "polygon" => self.polygons = on,
+            "bound" => self.bounds = on,
+            "regulatory" => self.regulatory = on,
+            "centerline" => self.centerlines = on,
+            "direction" => self.direction_arrows = on,
+            "point" => self.points = on,
+            _ => {}
+        }
     }
 }
 
@@ -141,9 +185,16 @@ pub fn load_osm(text: &str, coordinates: &str) -> Result<LaneletMapHandle, JsErr
 
 #[wasm_bindgen]
 impl LaneletMapHandle {
-    /// Non-fatal parse problems, in the shape `lanelet2.io.loadRobust` reports them.
+    /// Non-fatal parse problems, in the shape `lanelet2.io.loadRobust` reports
+    /// them: a header line, then one bulleted line per problem.
     pub fn errors(&self) -> Vec<String> {
         self.loaded.errors.clone()
+    }
+
+    /// How many problems that is — one fewer than `errors()` has lines, which is
+    /// not something a caller should have to know.
+    pub fn error_count(&self) -> usize {
+        self.loaded.problems
     }
 
     /// Which coordinate source was actually used: `"projected"` or `"local_xy"`.
@@ -214,28 +265,33 @@ pub struct SceneData {
     min: [f64; 2],
     max: [f64; 2],
     styles_json: String,
-    layers_json: String,
     background: String,
+    highlight: String,
 }
 
 impl SceneData {
     fn build(scene: Scene) -> SceneData {
         let bounds = scene.safe_bounds();
+        // Everything the table and the palette need, before the shapes are moved
+        // out from under them.
+        let styles_json = styles_json(&scene);
+        let palette = scene.theme.palette();
+        let shapes = scene.shapes;
         let centre = [
             (bounds.min[0] + bounds.max[0]) * 0.5,
             (bounds.min[1] + bounds.max[1]) * 0.5,
         ];
 
-        let total: usize = scene.shapes.iter().map(|shape| shape.points.len()).sum();
+        let total: usize = shapes.iter().map(|shape| shape.points.len()).sum();
         let mut coords = Vec::with_capacity(total * 2);
-        let mut offsets = Vec::with_capacity(scene.shapes.len() + 1);
-        let mut styles = Vec::with_capacity(scene.shapes.len());
-        let mut layers = Vec::with_capacity(scene.shapes.len());
-        let mut closed = Vec::with_capacity(scene.shapes.len());
-        let mut ids = Vec::with_capacity(scene.shapes.len());
-        let mut labels = Vec::with_capacity(scene.shapes.len());
+        let mut offsets = Vec::with_capacity(shapes.len() + 1);
+        let mut styles = Vec::with_capacity(shapes.len());
+        let mut layers = Vec::with_capacity(shapes.len());
+        let mut closed = Vec::with_capacity(shapes.len());
+        let mut ids = Vec::with_capacity(shapes.len());
+        let mut labels = Vec::with_capacity(shapes.len());
 
-        for shape in &scene.shapes {
+        for shape in shapes {
             // In vertices, not floats: the renderer indexes points, and halving the
             // number here is one fewer place to get the factor of two wrong.
             offsets.push((coords.len() / 2) as u32);
@@ -247,7 +303,7 @@ impl SceneData {
             layers.push(shape.layer.index());
             closed.push(u8::from(shape.closed));
             ids.push(shape.id as f64);
-            labels.push(shape.label.clone());
+            labels.push(shape.label);
         }
         offsets.push((coords.len() / 2) as u32);
 
@@ -262,9 +318,9 @@ impl SceneData {
             centre,
             min: bounds.min,
             max: bounds.max,
-            styles_json: styles_json(&scene),
-            layers_json: layers_json(),
-            background: scene.theme.palette().background.to_hex(),
+            styles_json,
+            background: palette.background.to_hex(),
+            highlight: palette.highlight.to_hex(),
         }
     }
 }
@@ -330,14 +386,16 @@ impl SceneData {
         self.styles_json.clone()
     }
 
-    /// The layer table: `[{"key":…,"label":…}, …]`, indexed by [`SceneData::layers`].
-    pub fn layers_json(&self) -> String {
-        self.layers_json.clone()
-    }
-
     /// The theme's page colour, as `#rrggbb`.
     pub fn background(&self) -> String {
         self.background.clone()
+    }
+
+    /// The colour to outline a selected or highlighted primitive with. A decision
+    /// about what the map looks like, so it comes from the palette rather than
+    /// from whichever renderer happens to be drawing it.
+    pub fn highlight(&self) -> String {
+        self.highlight.clone()
     }
 }
 
@@ -350,11 +408,17 @@ fn styles_json(scene: &Scene) -> String {
         out.push_str("{\"name\":\"");
         push_escaped(&mut out, &style.name);
         out.push_str("\",\"label\":\"");
-        push_escaped(&mut out, &style.label);
+        push_escaped(&mut out, style.label);
         out.push_str("\",\"z\":");
         out.push_str(&style.z.to_string());
         out.push_str(",\"inLegend\":");
         out.push_str(if style.in_legend { "true" } else { "false" });
+        // The zoom thresholds, so a renderer drops the same detail the SVG
+        // writer does rather than inventing its own rule.
+        out.push_str(&format!(
+            ",\"hideBelowScale\":{},\"solidBelowScale\":{}",
+            style.hide_below_scale, style.solid_below_scale
+        ));
 
         match style.stroke {
             Some(color) => out.push_str(&format!(
@@ -381,22 +445,6 @@ fn styles_json(scene: &Scene) -> String {
             None => out.push_str(",\"fill\":null"),
         }
         out.push('}');
-    }
-    out.push(']');
-    out
-}
-
-fn layers_json() -> String {
-    let mut out = String::from("[");
-    for (index, layer) in VizLayer::ALL.iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        out.push_str(&format!(
-            "{{\"key\":\"{}\",\"label\":\"{}\"}}",
-            layer.key(),
-            layer.label()
-        ));
     }
     out.push(']');
     out
@@ -493,13 +541,40 @@ mod tests {
     }
 
     #[test]
-    fn layer_indices_all_resolve() {
+    fn layer_indices_all_resolve_against_the_shared_table() {
         let data = scene();
-        let count = data.layers_json().matches("{\"key\":").count();
+        let table = layers();
+        let count = table.matches("{\"key\":").count();
         assert_eq!(count, VizLayer::ALL.len());
         for index in data.layers() {
             assert!((index as usize) < count);
         }
+        // The table is indexed by `VizLayer::index()`, so its order is the order
+        // of the enum and a renderer can rely on that.
+        assert!(table.starts_with("[{\"key\":\"lanelet_fill\""));
+        assert!(
+            table.contains("\"key\":\"centerline\",\"label\":\"Centerlines\",\"default\":false")
+        );
+    }
+
+    #[test]
+    fn a_layer_can_be_switched_by_key() {
+        let handle = LaneletMapHandle::parse(MAP, "auto").unwrap();
+        let mut options = SceneOptions::new();
+        options.set_layer("bound", false);
+        options.set_layer("direction", false);
+        options.set_layer("nonsense", true);
+        let data = handle.build_scene(&options);
+        let hidden = [VizLayer::Bound.index(), VizLayer::Direction.index()];
+        assert!(!data.layers().iter().any(|l| hidden.contains(l)));
+        assert!(data.shape_count() > 0);
+    }
+
+    #[test]
+    fn the_problem_count_does_not_have_to_be_derived_from_the_header() {
+        let handle = LaneletMapHandle::parse(MAP, "auto").unwrap();
+        assert_eq!(handle.error_count(), 0);
+        assert!(handle.errors().is_empty());
     }
 
     #[test]
