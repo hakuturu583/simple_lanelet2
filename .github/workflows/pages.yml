@@ -40,8 +40,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
+
+      # Not the toolchain action's `targets:` input. `rust-toolchain.toml` pins
+      # 1.95.0, so that would add wasm32 to `stable` -- a toolchain cargo never
+      # uses here -- and the build fails with "can't find crate for `core`".
+      # rustup resolves the toolchain file from the working directory, so this
+      # puts the target where the build actually looks, and keeps doing so if
+      # the pin moves.
+      - name: add the wasm target to the pinned toolchain
+        run: |
+          rustup show active-toolchain
+          rustup target add wasm32-unknown-unknown
+          rustup target list --installed
 
       - uses: Swatinem/rust-cache@v2
 
