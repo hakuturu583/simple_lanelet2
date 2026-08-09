@@ -1,0 +1,333 @@
+# Builds the runtime image and publishes it to GHCR.
+#
+# The image is a leaf: an Alpine CPython with the wheel installed and no toolchain,
+# no source and no pip. What it costs to produce is a full Rust build, so this is
+# kept out of ci.yml and run on its own schedule of events.
+#
+# Two architectures, built on native runners rather than under QEMU -- a Rust build
+# emulated on x86 takes the better part of an hour, and public repositories get arm64
+# runners for nothing. Each runner pushes a *digest*, nothing tagged; `manifest` then
+# assembles the two digests into one multi-arch tag. That ordering is what keeps a
+# tag from ever pointing at half a release: it does not exist until both halves do.
+#
+# `workflow_call` is how release.yml reaches this, and it is reached that way for a
+# reason. The auto-release tag is pushed with GITHUB_TOKEN, and a token-pushed tag
+# starts no workflow runs -- so `on: push: tags` here would silently never fire for
+# the everyday release path. release.yml calls this job instead, in the same run that
+# cut the tag. See the header of that file.
+
+name: Docker
+
+on:
+  # The same list on both triggers -- written out twice because Actions does not
+  # honour YAML anchors. It was on `pull_request` alone to begin with, which left the
+  # expensive half unguarded: a docs-only merge to main paid for two full Rust
+  # builds. Keep it in step with .dockerignore's allow-list, which is what actually
+  # decides the build context; the extra entries here are the files that decide how
+  # the image is built rather than what goes in it.
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/docker.yml
+      - rust-toolchain.toml
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - python/**
+      - pyproject.toml
+      - README.md
+      - LICENSE
+      - NOTICE
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/docker.yml
+      - rust-toolchain.toml
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - python/**
+      - pyproject.toml
+      - README.md
+      - LICENSE
+      - NOTICE
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: commit, branch or tag to build
+        type: string
+        required: true
+      version:
+        description: release version without the leading v, e.g. 1.0.3
+        type: string
+        required: false
+        default: ""
+      release:
+        description: >-
+          whether this build may claim the release tags. Passed rather than inferred
+          from `version` being non-empty: the caller already knows, and inferring it
+          means a caller that fills `version` in for a dry run's logs silently starts
+          moving `latest`.
+        type: boolean
+        required: false
+        default: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+# A release merge reaches this workflow twice -- once for the push to main, once
+# through release.yml with the tag. Keying on the ref *being built* rather than on
+# `github.ref` (which, in a called workflow, is the caller's `refs/heads/main` for
+# both) lets those two run in parallel; they publish disjoint tag sets, so there is
+# nothing to serialise. A superseded PR build has nothing worth keeping, and is
+# cancelled.
+concurrency:
+  group: docker-${{ inputs.ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      # The Dockerfile's default is only for a bare `docker build`; here the pin in
+      # rust-toolchain.toml is the single source of truth, so the image cannot be
+      # built with a compiler the repository does not claim to support.
+      - name: read the toolchain pin
+        id: rust
+        run: |
+          set -euo pipefail
+          channel=$(grep -m1 '^channel' rust-toolchain.toml | cut -d'"' -f2)
+          echo "version=${channel}" >> "$GITHUB_OUTPUT"
+          echo "Building with Rust ${channel}"
+          # The Dockerfile carries the same version as a default, for builds that do
+          # not come through here. A comment asking the two to be kept in step is not
+          # a mechanism; this is.
+          grep -q "^ARG RUST_VERSION=${channel}\$" Dockerfile || {
+            echo "::error file=Dockerfile::ARG RUST_VERSION does not match rust-toolchain.toml (${channel})"
+            exit 1
+          }
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built and loaded first, so the smoke test runs against exactly the image that
+      # is about to be pushed rather than against a hope. The push below re-uses this
+      # build's cache and adds no compile time.
+      - name: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ll2:probe
+          build-args: |
+            RUST_VERSION=${{ steps.rust.outputs.version }}
+            VERSION=${{ inputs.version || github.sha }}
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
+
+      # Enough of the API to prove the extension module actually loaded and the Rust
+      # core is reachable through it -- an image that imports but cannot compute is
+      # the failure this is here to catch. The full compatibility harness is ci.yml's
+      # job and is not repeated.
+      - name: smoke test
+        run: |
+          set -euo pipefail
+          # -i, or the container gets no stdin, `python3 -` reads an empty program
+          # and the whole test passes without executing a line of it.
+          docker run --rm -i ll2:probe python3 - <<'PY'
+          import lanelet2, sys, os
+          from lanelet2.core import Point3d, LineString3d, Lanelet, getId, LaneletMap
+          from lanelet2.projection import UtmProjector
+          from lanelet2.io import Origin
+          import lanelet2.geometry, lanelet2.routing, lanelet2.traffic_rules, lanelet2.matching
+          import autoware_lanelet2_extension_python.regulatory_elements as regelems
+          import autoware_lanelet2_extension_python.utility.query
+          import autoware_lanelet2_extension_python.utility.utilities
+          from autoware_lanelet2_extension_python.projection import MGRSProjector, TransverseMercatorProjector
+
+          # maturin ships only the package matching module-name unless the others are
+          # named explicitly, and the symptom is a subpackage silently missing from
+          # the wheel. ci.yml checks the same thing on the wheel it builds; the image
+          # is a second artefact built a second way, so it checks it too.
+          assert len([n for n in dir(regelems) if n[0].isupper()]) == 8
+
+          assert os.getuid() != 0, "the image must not run as root"
+          left = LineString3d(getId(), [Point3d(getId(), 0, 0, 0), Point3d(getId(), 3, 0, 0)])
+          right = LineString3d(getId(), [Point3d(getId(), 0, 2, 0), Point3d(getId(), 3, 2, 0)])
+          ll = Lanelet(getId(), left, right)
+          ll.attributes["subtype"] = "road"
+          assert [(p.x, p.y) for p in ll.centerline] == [(0.0, 1.0), (3.0, 1.0)]
+
+          m = LaneletMap()
+          m.add(ll)
+          proj = UtmProjector(Origin(49.0, 8.4))
+          lanelet2.io.write("/tmp/m.osm", m, proj)
+          assert len(lanelet2.io.load("/tmp/m.osm", proj).laneletLayer) == 1
+
+          rules = lanelet2.traffic_rules.create(
+              lanelet2.traffic_rules.Locations.Germany,
+              lanelet2.traffic_rules.Participants.Vehicle,
+          )
+          lanelet2.routing.RoutingGraph(m, rules)
+          print("ok", sys.version.split()[0], "uid", os.getuid())
+          PY
+
+      # A runtime image that can still fetch and install packages is not the thing
+      # that was asked for, so its absence is asserted rather than assumed.
+      - name: the image carries no toolchain
+        run: |
+          set -euo pipefail
+          # One container, not one per program. The pip/ensurepip half of this is
+          # asserted inside the Dockerfile too, where the prune that has to keep
+          # working lives; what only CI can say is that no compiler came along.
+          # Size is measured in here rather than with `docker image inspect`, whose
+          # number depends on which image store the daemon was built with.
+          docker run --rm --user root ll2:probe sh -c '
+            for prog in pip pip3 cargo rustc gcc cc ld make; do
+              if command -v "$prog" >/dev/null 2>&1; then
+                echo "::error::$prog is present in the runtime image"
+                exit 1
+              fi
+            done
+            echo -n "Unpacked filesystem: "
+            du -shx / 2>/dev/null | cut -f1'
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushed by digest only. `manifest` gives it its tags once both architectures
+      # are in the registry.
+      - name: push by digest
+        id: push
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: |
+            RUST_VERSION=${{ steps.rust.outputs.version }}
+            VERSION=${{ inputs.version || github.sha }}
+          # No cache-from: the builder from the step above is still up, and every
+          # vertex resolves against its local state. Re-importing the GHA cache chain
+          # would only cost the download.
+          # No provenance attestation: it makes buildx push an index rather than a
+          # plain manifest, and `imagetools create` below then has two indexes to
+          # merge rather than two images. A publish that assembles cleanly is worth
+          # more here than the attestation.
+          provenance: false
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      # The digest is carried between jobs as an empty file *named* for it, because
+      # that is the one shape `merge-multiple` can combine from two runners without
+      # them overwriting each other's output.
+      - name: record the digest
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  manifest:
+    name: publish the multi-arch tag
+    needs: [build]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      # No setup-buildx-action here: `imagetools` is a registry-side operation and
+      # the buildx CLI ships on the runner, so booting a BuildKit container would be
+      # pure overhead.
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `latest` and the semver tags only ever come from a release; a push to main
+      # publishes `main` and the commit sha, which is what one wants to bisect
+      # against without it becoming what `docker pull` gives a stranger.
+      #
+      # The branch and sha rules are suppressed when a ref was passed in, and that is
+      # load-bearing rather than tidiness. A called workflow inherits the *caller's*
+      # `github` context, so on the release path `github.sha` is the merge commit on
+      # main while the image was built from `inputs.ref`, the tag -- a later commit
+      # carrying the version bump. Left enabled, the release run would publish
+      # `sha-<merge-commit>` on an image that does not contain that commit's tree,
+      # and fight the push-to-main run for the same two tags.
+      #
+      # `== true` rather than a bare `inputs.release`: outside a `workflow_call` the
+      # whole `inputs` context is null, which renders as an empty `enable=` that
+      # metadata-action rejects. A comparison always renders `true` or `false`.
+      #
+      # `latest` additionally requires a version with no pre-release part, so that a
+      # hand-cut `v1.1.0-rc1` -- which `on: push: tags: ["v*"]` in release.yml
+      # matches -- cannot become what `docker pull` hands a stranger. pip gets that
+      # for free by refusing pre-releases; the registry has no such notion.
+      - name: work out the tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ inputs.version }},enable=${{ inputs.release == true }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }},enable=${{ inputs.release == true }}
+            type=semver,pattern={{major}},value=${{ inputs.version }},enable=${{ inputs.release == true }}
+            type=raw,value=latest,enable=${{ inputs.release == true && !contains(inputs.version, '-') }}
+            type=ref,event=branch,enable=${{ inputs.ref == '' }}
+            type=sha,format=long,enable=${{ inputs.ref == '' }}
+
+      - name: assemble
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      # One inspect, not one per tag: they all resolve to the same index, so the
+      # other five would fetch and print the identical manifest again.
+      - name: show what was published
+        run: |
+          set -euo pipefail
+          jq -r '"published:", (.tags[] | "  " + .)' <<< "$DOCKER_METADATA_OUTPUT_JSON"
+          docker buildx imagetools inspect "$(jq -r '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"

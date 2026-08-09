@@ -35,6 +35,43 @@ The flag is read once at import time and is reported as `lanelet2.BUG_COMPAT`.
 Every switched behaviour is listed in [`docs/DIVERGENCE.md`](docs/DIVERGENCE.md) and
 enforced by the test harness.
 
+## Container image
+
+A runtime image is published to GHCR for `linux/amd64` and `linux/arm64`:
+
+```bash
+# an interpreter with `import lanelet2` already working
+docker run --rm -it ghcr.io/hakuturu583/simple_lanelet2:latest
+
+# the working directory is /work, so a map on the host is one mount away
+docker run --rm -v "$PWD:/work" ghcr.io/hakuturu583/simple_lanelet2:latest python3 -c "
+import lanelet2
+from lanelet2.projection import UtmProjector
+from lanelet2.io import Origin
+m = lanelet2.io.load('map.osm', UtmProjector(Origin(49.0, 8.4)))
+print(len(m.laneletLayer), 'lanelets')"
+```
+
+Tags are `latest`, `X.Y.Z`, `X.Y` and `X` from releases, plus `main` and
+`sha-<commit>` from the tip of the default branch.
+
+It carries a CPython and the wheel and nothing else: no Rust toolchain, no source
+tree, no pip — around 40 MB unpacked, of which the extension module is 2.4 MB and
+almost all of the rest is CPython itself. That is enforced rather than intended; the
+build fails if `pip`, `cargo`, `rustc` or a C compiler can be found in the image, and
+its smoke test exercises the map, geometry, projection, routing and I/O paths through
+the extension before anything is pushed.
+
+[`Dockerfile`](Dockerfile) builds it in three stages: a Rust toolchain produces one
+musl wheel, a second stage unpacks that wheel against the interpreter that will load
+it, and the third takes the finished filesystem onto `scratch` — `rm` in a layer
+above a base image writes a whiteout and ships the deleted bytes anyway, so copying
+what survived is what actually makes it smaller. The image runs as an unprivileged
+user with `/work` as its working directory.
+
+The wheel inside it is musllinux and is built only for this image; the manylinux
+wheels on PyPI are the ones to install with `pip`.
+
 ## Verification
 
 Compatibility is not asserted, it is measured. Every case in `tests/cases/` is run
@@ -114,6 +151,12 @@ Four jobs, arranged around the compatibility claim rather than around the test s
 | `diff` | 20 cases against the PyPI `lanelet2==1.2.3`, plus upstream's vendored tests | a wheel |
 | `upstream` | upstream's *own* tests, cloned at HEAD each run, unmodified, both modes | network |
 | `oracle` | 31 cases, including the Autoware extension and the two-reference skew check | pixi + colcon |
+
+The container image has its own workflow rather than a fifth job here, because it
+costs a full Rust build per architecture and is wanted on a different set of events
+— see [`docker.yml`](.github/workflows/docker.yml). It builds on any pull request
+that touches the crates, the Python package or the Dockerfile, and publishes only
+from `main` and from releases.
 
 One case is not in that count. `1150_aw_map` loads a real 10.5 MB Autoware map and
 checks it writes back byte for byte; the map it was developed against is CC BY-NC
