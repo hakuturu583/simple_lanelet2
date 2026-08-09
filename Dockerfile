@@ -32,7 +32,13 @@ FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS builder
 # missing. Not python3-dev: PyO3 declares the C ABI itself rather than including
 # Python.h, and an abi3 extension-module build links against no libpython either, so
 # the interpreter is wanted only for maturin to query and to run pip.
-RUN apk add --no-cache python3 py3-pip
+#
+# patchelf is not optional here. The extension links against libgcc_s.so.1, which
+# rust:alpine has and python:alpine does not, so maturin has to copy it into the
+# wheel and rewrite the RPATH -- and it shells out to patchelf to do it. Without
+# this the build dies at the very end, after the whole Rust compile, with "Failed to
+# execute 'patchelf'".
+RUN apk add --no-cache python3 py3-pip patchelf
 
 # Alpine marks its system Python externally-managed (PEP 668). A venv would be the
 # answer on a machine one has to live with; this stage is thrown away at the end of
