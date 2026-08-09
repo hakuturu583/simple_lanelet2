@@ -1,0 +1,22 @@
+[package]
+name = "ll2-wasm"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "WebAssembly bindings for loading and visualising Lanelet2 maps"
+
+[lib]
+# `cdylib` is what wasm-pack links; `rlib` keeps `cargo test --workspace` able to
+# build and run this crate's own tests on the host.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ll2-core.workspace = true
+ll2-viz.workspace = true
+wasm-bindgen = "0.2"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"

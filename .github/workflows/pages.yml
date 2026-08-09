@@ -1,0 +1,97 @@
+# Builds the WebAssembly map viewer and publishes it to GitHub Pages.
+#
+# The build runs on pull requests too, without deploying: the demo is the only
+# consumer of `ll2-wasm`, and a change that breaks the wasm target does not
+# necessarily break `cargo test`, so it is worth failing a PR over.
+#
+# Pages must be set to "GitHub Actions" as its source, once, in the repository's
+# Settings -> Pages. Until that is done `deploy` fails with a 404 and the `build`
+# job still tells you whether the demo compiles.
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  # Never cancel a deployment half way: a partially-uploaded artifact is worse
+  # than a stale one.
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build the viewer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      # `wasm-bindgen` the tool and `wasm-bindgen` the crate must be the same
+      # version -- the tool refuses to run otherwise -- so the version is read
+      # from the lock file rather than written here, and the cache is keyed on it.
+      - name: resolve the wasm-bindgen version
+        id: wasm-bindgen
+        run: |
+          version=$(cargo metadata --format-version 1 --locked \
+            | sed -n 's/.*"name":"wasm-bindgen","version":"\([^"]*\)".*/\1/p' | head -1)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "wasm-bindgen $version"
+
+      - name: cache the wasm-bindgen binary
+        id: wasm-bindgen-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-${{ runner.os }}-${{ steps.wasm-bindgen.outputs.version }}
+
+      - name: install wasm-bindgen-cli
+        if: steps.wasm-bindgen-cache.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --locked --version "${{ steps.wasm-bindgen.outputs.version }}"
+
+      # Present on the runner image; the build script uses it when it is and
+      # skips it when it is not, so this is a size optimisation, not a dependency.
+      - name: install binaryen
+        run: sudo apt-get update && sudo apt-get install -y binaryen
+
+      - name: build web/
+        run: tools/build_web.sh
+
+      # The page is worth nothing if the module does not instantiate, and that is
+      # not something `cargo build` can tell us.
+      - name: smoke-test the module in node
+        run: node tools/smoke_web.mjs
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    name: deploy to Pages
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

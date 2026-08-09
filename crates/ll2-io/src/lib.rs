@@ -79,13 +79,42 @@ pub fn load_robust(
     }
     let text = std::fs::read_to_string(path)
         .map_err(|e| IoError::FileNotFound(format!("{}: {e}", path.display())))?;
-    let (document, mut errors) = osm::parse(&text).map_err(IoError::Parse)?;
+    load_str_robust(&text, projector)
+}
+
+/// Loads a map from OSM XML already in memory, collecting any problems rather than
+/// failing on the first.
+///
+/// The same thing [`load_robust`] does once it has the bytes, minus the filesystem —
+/// which is what a caller with the document in hand needs, and the only form
+/// available at all on a target with no filesystem to speak of, such as `wasm32`.
+///
+/// The origin check that [`load_robust`] makes is deliberately *not* repeated here:
+/// a caller holding the text can inspect it and pick an origin from the file itself,
+/// which is exactly what the visualiser does.
+pub fn load_str_robust(
+    text: &str,
+    projector: &dyn Projector,
+) -> Result<(std::sync::Arc<LaneletMap>, Vec<String>), IoError> {
+    let (document, mut errors) = osm::parse(text).map_err(IoError::Parse)?;
     let (map, load_errors) = load::to_map(&document, projector);
     errors.extend(load_errors);
     Ok((
         map,
         wrap_errors("Errors ocurred while parsing Lanelet Map:", errors),
     ))
+}
+
+/// Loads a map from OSM XML already in memory, failing if anything went wrong.
+pub fn load_str(
+    text: &str,
+    projector: &dyn Projector,
+) -> Result<std::sync::Arc<LaneletMap>, IoError> {
+    let (map, errors) = load_str_robust(text, projector)?;
+    if errors.is_empty() {
+        return Ok(map);
+    }
+    Err(IoError::Parse(join_errors(&errors)))
 }
 
 /// Loads a map, failing if anything went wrong.
@@ -176,5 +205,25 @@ mod tests {
     #[test]
     fn an_empty_error_list_gains_no_header() {
         assert!(wrap_errors("Header:", Vec::new()).is_empty());
+    }
+
+    /// The in-memory entry point has to reach the same map as the file one, since
+    /// the only difference between them is where the bytes came from.
+    #[test]
+    fn a_map_loads_from_a_string_without_touching_the_filesystem() {
+        let text = std::fs::read_to_string("../../tests/data/mapping_example.osm").unwrap();
+        let origin = ll2_projection::Origin::new(ll2_projection::GpsPoint::new(49.0, 8.4, 0.0));
+        let projector = ll2_projection::Utm::new(origin, true, false).unwrap();
+
+        let from_string = load_str(&text, &projector).unwrap();
+        let from_file = load(
+            Path::new("../../tests/data/mapping_example.osm"),
+            &projector,
+        )
+        .unwrap();
+
+        assert!(!from_string.lanelets.is_empty());
+        assert_eq!(from_string.lanelets.len(), from_file.lanelets.len());
+        assert_eq!(from_string.points.len(), from_file.points.len());
     }
 }

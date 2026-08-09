@@ -78,6 +78,20 @@ upstream-tests:
 stubs: build
     ./.venv/bin/python tools/gen_stubs.py
 
+# The WebAssembly map viewer. `web/pkg` and `web/sample` are build outputs.
+web:
+    tools/build_web.sh
+    node tools/smoke_web.mjs
+
+# Build it and serve it; ES modules and fetch both need a real origin.
+web-serve:
+    tools/build_web.sh
+    python3 -m http.server 8000 --directory web
+
+# A map to an SVG, without a browser anywhere.
+svg MAP OUT="map.svg":
+    cargo run --release -p ll2-viz --example osm2svg -- {{MAP}} {{OUT}}
+
 fmt:
     cargo fmt --all
 

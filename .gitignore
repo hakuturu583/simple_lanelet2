@@ -16,3 +16,5 @@ tests/oracle/build/
 tests/oracle/install/
 tests/oracle/log/
 /tests/upstream-fresh/
+/web/pkg
+/web/sample
