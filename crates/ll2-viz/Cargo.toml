@@ -1,0 +1,14 @@
+[package]
+name = "ll2-viz"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Renderer-agnostic visualisation of Lanelet2 maps, with an SVG backend"
+
+[dependencies]
+ll2-core.workspace = true
+ll2-io.workspace = true
+ll2-projection.workspace = true

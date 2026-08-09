@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Embedding the Lanelet2 viewer</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+        background: #0c0e13;
+        color: #e6eaf0;
+        font: 14px/1.6 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+          'Hiragino Sans', 'Noto Sans JP', sans-serif;
+      }
+      main {
+        max-width: 62rem;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 19px;
+        margin: 0 0 4px;
+      }
+      h2 {
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #98a2b3;
+        margin: 32px 0 8px;
+      }
+      p {
+        color: #b7c0cd;
+        margin: 0 0 8px;
+      }
+      a {
+        color: #4dd0e1;
+      }
+      pre {
+        background: #161a22;
+        border: 1px solid #262c38;
+        border-radius: 8px;
+        padding: 10px 12px;
+        overflow-x: auto;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: #cfd6e2;
+      }
+      .frame,
+      .mount {
+        width: 100%;
+        height: 340px;
+        border: 1px solid #262c38;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #11141a;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 10px 0;
+      }
+      button {
+        padding: 6px 11px;
+        border-radius: 8px;
+        border: 1px solid #262c38;
+        background: #1d222c;
+        color: #e6eaf0;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: #4dd0e1;
+      }
+      #log {
+        height: 140px;
+        overflow: auto;
+        margin: 0;
+        font-size: 11.5px;
+        color: #98a2b3;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Embedding the Lanelet2 viewer</h1>
+      <p>
+        Two ways in, both on this page. Full notes in
+        <a href="https://github.com/hakuturu583/simple_lanelet2/blob/main/web/EMBEDDING.md">EMBEDDING.md</a>.
+      </p>
+
+      <h2>1 &middot; An iframe, driven by postMessage</h2>
+      <p>
+        For hosts that can place a URL but not run a bundler — a wandb HTML panel, a
+        notebook cell, a dashboard, a docs page.
+      </p>
+      <pre>&lt;iframe src="embed.html?theme=dark&amp;background=%2311141a"&gt;&lt;/iframe&gt;
+frame.contentWindow.postMessage({ type: 'lanelet2.load', osm }, '*')</pre>
+      <p>
+        Pass your panel's own colour rather than <code>transparent</code>: a browser
+        may composite a frame onto an opaque base whatever the framed document says,
+        and Chromium does. True transparency is for the element, below.
+      </p>
+      <iframe
+        id="frame"
+        class="frame"
+        title="Lanelet2 viewer"
+        src="./embed.html?theme=dark&amp;background=%2311141a&amp;dnd=1"
+      ></iframe>
+      <div class="row">
+        <button id="send-map" type="button">Send the example map</button>
+        <button id="fit" type="button">Fit</button>
+        <button id="light" type="button">Light theme</button>
+        <button id="dark" type="button">Dark theme</button>
+        <button id="roads-only" type="button">Roads only</button>
+        <button id="all-layers" type="button">All layers</button>
+        <button id="export" type="button">Ask for an SVG</button>
+      </div>
+      <pre id="log"></pre>
+
+      <h2>2 &middot; The element, in your own document</h2>
+      <p>
+        For hosts that run your JavaScript — a Foxglove panel extension, a React app.
+        No iframe, no message plumbing, the full API on <code>element.viewer</code>, and
+        <code>background="transparent"</code> that really is transparent — the gradient
+        behind this map belongs to the page, not to the viewer.
+      </p>
+      <pre>&lt;script type="module" src="viewer.js"&gt;&lt;/script&gt;
+&lt;lanelet2-viewer src="map.osm" theme="auto" layers="lanelet_fill,bound"&gt;&lt;/lanelet2-viewer&gt;</pre>
+      <lanelet2-viewer
+        id="element"
+        class="mount"
+        style="display: block; background: linear-gradient(140deg, #101822, #1b1224)"
+        src="./sample/mapping_example.osm"
+        theme="dark"
+        background="transparent"
+        scalebar="0"
+      ></lanelet2-viewer>
+      <div class="row">
+        <button id="element-centerlines" type="button">Toggle centerlines</button>
+        <button id="element-fit" type="button">Fit</button>
+      </div>
+    </main>
+
+    <script type="module" src="./viewer.js"></script>
+    <script type="module">
+      const frame = document.getElementById('frame');
+      const log = document.getElementById('log');
+      const send = (message) => frame.contentWindow.postMessage(message, '*');
+
+      const write = (text) => {
+        log.textContent += `${text}\n`;
+        log.scrollTop = log.scrollHeight;
+      };
+
+      window.addEventListener('message', (event) => {
+        const data = event.data;
+        if (!data || typeof data.type !== 'string' || !data.type.startsWith('lanelet2.')) return;
+        if (data.type === 'lanelet2.loaded') {
+          write(`loaded: ${data.stats.lanelets} lanelets, ${data.stats.points} points (${data.coordinateSource})`);
+        } else if (data.type === 'lanelet2.svg') {
+          write(`svg: ${data.svg.length.toLocaleString()} bytes`);
+        } else if (data.type === 'lanelet2.hover' || data.type === 'lanelet2.view') {
+          // Too chatty to log.
+        } else if (data.type === 'lanelet2.select') {
+          write(`select: ${data.shape ? data.shape.label : '(nothing)'}`);
+        } else {
+          write(`${data.type.replace('lanelet2.', '')}: ${JSON.stringify(data).slice(0, 120)}`);
+        }
+      });
+
+      document.getElementById('send-map').addEventListener('click', async () => {
+        const osm = await (await fetch('./sample/mapping_example.osm')).text();
+        send({ type: 'lanelet2.load', osm, name: 'mapping_example' });
+      });
+      document.getElementById('fit').addEventListener('click', () => send({ type: 'lanelet2.fit' }));
+      document.getElementById('light').addEventListener('click', () =>
+        send({ type: 'lanelet2.setOptions', theme: 'light' }),
+      );
+      document.getElementById('dark').addEventListener('click', () =>
+        send({ type: 'lanelet2.setOptions', theme: 'dark' }),
+      );
+      document.getElementById('roads-only').addEventListener('click', () =>
+        send({ type: 'lanelet2.setOptions', layers: ['lanelet_fill'] }),
+      );
+      document.getElementById('all-layers').addEventListener('click', () =>
+        send({
+          type: 'lanelet2.setOptions',
+          layers: ['lanelet_fill', 'area', 'polygon', 'bound', 'regulatory', 'direction'],
+        }),
+      );
+      document.getElementById('export').addEventListener('click', () =>
+        send({ type: 'lanelet2.exportSvg', width: 1200, height: 800, requestId: 'demo' }),
+      );
+
+      const element = document.getElementById('element');
+      let centerlines = false;
+      document.getElementById('element-centerlines').addEventListener('click', () => {
+        centerlines = !centerlines;
+        element.viewer.setLayers({ centerline: centerlines });
+      });
+      document.getElementById('element-fit').addEventListener('click', () => element.viewer.fit());
+      element.addEventListener('load', (event) => write(`element: ${event.detail.stats.lanelets} lanelets`));
+    </script>
+  </body>
+</html>
