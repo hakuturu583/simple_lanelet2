@@ -16,8 +16,8 @@
 !LICENSE
 !NOTICE
 
-# Re-excluded from the directories admitted above.
-crates/**/target
-python/**/__pycache__
-**/*.py[cod]
+# Re-excluded from the directories admitted above. Not `crates/**/target`: this is
+# one cargo workspace, so every crate builds into the root `target/`, which the
+# leading `*` already denies.
+**/__pycache__
 **/*.so

@@ -1,11 +1,11 @@
 # A runtime image for the `lanelet2` wheel: an Alpine CPython with the extension
 # module installed and nothing else that is not needed to import it.
 #
-# Four stages, and the split matters. `builder` needs a Rust toolchain, a C compiler
-# and maturin -- over a gigabyte of them -- to produce one wheel. `unpack` unpacks
+# Three stages, and the split matters. `builder` needs a Rust toolchain, a C compiler
+# and maturin -- over a gigabyte of them -- to produce one wheel. `rootfs` unpacks
 # that wheel on the *runtime* base, so the `.so` is laid out against the interpreter
-# that will load it. `rootfs` prunes what a runtime does not use. Only the last is
-# shipped, and it holds the pruned filesystem alone; neither cargo, nor rustc, nor
+# that will load it, and prunes what a runtime does not use. Only the last is
+# shipped, and it holds that pruned filesystem alone; neither cargo, nor rustc, nor
 # pip, nor a line of this repository's source is in it.
 #
 # Alpine, so musl, so the wheel is tagged musllinux rather than manylinux. That is
@@ -61,35 +61,37 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     maturin build --release --locked --out /wheels
 
 
+# The shipped filesystem, assembled but not yet shipped.
+#
 # Unpacking happens on the runtime base, not the builder: pip picks the wheel whose
 # tags match the interpreter doing the installing, and it is the runtime's
 # interpreter whose ABI has to be satisfied. `--target` gives a self-contained
-# directory that the final stage can take wholesale.
-FROM python:${PYTHON_VERSION}-alpine${ALPINE_VERSION} AS unpack
+# directory, which is also where maturin's vendored libgcc lands, so the RPATH it
+# wrote still resolves.
+#
+# Then everything the base image carries for *building and installing* packages
+# goes: pip and its vendored wheels, the bootstrapper that reinstalls them, IDLE,
+# the CPython headers and the static build config. About 12 MB, and their absence is
+# also why nothing in this image can fetch a package at runtime -- asserted here
+# rather than only in CI, so that a base image that reorganises these paths fails
+# the build that produced it instead of shipping a quietly fatter image.
+FROM python:${PYTHON_VERSION}-alpine${ALPINE_VERSION} AS rootfs
 
 COPY --from=builder /wheels /wheels
 RUN pip install --no-cache-dir --no-deps --no-compile --target /opt/lanelet2 /wheels/*.whl \
- && python -c "import sys; sys.path.insert(0, '/opt/lanelet2'); import lanelet2"
-
-
-# The shipped filesystem, assembled but not yet shipped. Everything the base image
-# carries for *building and installing* packages is dropped here: pip and its
-# vendored wheels, the bootstrapper that reinstalls them, IDLE, the CPython headers
-# and the static build config. About 12 MB, and their absence is also why nothing in
-# this image can fetch a package at runtime.
-FROM python:${PYTHON_VERSION}-alpine${ALPINE_VERSION} AS rootfs
-
-COPY --from=unpack /opt/lanelet2 /opt/lanelet2
-RUN rm -rf /usr/local/lib/python*/ensurepip \
+ && python -c "import sys; sys.path.insert(0, '/opt/lanelet2'); import lanelet2" \
+ && rm -rf /wheels \
+           /usr/local/lib/python*/ensurepip \
            /usr/local/lib/python*/idlelib \
            /usr/local/lib/python*/config-*/ \
-           /usr/local/lib/python*/site-packages/pip \
-           /usr/local/lib/python*/site-packages/pip-*.dist-info \
+           /usr/local/lib/python*/site-packages/pip* \
            /usr/local/include/python* \
-           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.* \
-           /usr/local/bin/idle /usr/local/bin/idle3 /usr/local/bin/idle3.* \
+           /usr/local/bin/pip* \
+           /usr/local/bin/idle* \
            /usr/local/bin/python*-config \
  && find /usr/local/lib/python*/ -type d -name '__pycache__' -prune -exec rm -rf {} + \
+ && [ ! -e /usr/local/bin/pip ] \
+ && python -c "import importlib.util as u; assert not any(u.find_spec(m) for m in ('pip', 'ensurepip'))" \
  && adduser -D -u 1000 lanelet2
 
 

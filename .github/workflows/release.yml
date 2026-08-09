@@ -184,16 +184,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v5
 
+      # `resolve` already stripped the `v`; stripping it again here would be a
+      # second implementation of the tag scheme in the same file.
       - name: the version in the tag must be the version in the package
         if: needs.resolve.outputs.publish == 'true'
         run: |
-          TAG="${REF#v}"
           PKG=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
           CRATE=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           echo "tag=$TAG pyproject=$PKG cargo=$CRATE"
           test "$TAG" = "$PKG" && test "$TAG" = "$CRATE"
         env:
-          REF: ${{ needs.resolve.outputs.ref }}
+          TAG: ${{ needs.resolve.outputs.version }}
 
       - run: cargo test --workspace
 
@@ -299,3 +300,4 @@ jobs:
     with:
       ref: ${{ needs.resolve.outputs.ref }}
       version: ${{ needs.resolve.outputs.version }}
+      release: true
