@@ -109,8 +109,16 @@ let svg = ll2_viz::svg_from_osm(&text, &ll2_viz::VizOptions::default())?;
 
 ```bash
 just svg tests/data/mapping_example.osm map.svg   # the same thing from a shell
+just scene tests/data/mapping_example.osm s.json  # or the scene itself, to draw elsewhere
 just web-serve                                    # the demo, on localhost:8000
 ```
+
+A `Scene` being renderer-agnostic is meant literally: the SVG writer, the demo's
+`<canvas>` and anything else are peers, and the third one costs a serialiser.
+[`examples/scene2json.rs`](crates/ll2-viz/examples/scene2json.rs) is that
+serialiser — it writes the styled shapes, both palettes and the layer table as
+JSON, which is enough to draw the map somewhere this repository has never heard
+of.
 
 The viewer differs from `lanelet2.io.load` in one deliberate way. It has no origin
 to be given, so it takes the median of the file's own latitudes and longitudes and

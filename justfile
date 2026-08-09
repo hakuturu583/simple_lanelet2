@@ -97,6 +97,10 @@ web-serve:
 svg MAP OUT="map.svg":
     cargo run --release -p ll2-viz --example osm2svg -- {{MAP}} {{OUT}}
 
+# A map to a scene as JSON, for a renderer that is not in this repository.
+scene MAP OUT="scene.json" NAME="map":
+    cargo run --release -p ll2-viz --example scene2json -- {{MAP}} {{OUT}} {{NAME}}
+
 fmt:
     cargo fmt --all
 
