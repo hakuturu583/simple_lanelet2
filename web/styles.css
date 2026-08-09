@@ -163,18 +163,11 @@ pre {
   background: var(--canvas);
 }
 
-#canvas {
+/* The viewer mounts its own shadow root in here and sizes itself from this box;
+   the page contributes nothing but the box. */
+.viewer {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  touch-action: none;
-  cursor: grab;
-}
-
-#canvas.panning {
-  cursor: grabbing;
 }
 
 /* --- controls ------------------------------------------------------------ */
@@ -412,76 +405,9 @@ body.dragging .dropzone svg {
   color: var(--accent);
 }
 
-.controls {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
-  display: grid;
-  gap: 6px;
-  justify-items: stretch;
-}
-
-.icon-button {
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  color: var(--text);
-  font: inherit;
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  backdrop-filter: blur(6px);
-}
-
-.icon-button.wide {
-  width: 34px;
-  font-size: 12px;
-}
-
-.icon-button:hover {
-  border-color: var(--accent);
-}
-
-.scalebar {
-  position: absolute;
-  left: 14px;
-  bottom: 14px;
-  color: var(--muted);
-  font-size: 11px;
-  pointer-events: none;
-}
-
-.scalebar-line {
-  border: 1px solid currentColor;
-  border-top: none;
-  height: 7px;
-  min-width: 40px;
-  position: relative;
-}
-
-.scalebar-line span {
-  position: absolute;
-  left: 0;
-  bottom: 9px;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.tooltip {
-  position: absolute;
-  z-index: 5;
-  padding: 5px 9px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  color: var(--text);
-  font-size: 12px;
-  pointer-events: none;
-  max-width: 22rem;
-  backdrop-filter: blur(6px);
-}
+/* The one overlay the page still owns. Pan, zoom, the scale bar and the tooltip
+   moved into the viewer's shadow root when it became embeddable; this did not,
+   because "fetching the example map" is the demo's business, not the viewer's. */
 
 .overlay-status {
   position: absolute;

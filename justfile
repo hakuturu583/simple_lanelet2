@@ -83,6 +83,11 @@ web:
     tools/build_web.sh
     node tools/smoke_web.mjs
 
+# The same, plus a real browser driving the demo, the iframe and the element.
+# Needs Playwright; without it the script says so and passes.
+web-test: web
+    node tools/browser_test.mjs
+
 # Build it and serve it; ES modules and fetch both need a real origin.
 web-serve:
     tools/build_web.sh

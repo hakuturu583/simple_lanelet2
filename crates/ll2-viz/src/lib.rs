@@ -1,7 +1,11 @@
 //! Visualising Lanelet2 maps.
 //!
 //! Lanelet2 describes a road network; it says nothing about how to draw one. This
-//! crate is that missing half, in three pieces that stack:
+//! crate is that missing half — and because upstream has no viewer, none of it is
+//! part of this project's drop-in compatibility claim. There is no counterpart to
+//! be byte-identical to, no Python binding, and nothing in the wheel imports it.
+//!
+//! Three pieces that stack:
 //!
 //! * [`source`] reads a `.osm` file — from a string, so it works with no filesystem
 //!   — and works out for itself how to turn its nodes into metres.

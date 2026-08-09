@@ -18,3 +18,5 @@ tests/oracle/log/
 /tests/upstream-fresh/
 /web/pkg
 /web/sample
+/node_modules
+/package-lock.json

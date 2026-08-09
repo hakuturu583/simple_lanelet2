@@ -1,0 +1,1274 @@
+// A Lanelet2 map viewer you can drop into someone else's application.
+//
+// This file is the product; `app.js` next to it is one consumer, and `embed.js` is
+// another. It is written to survive being mounted inside a host it knows nothing
+// about — a Foxglove panel, a wandb HTML block, a notebook output cell, a docs page:
+//
+//   * everything lives under a shadow root, so no stylesheet of the host's can
+//     reach in and nothing of ours leaks out. There is no CSS file to include.
+//   * it sizes itself from its container with a ResizeObserver, not from the
+//     window, because a panel is resized by its host far more often than a window is.
+//   * it never touches `document.body`, `window.location`, the page title, or any
+//     other global — several viewers can share a page.
+//   * `destroy()` really releases everything, including the Rust-side objects,
+//     because a panel is unmounted and remounted as a matter of course.
+//
+// The rendering itself: shapes arrive from Rust as flat typed arrays and are
+// grouped by (layer, style) into one `Path2D` each, once per load. A frame sets the
+// canvas transform and issues one fill/stroke per group — a few dozen calls — no
+// matter how large the map is. Stroke widths are divided by the scale so a lane
+// marking stays one pixel wide at every zoom.
+//
+//   import { LaneletViewer } from './viewer.js';
+//   const viewer = new LaneletViewer(element, { theme: 'auto' });
+//   viewer.addEventListener('load', (event) => console.log(event.detail.stats));
+//   await viewer.loadOsm(await file.text());
+//
+// or, declaratively:
+//
+//   <script type="module" src="./viewer.js"></script>
+//   <lanelet2-viewer src="map.osm" theme="auto"></lanelet2-viewer>
+
+import init, { load_osm, SceneOptions, version } from './pkg/ll2_wasm.js';
+
+/// The layer keys, in the order the Rust side indexes them. Anything that toggles
+/// layers — a host application included — works in these terms.
+export const LAYERS = [
+  { key: 'lanelet_fill', label: 'Lanelets' },
+  { key: 'area', label: 'Areas' },
+  { key: 'polygon', label: 'Polygons' },
+  { key: 'bound', label: 'Boundaries' },
+  { key: 'regulatory', label: 'Regulatory elements' },
+  { key: 'centerline', label: 'Centerlines' },
+  { key: 'direction', label: 'Driving direction' },
+  { key: 'point', label: 'Points' },
+];
+
+/// Which layers a viewer shows when nobody says otherwise.
+export const DEFAULT_LAYERS = [
+  'lanelet_fill',
+  'area',
+  'polygon',
+  'bound',
+  'regulatory',
+  'direction',
+  'point',
+];
+
+/// A traffic lane, in metres. Only ever used to turn the zoom into a statement
+/// about how much of the map a viewer can actually make out.
+const LANE_WIDTH = 3.5;
+
+let wasmPromise = null;
+
+/**
+ * Loads and instantiates the WebAssembly module. Idempotent, and safe to call
+ * before or in parallel with constructing viewers — they await it themselves.
+ *
+ * @param {{wasmUrl?: string|URL|Response|ArrayBuffer}} [options] where to fetch the
+ *   `.wasm` from, when it is not the `pkg/` directory next to this module. Hosts
+ *   that bundle their own assets will need this.
+ * @returns {Promise<{version: string}>}
+ */
+export function initWasm(options = {}) {
+  if (!wasmPromise) {
+    wasmPromise = init(options.wasmUrl ? { module_or_path: options.wasmUrl } : undefined)
+      .then(() => ({ version: version() }))
+      .catch((error) => {
+        // A failed instantiation must not be cached as a resolved promise, or every
+        // later viewer on the page silently renders nothing.
+        wasmPromise = null;
+        throw error;
+      });
+  }
+  return wasmPromise;
+}
+
+const STYLE_TEXT = `
+:host { display: block; position: relative; contain: layout paint; }
+.root { position: absolute; inset: 0; overflow: hidden; }
+canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+canvas.interactive { cursor: grab; }
+canvas.panning { cursor: grabbing; }
+.tooltip {
+  position: absolute; z-index: 3; padding: 4px 8px; border-radius: 6px;
+  border: 1px solid var(--ll2-border, rgba(128,140,160,0.35));
+  background: var(--ll2-surface, rgba(22,26,34,0.94));
+  color: var(--ll2-text, #e6eaf0);
+  font: 12px/1.35 ui-sans-serif, system-ui, sans-serif;
+  pointer-events: none; max-width: 22rem; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.controls { position: absolute; right: 10px; bottom: 10px; z-index: 2; display: grid; gap: 5px; }
+.controls button {
+  width: 30px; height: 30px; padding: 0; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--ll2-border, rgba(128,140,160,0.35));
+  background: var(--ll2-surface, rgba(22,26,34,0.88));
+  color: var(--ll2-text, #e6eaf0);
+  font: 15px/1 ui-sans-serif, system-ui, sans-serif;
+}
+.controls button.small { font-size: 11px; }
+.controls button:hover { border-color: var(--ll2-accent, #4dd0e1); }
+.scalebar {
+  position: absolute; left: 10px; bottom: 10px; z-index: 2; pointer-events: none;
+  color: var(--ll2-muted, #98a2b3);
+  font: 11px/1 ui-sans-serif, system-ui, sans-serif;
+}
+.scalebar .bar { height: 6px; min-width: 30px; border: 1px solid currentColor; border-top: none; }
+.scalebar .label { display: block; margin-bottom: 3px; font-variant-numeric: tabular-nums; }
+[hidden] { display: none !important; }
+`;
+
+/// The light and dark chrome colours, which have to match the Rust palette closely
+/// enough that the overlays do not look bolted on.
+const CHROME = {
+  dark: {
+    '--ll2-surface': 'rgba(22, 26, 34, 0.9)',
+    '--ll2-border': 'rgba(120, 132, 152, 0.35)',
+    '--ll2-text': '#e6eaf0',
+    '--ll2-muted': '#98a2b3',
+    '--ll2-accent': '#4dd0e1',
+    highlight: '#ffd74a',
+  },
+  light: {
+    '--ll2-surface': 'rgba(255, 255, 255, 0.94)',
+    '--ll2-border': 'rgba(90, 100, 120, 0.3)',
+    '--ll2-text': '#1b1f27',
+    '--ll2-muted': '#5c6675',
+    '--ll2-accent': '#0b8499',
+    highlight: '#d98b00',
+  },
+};
+
+/**
+ * A map viewer bound to one container element.
+ *
+ * Dispatches, as `CustomEvent`s:
+ *
+ * | event | `detail` |
+ * | --- | --- |
+ * | `loadstart` | `{name}` |
+ * | `load` | `{name, stats, errors, coordinateSource, projection, origin, bounds}` |
+ * | `error` | `{message}` |
+ * | `hover` | `{id, label, layer} \| null` |
+ * | `select` | `{id, label, layer} \| null` |
+ * | `viewchange` | `{x, y, scale}` in map coordinates |
+ */
+export class LaneletViewer extends EventTarget {
+  /**
+   * @param {HTMLElement} container mounted into, and sized from. Anything with a
+   *   layout box will do; the viewer positions itself absolutely inside it.
+   * @param {object} [options]
+   */
+  constructor(container, options = {}) {
+    super();
+    if (!container) throw new Error('LaneletViewer needs a container element');
+
+    this.options = {
+      theme: 'dark', // 'dark' | 'light' | 'auto'
+      coordinates: 'auto', // 'auto' | 'projected' | 'local'
+      layers: DEFAULT_LAYERS.slice(),
+      drawPoints: false,
+      controls: true,
+      tooltip: true,
+      scalebar: true,
+      interactive: true,
+      /// `null` uses the theme's own colour; a CSS colour overrides it, and
+      /// `'transparent'` lets a host's own background show through.
+      background: null,
+      wasmUrl: undefined,
+      ...options,
+    };
+
+    this.container = container;
+    this._visible = new Set(this.options.layers);
+    this._groups = [];
+    this._geometry = null;
+    this._scene = null;
+    this._handle = null;
+    this._index = null;
+    this._view = { scale: 1, tx: 0, ty: 0 };
+    this._hover = -1;
+    this._pinned = null;
+    this._highlight = new Set();
+    this._frame = 0;
+    this._destroyed = false;
+    this._lastText = null;
+    this._name = null;
+    this.stats = null;
+    this.legend = [];
+
+    this._buildDom();
+    this._observeSize();
+    this._observeTheme();
+    this._installPointerHandlers();
+
+    this.ready = initWasm({ wasmUrl: this.options.wasmUrl }).catch((error) => {
+      this._fail(`The WebAssembly module failed to load: ${message(error)}`);
+      throw error;
+    });
+  }
+
+  // --- lifecycle -------------------------------------------------------------
+
+  _buildDom() {
+    // A shadow root on a wrapper we own, rather than on the container: the caller
+    // may already have put children in there, and a shadow root would hide them.
+    this._host = document.createElement('div');
+    this._host.style.cssText = 'position:absolute;inset:0;';
+    if (getComputedStyle(this.container).position === 'static') {
+      this.container.style.position = 'relative';
+    }
+    this.container.append(this._host);
+    this._shadow = this._host.attachShadow({ mode: 'open' });
+
+    const style = document.createElement('style');
+    style.textContent = STYLE_TEXT;
+    this._root = document.createElement('div');
+    this._root.className = 'root';
+
+    this._canvas = document.createElement('canvas');
+    this._context = this._canvas.getContext('2d', { alpha: true });
+
+    this._tooltip = document.createElement('div');
+    this._tooltip.className = 'tooltip';
+    this._tooltip.hidden = true;
+
+    this._scalebar = document.createElement('div');
+    this._scalebar.className = 'scalebar';
+    this._scalebar.innerHTML = '<span class="label"></span><div class="bar"></div>';
+    this._scalebarLabel = this._scalebar.querySelector('.label');
+    this._scalebarBar = this._scalebar.querySelector('.bar');
+    this._scalebar.hidden = true;
+
+    this._controls = document.createElement('div');
+    this._controls.className = 'controls';
+    this._controls.append(
+      this._controlButton('+', 'Zoom in', () => this.zoomBy(1.4)),
+      this._controlButton('−', 'Zoom out', () => this.zoomBy(1 / 1.4)),
+      this._controlButton('Fit', 'Fit the map to the view', () => this.fit(), 'small'),
+    );
+
+    this._root.append(this._canvas, this._scalebar, this._controls, this._tooltip);
+    this._shadow.append(style, this._root);
+
+    this._applyChrome();
+    this._applyChromeVisibility();
+  }
+
+  _controlButton(text, title, onClick, className = '') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = text;
+    button.title = title;
+    button.className = className;
+    button.addEventListener('click', onClick);
+    return button;
+  }
+
+  _applyChromeVisibility() {
+    this._controls.hidden = !this.options.controls || !this.options.interactive;
+    this._scalebar.hidden = !this.options.scalebar || !this._geometry;
+    this._canvas.classList.toggle('interactive', this.options.interactive);
+    if (!this.options.tooltip) this._tooltip.hidden = true;
+  }
+
+  _observeSize() {
+    // A panel is resized by its host constantly and by the window almost never,
+    // which is exactly the wrong way round for a `resize` listener.
+    this._resizeObserver = new ResizeObserver(() => {
+      this._resize();
+      this._draw();
+    });
+    this._resizeObserver.observe(this.container);
+    this._resize();
+  }
+
+  _observeTheme() {
+    if (typeof matchMedia !== 'function') return;
+    this._media = matchMedia('(prefers-color-scheme: dark)');
+    this._onMediaChange = () => {
+      if (this.options.theme === 'auto') this._rebuild({ keepView: true });
+    };
+    // Safari before 14 has only the deprecated form.
+    if (this._media.addEventListener) this._media.addEventListener('change', this._onMediaChange);
+    else if (this._media.addListener) this._media.addListener(this._onMediaChange);
+  }
+
+  /** Releases the DOM, the observers and the Rust-side objects. */
+  destroy() {
+    if (this._destroyed) return;
+    this._destroyed = true;
+    if (this._frame) cancelAnimationFrame(this._frame);
+    this._resizeObserver?.disconnect();
+    if (this._media) {
+      if (this._media.removeEventListener) this._media.removeEventListener('change', this._onMediaChange);
+      else if (this._media.removeListener) this._media.removeListener(this._onMediaChange);
+    }
+    this._freeScene();
+    this._freeHandle();
+    this._host.remove();
+    this._groups = [];
+    this._geometry = null;
+    this._index = null;
+    this._lastText = null;
+  }
+
+  _freeScene() {
+    try {
+      this._scene?.free();
+    } catch {
+      /* already freed */
+    }
+    this._scene = null;
+  }
+
+  _freeHandle() {
+    try {
+      this._handle?.free();
+    } catch {
+      /* already freed */
+    }
+    this._handle = null;
+  }
+
+  // --- loading ---------------------------------------------------------------
+
+  /**
+   * Parses and displays OSM XML.
+   *
+   * @param {string} text the file's contents
+   * @param {{name?: string, coordinates?: string, keepView?: boolean}} [options]
+   * @returns {Promise<object>} the same detail the `load` event carries
+   */
+  async loadOsm(text, options = {}) {
+    await this.ready;
+    if (this._destroyed) return null;
+    const name = options.name ?? this._name ?? 'map';
+    this._name = name;
+    this._emit('loadstart', { name });
+    // Yield once, so a host that paints a spinner on `loadstart` gets to.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    if (options.coordinates) this.options.coordinates = options.coordinates;
+    let handle;
+    try {
+      handle = load_osm(text, this.options.coordinates);
+    } catch (error) {
+      this._fail(message(error));
+      return null;
+    }
+    this._freeHandle();
+    this._handle = handle;
+    this._lastText = text;
+
+    this._rebuild({ keepView: options.keepView === true });
+
+    const detail = {
+      name,
+      stats: JSON.parse(handle.stats_json()),
+      errors: handle.errors(),
+      coordinateSource: handle.coordinate_source(),
+      projection: handle.projection(),
+      origin: { lat: handle.origin_lat(), lon: handle.origin_lon() },
+      bounds: Array.from(this._scene.bounds()),
+    };
+    this.stats = detail.stats;
+    this._emit('load', detail);
+    return detail;
+  }
+
+  /**
+   * Fetches a map and displays it. The URL must be readable by this page —
+   * cross-origin means the server has to send CORS headers.
+   */
+  async loadUrl(url, options = {}) {
+    await this.ready;
+    const name = options.name ?? basename(String(url));
+    this._emit('loadstart', { name });
+    let text;
+    try {
+      const response = await fetch(url, { credentials: options.credentials ?? 'same-origin' });
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      text = await response.text();
+    } catch (error) {
+      this._fail(`Could not fetch ${url}: ${message(error)}`);
+      return null;
+    }
+    return this.loadOsm(text, { ...options, name });
+  }
+
+  /** Reads a `File` or `Blob` — what a drop handler or an `<input type=file>` has. */
+  async loadFile(file, options = {}) {
+    const name = options.name ?? (file.name ? basename(file.name) : 'map');
+    return this.loadOsm(await file.text(), { ...options, name });
+  }
+
+  /** Discards the current map, leaving an empty viewer. */
+  clear() {
+    this._freeScene();
+    this._freeHandle();
+    this._groups = [];
+    this._geometry = null;
+    this._index = null;
+    this._lastText = null;
+    this.stats = null;
+    this.legend = [];
+    this._hover = -1;
+    this._pinned = null;
+    this._scalebar.hidden = true;
+    this._tooltip.hidden = true;
+    this._draw();
+  }
+
+  // --- options ---------------------------------------------------------------
+
+  /** `'dark'`, `'light'`, or `'auto'` to follow `prefers-color-scheme`. */
+  setTheme(theme) {
+    if (!['dark', 'light', 'auto'].includes(theme)) return;
+    this.options.theme = theme;
+    this._applyChrome();
+    if (this._handle) this._rebuild({ keepView: true });
+    else this._draw();
+  }
+
+  /** The theme actually in use, with `'auto'` resolved. */
+  get theme() {
+    if (this.options.theme !== 'auto') return this.options.theme;
+    return this._media && this._media.matches === false ? 'light' : 'dark';
+  }
+
+  /**
+   * @param {string|string[]|Record<string, boolean>} layers a key, a list of keys
+   *   to make the whole visible set, or a partial map of key to visibility.
+   */
+  setLayers(layers) {
+    if (typeof layers === 'string') layers = [layers];
+    if (Array.isArray(layers)) {
+      this._visible = new Set(layers.filter((key) => LAYERS.some((l) => l.key === key)));
+    } else {
+      for (const [key, visible] of Object.entries(layers ?? {})) {
+        if (!LAYERS.some((l) => l.key === key)) continue;
+        if (visible) this._visible.add(key);
+        else this._visible.delete(key);
+      }
+    }
+    this.options.layers = [...this._visible];
+    this._hover = -1;
+    this._tooltip.hidden = true;
+    this._draw();
+  }
+
+  /** `[{key, label, visible, count}]`, with counts once a map is loaded. */
+  getLayers() {
+    return LAYERS.map((layer) => ({
+      ...layer,
+      visible: this._visible.has(layer.key),
+      count: this._layerCounts?.get(layer.key) ?? 0,
+    }));
+  }
+
+  /**
+   * Individual map points are off by default: a city map has millions of them, and
+   * unlike every other layer this one really does rebuild the scene.
+   */
+  setDrawPoints(enabled) {
+    this.options.drawPoints = Boolean(enabled);
+    if (this._handle) this._rebuild({ keepView: true });
+  }
+
+  /** `'auto'`, `'projected'` or `'local'`. Re-parses the file that is loaded. */
+  async setCoordinates(source) {
+    this.options.coordinates = source;
+    if (this._lastText) await this.loadOsm(this._lastText, { keepView: false });
+  }
+
+  /** A CSS colour, `'transparent'` to show the host's own background, or `null`. */
+  setBackground(background) {
+    this.options.background = background;
+    this._draw();
+  }
+
+  /**
+   * The colour the canvas is actually painted with — the override if one was set,
+   * otherwise the theme's own. A host that wants its panel to match the map,
+   * rather than the other way round, reads this after `load`.
+   */
+  get backgroundColor() {
+    if (this.options.background) return this.options.background;
+    return this._sceneBackground ?? (this.theme === 'light' ? '#f7f8fa' : '#11141a');
+  }
+
+  /** Turns pan, zoom and picking off — for a thumbnail, or a host-driven view. */
+  setInteractive(enabled) {
+    this.options.interactive = Boolean(enabled);
+    this._applyChromeVisibility();
+    if (!enabled) {
+      this._hover = -1;
+      this._tooltip.hidden = true;
+    }
+    this._draw();
+  }
+
+  // --- view ------------------------------------------------------------------
+
+  /** Frames the whole map. */
+  fit() {
+    if (!this._geometry) return;
+    const [minX, minY, maxX, maxY] = this._geometry.bounds;
+    const spanX = Math.max(maxX - minX, 1e-6);
+    const spanY = Math.max(maxY - minY, 1e-6);
+    this._view.scale = Math.min(this._width / spanX, this._height / spanY) * 0.94;
+    // Scene coordinates are already relative to the map's centre, so centring the
+    // map is exactly centring the world origin.
+    this._view.tx = this._width / 2;
+    this._view.ty = this._height / 2;
+    this._draw();
+    this._emitViewChange();
+  }
+
+  /** `{x, y, scale}` — the map coordinate at the centre, and pixels per metre. */
+  getView() {
+    const centre = this._geometry?.centre ?? [0, 0];
+    return {
+      x: centre[0] + (this._width / 2 - this._view.tx) / this._view.scale,
+      y: centre[1] + (this._view.ty - this._height / 2) / this._view.scale,
+      scale: this._view.scale,
+    };
+  }
+
+  /** Moves the view. Coordinates are the map's own, as `getView` reports them. */
+  setView({ x, y, scale } = {}) {
+    if (!this._geometry) return;
+    const centre = this._geometry.centre;
+    if (Number.isFinite(scale)) this._view.scale = clamp(scale, 1e-4, 5000);
+    if (Number.isFinite(x)) this._view.tx = this._width / 2 - (x - centre[0]) * this._view.scale;
+    if (Number.isFinite(y)) this._view.ty = this._height / 2 + (y - centre[1]) * this._view.scale;
+    this._draw();
+    this._emitViewChange();
+  }
+
+  zoomBy(factor) {
+    this._zoomAt(this._width / 2, this._height / 2, factor);
+    this._draw();
+    this._emitViewChange();
+  }
+
+  /**
+   * Outlines the primitives with these ids — the lanelet the ego vehicle is on,
+   * a route, a search result. Pass nothing to clear.
+   */
+  setHighlight(ids) {
+    const list = ids === null || ids === undefined ? [] : Array.isArray(ids) ? ids : [ids];
+    this._highlight = new Set(list.map(Number));
+    this._draw();
+  }
+
+  /** Centres the view on a primitive, optionally zooming to fill `fraction`. */
+  focusOn(id, { fraction = 0.4 } = {}) {
+    const shape = this._findShape(Number(id));
+    if (shape < 0) return false;
+    const box = this._shapeBounds(shape);
+    const centre = this._geometry.centre;
+    const spanX = Math.max(box[2] - box[0], 5);
+    const spanY = Math.max(box[3] - box[1], 5);
+    const scale = Math.min(this._width / spanX, this._height / spanY) * fraction;
+    this.setView({
+      x: centre[0] + (box[0] + box[2]) / 2,
+      y: centre[1] + (box[1] + box[3]) / 2,
+      scale,
+    });
+    return true;
+  }
+
+  // --- export ----------------------------------------------------------------
+
+  /**
+   * Renders the map to a standalone SVG document, through the same Rust renderer
+   * the canvas is fed by — so what you export is what you see.
+   */
+  toSVG({ width = 1920, height = 1200 } = {}) {
+    if (!this._handle) return null;
+    const options = this._sceneOptions({ forExport: true });
+    const svg = this._handle.to_svg(options, width, height);
+    options.free();
+    return svg;
+  }
+
+  // --- scene -----------------------------------------------------------------
+
+  /**
+   * Every layer but `point` is always built and hidden here, so a toggle costs a
+   * repaint rather than a rebuild. Points are the exception because a city map has
+   * millions of them and building a shape for each is not free.
+   */
+  _sceneOptions({ forExport = false } = {}) {
+    const options = new SceneOptions();
+    options.theme = this.theme;
+    const wants = (key) => !forExport || this._visible.has(key);
+    options.lanelet_fill = wants('lanelet_fill');
+    options.areas = wants('area');
+    options.polygons = wants('polygon');
+    options.bounds = wants('bound');
+    options.regulatory = wants('regulatory');
+    options.centerlines = wants('centerline');
+    options.direction_arrows = wants('direction');
+    options.points = this.options.drawPoints && wants('point');
+    return options;
+  }
+
+  _rebuild({ keepView }) {
+    const options = this._sceneOptions();
+    const data = this._handle.build_scene(options);
+    options.free();
+    this._freeScene();
+    this._scene = data;
+
+    const styles = JSON.parse(data.styles_json());
+    const geometry = {
+      coords: data.coords(),
+      offsets: data.offsets(),
+      styleOf: data.styles(),
+      layerOf: data.layers(),
+      closed: data.closed(),
+      ids: data.ids(),
+      bounds: Array.from(data.bounds()),
+      centre: [data.centre_x(), data.centre_y()],
+      count: data.shape_count(),
+      styles,
+    };
+    this._geometry = geometry;
+    this._sceneBackground = data.background();
+    this._groups = buildGroups(geometry);
+    this._index = buildIndex(geometry);
+    this._layerCounts = countLayers(geometry);
+    this.legend = buildLegend(geometry);
+    this._hover = -1;
+    this._pinned = null;
+
+    this._applyChromeVisibility();
+    if (!keepView) this.fit();
+    else this._draw();
+  }
+
+  // --- drawing ---------------------------------------------------------------
+
+  _resize() {
+    const rect = this.container.getBoundingClientRect();
+    this._width = Math.max(1, rect.width);
+    this._height = Math.max(1, rect.height);
+    this._ratio = Math.min(globalThis.devicePixelRatio || 1, 2);
+    this._canvas.width = Math.round(this._width * this._ratio);
+    this._canvas.height = Math.round(this._height * this._ratio);
+  }
+
+  _draw() {
+    if (this._frame || this._destroyed) return;
+    this._frame = requestAnimationFrame(() => {
+      this._frame = 0;
+      if (!this._destroyed) this._render();
+    });
+  }
+
+  _render() {
+    const context = this._context;
+    const { scale, tx, ty } = this._view;
+    const ratio = this._ratio || 1;
+
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, this._canvas.width, this._canvas.height);
+    const background = this.options.background ?? this._sceneBackground ?? '#11141a';
+    if (background !== 'transparent') {
+      context.fillStyle = background;
+      context.fillRect(0, 0, this._canvas.width, this._canvas.height);
+    }
+    if (!this._groups.length) {
+      this._updateScalebar();
+      return;
+    }
+
+    // The y flip lives in the transform, so nothing downstream has to remember it.
+    context.setTransform(scale * ratio, 0, 0, -scale * ratio, tx * ratio, ty * ratio);
+    context.lineJoin = 'round';
+    context.lineCap = 'round';
+
+    // Two pieces of detail are dropped when a lane is only a few pixels across.
+    // Both are honest: at that zoom a dash pattern is a grey smear over lines that
+    // already overlap, and an arrowhead is a speck. Both are also, measurably, most
+    // of the frame — dashing a city's worth of lane markings costs more than every
+    // fill and solid stroke in the map put together.
+    const laneWidthInPixels = scale * LANE_WIDTH;
+    const dashesAreLegible = laneWidthInPixels >= 5;
+    const arrowsAreLegible = laneWidthInPixels >= 4;
+
+    for (const group of this._groups) {
+      if (!this._visible.has(group.layerKey)) continue;
+      if (group.layerKey === 'direction' && !arrowsAreLegible) continue;
+      const style = group.style;
+      if (style.fill) {
+        context.globalAlpha = style.fillOpacity;
+        context.fillStyle = style.fill;
+        context.fill(group.path);
+      }
+      if (style.stroke) {
+        context.globalAlpha = style.strokeOpacity;
+        context.strokeStyle = style.stroke;
+        // Widths and dashes are specified in pixels; dividing by the scale is what
+        // keeps them that way through the transform.
+        context.lineWidth = style.strokeWidth / scale;
+        const dash = style.dash && dashesAreLegible;
+        context.setLineDash(dash ? style.dash.map((value) => value / scale) : []);
+        context.stroke(group.path);
+      }
+    }
+    context.setLineDash([]);
+    context.globalAlpha = 1;
+
+    this._drawEmphasis();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    this._updateScalebar();
+  }
+
+  _drawEmphasis() {
+    const context = this._context;
+    const geometry = this._geometry;
+    const colour = CHROME[this.theme].highlight;
+    const emphasised = [];
+    if (this._highlight.size) {
+      for (let shape = 0; shape < geometry.count; shape += 1) {
+        if (this._highlight.has(geometry.ids[shape])) emphasised.push(shape);
+      }
+    }
+    const focused = this._pinned ?? this._hover;
+    if (focused >= 0) emphasised.push(focused);
+    if (!emphasised.length) return;
+
+    const path = new Path2D();
+    for (const shape of emphasised) {
+      appendShape(path, geometry.coords, geometry.offsets[shape], geometry.offsets[shape + 1], geometry.closed[shape] === 1);
+    }
+    context.globalAlpha = 1;
+    context.strokeStyle = colour;
+    context.lineWidth = 3 / this._view.scale;
+    context.setLineDash([]);
+    context.stroke(path);
+  }
+
+  _updateScalebar() {
+    if (!this.options.scalebar || !this._geometry) {
+      this._scalebar.hidden = true;
+      return;
+    }
+    this._scalebar.hidden = false;
+    const target = Math.min(160, this._width * 0.3);
+    const metres = niceRound(target / this._view.scale);
+    this._scalebarBar.style.width = `${metres * this._view.scale}px`;
+    this._scalebarLabel.textContent =
+      metres >= 1000 ? `${(metres / 1000).toLocaleString()} km` : `${metres.toLocaleString()} m`;
+  }
+
+  _applyChrome() {
+    for (const [name, value] of Object.entries(CHROME[this.theme])) {
+      if (name.startsWith('--')) this._host.style.setProperty(name, value);
+    }
+  }
+
+  // --- interaction -----------------------------------------------------------
+
+  _installPointerHandlers() {
+    const canvas = this._canvas;
+    const pointers = new Map();
+    let pinch = null;
+    let dragged = false;
+
+    canvas.addEventListener('pointerdown', (event) => {
+      if (!this.options.interactive) return;
+      canvas.setPointerCapture(event.pointerId);
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      dragged = false;
+      if (pointers.size === 2) pinch = this._pinchState(pointers);
+      canvas.classList.add('panning');
+      this._tooltip.hidden = true;
+    });
+
+    canvas.addEventListener('pointermove', (event) => {
+      if (!this.options.interactive) return;
+      const previous = pointers.get(event.pointerId);
+      if (!previous) {
+        this._hoverAt(event);
+        return;
+      }
+      const dx = event.clientX - previous.x;
+      const dy = event.clientY - previous.y;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (Math.abs(dx) + Math.abs(dy) > 1) dragged = true;
+
+      if (pointers.size >= 2) {
+        const now = this._pinchState(pointers);
+        if (pinch && now.distance > 0 && pinch.distance > 0) {
+          this._zoomAt(now.x, now.y, now.distance / pinch.distance);
+          this._view.tx += now.x - pinch.x;
+          this._view.ty += now.y - pinch.y;
+          this._draw();
+        }
+        pinch = now;
+        return;
+      }
+      this._view.tx += dx;
+      this._view.ty += dy;
+      this._draw();
+      this._emitViewChange();
+    });
+
+    const release = (event) => {
+      const wasDown = pointers.delete(event.pointerId);
+      if (pointers.size < 2) pinch = null;
+      if (pointers.size === 0) canvas.classList.remove('panning');
+      if (!this.options.interactive) return;
+      if (wasDown && !dragged) {
+        // A click that did not pan is a selection.
+        this._hoverAt(event);
+        this._pinned = this._hover >= 0 ? this._hover : null;
+        this._emit('select', this._describeShape(this._pinned));
+        this._draw();
+      }
+    };
+    canvas.addEventListener('pointerup', release);
+    canvas.addEventListener('pointercancel', release);
+    canvas.addEventListener('pointerleave', () => {
+      if (this._hover !== -1) {
+        this._hover = -1;
+        this._emit('hover', null);
+        this._draw();
+      }
+      this._tooltip.hidden = true;
+    });
+
+    canvas.addEventListener(
+      'wheel',
+      (event) => {
+        if (!this.options.interactive) return;
+        event.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        // Trackpads report pixels and mice report lines; normalising keeps one
+        // notch of a wheel worth about the same as a short two-finger swipe.
+        const step = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+        this._zoomAt(event.clientX - rect.left, event.clientY - rect.top, Math.exp(-step * 0.0016));
+        this._draw();
+        this._emitViewChange();
+      },
+      { passive: false },
+    );
+  }
+
+  _pinchState(pointers) {
+    const [a, b] = [...pointers.values()];
+    const rect = this._canvas.getBoundingClientRect();
+    return {
+      x: (a.x + b.x) / 2 - rect.left,
+      y: (a.y + b.y) / 2 - rect.top,
+      distance: Math.hypot(a.x - b.x, a.y - b.y),
+    };
+  }
+
+  /// Scales about a screen point, so whatever is under the cursor stays under it.
+  _zoomAt(screenX, screenY, factor) {
+    const before = this._view.scale;
+    const after = clamp(before * factor, 1e-4, 5000);
+    if (after === before) return;
+    this._view.tx = screenX - ((screenX - this._view.tx) * after) / before;
+    this._view.ty = screenY - ((screenY - this._view.ty) * after) / before;
+    this._view.scale = after;
+  }
+
+  _hoverAt(event) {
+    if (!this._geometry) return;
+    const rect = this._canvas.getBoundingClientRect();
+    const screenX = event.clientX - rect.left;
+    const screenY = event.clientY - rect.top;
+    const worldX = (screenX - this._view.tx) / this._view.scale;
+    const worldY = (this._view.ty - screenY) / this._view.scale;
+
+    const found = this._pick(worldX, worldY, 6 / this._view.scale);
+    if (found !== this._hover) {
+      this._hover = found;
+      this._emit('hover', this._describeShape(found >= 0 ? found : null));
+      this._draw();
+    }
+    if (found < 0 || !this.options.tooltip) {
+      this._tooltip.hidden = true;
+      return;
+    }
+    this._showTooltip(this._scene.label(found), screenX, screenY);
+  }
+
+  _showTooltip(text, x, y) {
+    if (!text) {
+      this._tooltip.hidden = true;
+      return;
+    }
+    this._tooltip.textContent = text;
+    this._tooltip.hidden = false;
+    const width = this._tooltip.offsetWidth;
+    const height = this._tooltip.offsetHeight;
+    this._tooltip.style.left = `${clamp(x + 14, 4, Math.max(4, this._width - width - 4))}px`;
+    this._tooltip.style.top = `${clamp(y + 14, 4, Math.max(4, this._height - height - 4))}px`;
+  }
+
+  _describeShape(shape) {
+    if (shape === null || shape === undefined || shape < 0 || !this._geometry) return null;
+    return {
+      id: this._geometry.ids[shape],
+      label: this._scene.label(shape),
+      layer: LAYERS[this._geometry.layerOf[shape]].key,
+    };
+  }
+
+  _findShape(id) {
+    if (!this._geometry) return -1;
+    for (let shape = 0; shape < this._geometry.count; shape += 1) {
+      if (this._geometry.ids[shape] === id) return shape;
+    }
+    return -1;
+  }
+
+  _shapeBounds(shape) {
+    const { coords, offsets } = this._geometry;
+    let box = [Infinity, Infinity, -Infinity, -Infinity];
+    for (let vertex = offsets[shape]; vertex < offsets[shape + 1]; vertex += 1) {
+      const x = coords[vertex * 2];
+      const y = coords[vertex * 2 + 1];
+      box = [Math.min(box[0], x), Math.min(box[1], y), Math.max(box[2], x), Math.max(box[3], y)];
+    }
+    return box;
+  }
+
+  _pick(x, y, tolerance) {
+    const index = this._index;
+    const geometry = this._geometry;
+    if (!index || !geometry) return -1;
+
+    const column = clamp(Math.floor((x - index.originX) / index.cell), 0, index.cols - 1);
+    const row = clamp(Math.floor((y - index.originY) / index.cell), 0, index.rows - 1);
+    const candidates = [];
+    for (let dc = -1; dc <= 1; dc += 1) {
+      for (let dr = -1; dr <= 1; dr += 1) {
+        if (column + dc < 0 || column + dc >= index.cols) continue;
+        if (row + dr < 0 || row + dr >= index.rows) continue;
+        const bucket = index.buckets.get((row + dr) * index.cols + (column + dc));
+        if (bucket) candidates.push(...bucket);
+      }
+    }
+    candidates.push(...index.large);
+    if (!candidates.length) return -1;
+
+    // Topmost wins, which is what "the thing you are pointing at" means.
+    const z = (shape) => geometry.styles[geometry.styleOf[shape]].z;
+    candidates.sort((a, b) => z(b) - z(a));
+    for (const shape of candidates) {
+      if (!this._visible.has(LAYERS[geometry.layerOf[shape]].key)) continue;
+      if (hits(geometry, shape, x, y, tolerance)) return shape;
+    }
+    return -1;
+  }
+
+  // --- events ----------------------------------------------------------------
+
+  _emit(type, detail) {
+    this.dispatchEvent(new CustomEvent(type, { detail }));
+  }
+
+  _emitViewChange() {
+    if (this._geometry) this._emit('viewchange', this.getView());
+  }
+
+  _fail(text) {
+    this._emit('error', { message: text });
+  }
+}
+
+// --- geometry helpers, shared by every viewer on the page --------------------
+
+/// One `Path2D` per (layer, style) pair, in painter's order.
+function buildGroups(geometry) {
+  const byKey = new Map();
+  for (let shape = 0; shape < geometry.count; shape += 1) {
+    const style = geometry.styleOf[shape];
+    const layer = geometry.layerOf[shape];
+    const key = layer * 4096 + style;
+    let group = byKey.get(key);
+    if (group === undefined) {
+      group = {
+        layerKey: LAYERS[layer].key,
+        style: geometry.styles[style],
+        path: new Path2D(),
+      };
+      byKey.set(key, group);
+    }
+    appendShape(
+      group.path,
+      geometry.coords,
+      geometry.offsets[shape],
+      geometry.offsets[shape + 1],
+      geometry.closed[shape] === 1,
+    );
+  }
+  return [...byKey.values()].sort((a, b) => a.style.z - b.style.z);
+}
+
+function appendShape(path, coords, start, end, closed) {
+  if (end <= start) return;
+  path.moveTo(coords[start * 2], coords[start * 2 + 1]);
+  if (end - start === 1) {
+    // A lone map point. A round-capped hair of a segment draws as a dot whose size
+    // comes from the line width, and so stays constant on screen.
+    path.lineTo(coords[start * 2] + 1e-4, coords[start * 2 + 1]);
+    return;
+  }
+  for (let vertex = start + 1; vertex < end; vertex += 1) {
+    path.lineTo(coords[vertex * 2], coords[vertex * 2 + 1]);
+  }
+  if (closed) path.closePath();
+}
+
+function countLayers(geometry) {
+  const counts = new Map();
+  for (let shape = 0; shape < geometry.count; shape += 1) {
+    const key = LAYERS[geometry.layerOf[shape]].key;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+/// The styles actually used, deduplicated by label and in painter's order.
+function buildLegend(geometry) {
+  const used = new Set(geometry.styleOf);
+  const seen = new Set();
+  const items = [];
+  for (const index of [...used].sort((a, b) => geometry.styles[a].z - geometry.styles[b].z)) {
+    const style = geometry.styles[index];
+    if (!style.inLegend || seen.has(style.label)) continue;
+    seen.add(style.label);
+    items.push(style);
+  }
+  return items;
+}
+
+/// A uniform grid over shape bounding boxes.
+///
+/// Shapes that would span an unreasonable number of cells — a boundary running the
+/// length of the map — go into an always-checked list instead of being smeared
+/// across the grid, which keeps the buckets small without losing anything.
+function buildIndex(geometry) {
+  const [minX, minY, maxX, maxY] = geometry.bounds;
+  const spanX = Math.max(maxX - minX, 1e-6);
+  const spanY = Math.max(maxY - minY, 1e-6);
+  const cell = Math.max(Math.max(spanX, spanY) / 220, 0.5);
+  const cols = Math.max(1, Math.ceil(spanX / cell));
+  const rows = Math.max(1, Math.ceil(spanY / cell));
+  const buckets = new Map();
+  const large = [];
+  // Scene coordinates are centred, so the grid's own origin is the negative half
+  // span rather than the map's minimum.
+  const originX = -spanX / 2;
+  const originY = -spanY / 2;
+
+  for (let shape = 0; shape < geometry.count; shape += 1) {
+    const start = geometry.offsets[shape];
+    const end = geometry.offsets[shape + 1];
+    if (end <= start) continue;
+    let lowX = Infinity;
+    let lowY = Infinity;
+    let highX = -Infinity;
+    let highY = -Infinity;
+    for (let vertex = start; vertex < end; vertex += 1) {
+      const x = geometry.coords[vertex * 2];
+      const y = geometry.coords[vertex * 2 + 1];
+      if (x < lowX) lowX = x;
+      if (x > highX) highX = x;
+      if (y < lowY) lowY = y;
+      if (y > highY) highY = y;
+    }
+    const columnFrom = clamp(Math.floor((lowX - originX) / cell), 0, cols - 1);
+    const columnTo = clamp(Math.floor((highX - originX) / cell), 0, cols - 1);
+    const rowFrom = clamp(Math.floor((lowY - originY) / cell), 0, rows - 1);
+    const rowTo = clamp(Math.floor((highY - originY) / cell), 0, rows - 1);
+    if ((columnTo - columnFrom + 1) * (rowTo - rowFrom + 1) > 256) {
+      large.push(shape);
+      continue;
+    }
+    for (let column = columnFrom; column <= columnTo; column += 1) {
+      for (let row = rowFrom; row <= rowTo; row += 1) {
+        const key = row * cols + column;
+        const bucket = buckets.get(key);
+        if (bucket) bucket.push(shape);
+        else buckets.set(key, [shape]);
+      }
+    }
+  }
+  return { cell, cols, rows, originX, originY, buckets, large };
+}
+
+function hits(geometry, shape, x, y, tolerance) {
+  const start = geometry.offsets[shape];
+  const end = geometry.offsets[shape + 1];
+  const coords = geometry.coords;
+  if (end - start === 1) {
+    return Math.hypot(coords[start * 2] - x, coords[start * 2 + 1] - y) <= tolerance;
+  }
+  if (geometry.closed[shape] === 1 && insidePolygon(coords, start, end, x, y)) return true;
+  for (let vertex = start; vertex + 1 < end; vertex += 1) {
+    if (
+      distanceToSegment(
+        x,
+        y,
+        coords[vertex * 2],
+        coords[vertex * 2 + 1],
+        coords[vertex * 2 + 2],
+        coords[vertex * 2 + 3],
+      ) <= tolerance
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function insidePolygon(coords, start, end, x, y) {
+  let inside = false;
+  for (let i = start, j = end - 1; i < end; j = i, i += 1) {
+    const xi = coords[i * 2];
+    const yi = coords[i * 2 + 1];
+    const xj = coords[j * 2];
+    const yj = coords[j * 2 + 1];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function distanceToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return Math.hypot(px - ax, py - ay);
+  const t = clamp(((px - ax) * dx + (py - ay) * dy) / lengthSquared, 0, 1);
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/// The largest of 1, 2 or 5 times a power of ten that fits in `value`.
+function niceRound(value) {
+  if (!isFinite(value) || value <= 0) return 1;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+  for (const step of [5, 2, 1]) {
+    if (magnitude * step <= value) return magnitude * step;
+  }
+  return magnitude;
+}
+
+function clamp(value, low, high) {
+  return value < low ? low : value > high ? high : value;
+}
+
+function message(error) {
+  if (!error) return 'unknown error';
+  return error.message || String(error);
+}
+
+function basename(path) {
+  return String(path).split(/[\\/]/).pop().replace(/\.osm$/i, '') || 'map';
+}
+
+// --- the custom element ------------------------------------------------------
+
+/**
+ * `<lanelet2-viewer src="map.osm" theme="auto" layers="lanelet_fill,bound">`
+ *
+ * Attributes mirror the constructor options and are live: setting `theme` on the
+ * element changes the theme. The underlying [`LaneletViewer`] is on `.viewer`, so a
+ * host that needs the full API is one property away.
+ */
+export class Lanelet2ViewerElement extends HTMLElement {
+  static observedAttributes = ['src', 'theme', 'layers', 'coordinates', 'background', 'controls', 'tooltip', 'scalebar', 'interactive', 'points'];
+
+  connectedCallback() {
+    if (this.viewer) return;
+    this.viewer = new LaneletViewer(this, {
+      theme: this.getAttribute('theme') || 'dark',
+      coordinates: this.getAttribute('coordinates') || 'auto',
+      layers: this.hasAttribute('layers') ? splitList(this.getAttribute('layers')) : DEFAULT_LAYERS.slice(),
+      background: this.getAttribute('background'),
+      controls: flag(this, 'controls', true),
+      tooltip: flag(this, 'tooltip', true),
+      scalebar: flag(this, 'scalebar', true),
+      interactive: flag(this, 'interactive', true),
+      drawPoints: flag(this, 'points', false),
+      wasmUrl: this.getAttribute('wasm') || undefined,
+    });
+    // Re-dispatch on the element, so `addEventListener` on the tag works.
+    for (const type of ['loadstart', 'load', 'error', 'hover', 'select', 'viewchange']) {
+      this.viewer.addEventListener(type, (event) => {
+        this.dispatchEvent(new CustomEvent(type, { detail: event.detail, bubbles: false }));
+      });
+    }
+    if (this.hasAttribute('src')) this.viewer.loadUrl(this.getAttribute('src'));
+  }
+
+  disconnectedCallback() {
+    this.viewer?.destroy();
+    this.viewer = null;
+  }
+
+  attributeChangedCallback(name, previous, value) {
+    const viewer = this.viewer;
+    if (!viewer || previous === value) return;
+    switch (name) {
+      case 'src':
+        if (value) viewer.loadUrl(value);
+        else viewer.clear();
+        break;
+      case 'theme':
+        viewer.setTheme(value || 'dark');
+        break;
+      case 'layers':
+        viewer.setLayers(value === null ? DEFAULT_LAYERS.slice() : splitList(value));
+        break;
+      case 'coordinates':
+        viewer.setCoordinates(value || 'auto');
+        break;
+      case 'background':
+        viewer.setBackground(value);
+        break;
+      case 'points':
+        viewer.setDrawPoints(flag(this, 'points', false));
+        break;
+      case 'interactive':
+        viewer.setInteractive(flag(this, 'interactive', true));
+        break;
+      default:
+        viewer.options[name] = flag(this, name, true);
+        viewer._applyChromeVisibility();
+        break;
+    }
+  }
+
+  /** Convenience passthrough, so `element.loadOsm(text)` reads naturally. */
+  loadOsm(text, options) {
+    return this.viewer.loadOsm(text, options);
+  }
+}
+
+function splitList(value) {
+  return String(value ?? '')
+    .split(/[\s,]+/)
+    .filter(Boolean);
+}
+
+function flag(element, name, fallback) {
+  if (!element.hasAttribute(name)) return fallback;
+  const value = element.getAttribute(name);
+  return value !== 'false' && value !== '0' && value !== 'off';
+}
+
+if (typeof customElements !== 'undefined' && !customElements.get('lanelet2-viewer')) {
+  customElements.define('lanelet2-viewer', Lanelet2ViewerElement);
+}

@@ -27,6 +27,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Pinned so the browser cache has a key that means something. `npx playwright
+  # install` refuses to run against a mismatched library, so this is the version
+  # of both.
+  PLAYWRIGHT_VERSION: 1.56.1
 
 jobs:
   build:
@@ -76,6 +80,25 @@ jobs:
       # not something `cargo build` can tell us.
       - name: smoke-test the module in node
         run: node tools/smoke_web.mjs
+
+      # And the module instantiating is not the same as the viewer *working*: a
+      # canvas in a shadow root receiving a wheel event, the element upgrading, a
+      # resized container reaching the ResizeObserver, the postMessage protocol
+      # round-tripping. Those are the promises web/EMBEDDING.md makes to a host.
+      - name: cache the Playwright browser
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
+
+      - name: install Playwright
+        run: |
+          npm install --no-save --no-audit --no-fund "playwright@$PLAYWRIGHT_VERSION"
+          npx playwright install --with-deps chromium
+
+      - name: drive the viewer in a browser
+        run: node tools/browser_test.mjs
 
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -31,6 +31,7 @@
         </div>
       </div>
       <nav class="links">
+        <a href="./embed.html?map=./sample/mapping_example.osm&amp;theme=dark" rel="noopener">Embed</a>
         <a href="https://github.com/hakuturu583/simple_lanelet2" rel="noopener">GitHub</a>
         <a href="https://autowarefoundation.github.io/AWSIM/GettingStarted/QuickStartDemo/" rel="noopener">AWSIM</a>
       </nav>
@@ -94,8 +95,11 @@
         </section>
       </aside>
 
-      <div class="stage">
-        <canvas id="canvas"></canvas>
+      <div class="stage" id="stage">
+        <!-- Everything inside this element belongs to the viewer: it mounts a
+             shadow root of its own and sizes itself from this box. The demo's
+             chrome is deliberately outside it — see EMBEDDING.md. -->
+        <div class="viewer" id="viewer"></div>
 
         <div class="dropzone" id="dropzone">
           <div class="dropzone-inner">
@@ -124,21 +128,9 @@
         </div>
 
         <div class="overlay-status" id="status" hidden><span class="spinner"></span><span id="status-text"></span></div>
-
-        <div class="controls">
-          <button class="icon-button" id="zoom-in" type="button" title="Zoom in">+</button>
-          <button class="icon-button" id="zoom-out" type="button" title="Zoom out">&minus;</button>
-          <button class="icon-button wide" id="fit-button" type="button" title="Fit the map to the view (F)">Fit</button>
-        </div>
-
-        <div class="scalebar" id="scalebar" hidden>
-          <div class="scalebar-line"><span id="scalebar-label"></span></div>
-        </div>
-
-        <div class="tooltip" id="tooltip" hidden></div>
       </div>
     </main>
 
-    <script type="module" src="./main.js"></script>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>
