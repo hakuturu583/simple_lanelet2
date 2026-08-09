@@ -78,10 +78,11 @@ jobs:
         if: steps.wasm-bindgen-cache.outputs.cache-hit != 'true'
         run: cargo install wasm-bindgen-cli --locked --version "${{ steps.wasm-bindgen.outputs.version }}"
 
-      # Present on the runner image; the build script uses it when it is and
-      # skips it when it is not, so this is a size optimisation, not a dependency.
-      - name: install binaryen
-        run: sudo apt-get update && sudo apt-get install -y binaryen
+      # No binaryen. `apt` has 108, which is old enough to strip the externref
+      # table out of the module and call it a success -- `build_web.sh` refuses
+      # anything below 116 for that reason, so installing Ubuntu's would buy a
+      # skipped step and a minute of CI. The module ships unoptimised; it is 444 KB
+      # and compresses on the wire.
 
       - name: build web/
         run: tools/build_web.sh

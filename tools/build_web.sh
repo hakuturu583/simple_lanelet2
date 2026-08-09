@@ -37,10 +37,22 @@ wasm-bindgen \
     --out-name ll2_wasm \
     target/wasm32-unknown-unknown/release/ll2_wasm.wasm
 
-# Optional, and worth roughly a fifth of the module when it is present.
+# Optional, and worth roughly a fifth of the module -- but only from a recent
+# binaryen. Ubuntu ships 108 (2022), which does not understand the externref table
+# `wasm-bindgen` emits: it drops the table, reports success, and the module then
+# dies at instantiation with "WebAssembly.Table.grow(): failed to grow table by 4".
+# A silently broken artifact is worse than a bigger one, so an old `wasm-opt` is
+# skipped rather than trusted -- and said out loud, because a build that quietly
+# stops optimising is its own kind of surprise.
+readonly MINIMUM_BINARYEN=116
 if command -v wasm-opt >/dev/null 2>&1; then
-    echo "==> wasm-opt -Os"
-    wasm-opt -Os -o web/pkg/ll2_wasm_bg.wasm web/pkg/ll2_wasm_bg.wasm
+    binaryen=$(wasm-opt --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
+    if [[ -n "$binaryen" && "$binaryen" -ge "$MINIMUM_BINARYEN" ]]; then
+        echo "==> wasm-opt -Os (binaryen $binaryen)"
+        wasm-opt -Os -o web/pkg/ll2_wasm_bg.wasm web/pkg/ll2_wasm_bg.wasm
+    else
+        echo "==> skipping wasm-opt: binaryen ${binaryen:-unknown} predates $MINIMUM_BINARYEN"
+    fi
 fi
 
 echo "==> copying the example map"
