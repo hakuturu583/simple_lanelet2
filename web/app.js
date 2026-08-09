@@ -150,6 +150,10 @@ function showFacts(detail) {
     ['Areas', stats.areas],
     ['Regulatory elements', stats.regulatoryElements],
     ['Points', stats.points],
+    // Without this there is nothing on screen saying how big the map is, and a
+    // file whose extent is stretched by one distant fragment — which is most
+    // real maps — reads as "only part of it was drawn".
+    ['Extent', formatExtent(detail.bounds)],
     [
       'Coordinates',
       detail.coordinateSource === 'local_xy' ? 'local_x / local_y' : detail.projection.toUpperCase(),
@@ -167,6 +171,13 @@ function showFacts(detail) {
     )
     .join('');
   elements.facts.hidden = false;
+}
+
+/// `[minX, minY, maxX, maxY]` in metres, as a "width × height" a person can read.
+function formatExtent([minX, minY, maxX, maxY]) {
+  const one = (metres) =>
+    metres >= 1000 ? `${(metres / 1000).toFixed(metres >= 10000 ? 0 : 1)} km` : `${Math.round(metres)} m`;
+  return `${one(maxX - minX)} × ${one(maxY - minY)}`;
 }
 
 function showLayerToggles() {
