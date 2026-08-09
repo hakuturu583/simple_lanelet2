@@ -1,6 +1,10 @@
+# Rust
 /target
+
+# Python: the virtualenvs the harness builds, and what packaging leaves behind
 /.venv
 /.venv-ref
+/.venv-aw
 __pycache__/
 *.py[cod]
 *.so
@@ -8,15 +12,26 @@ __pycache__/
 /build
 *.egg-info/
 /.pytest_cache
+
+# Test harness output, and the oracle's fetched-and-built ROS workspace
 /tests/.out
-/.venv-aw
+/tests/upstream-fresh/
 tests/oracle/.pixi/
 tests/oracle/src/
 tests/oracle/build/
 tests/oracle/install/
 tests/oracle/log/
-/tests/upstream-fresh/
-/web/pkg
-/web/sample
-/node_modules
+
+# The map viewer. `tools/build_web.sh` writes both: `pkg` is the compiled
+# WebAssembly module and its generated glue, `sample` a copy of the example map.
+/web/pkg/
+/web/sample/
+
+# Playwright, which `tools/browser_test.mjs` asks for and `npm install --no-save`
+# leaves at the root. Unanchored, so a nested one is caught too.
+node_modules/
 /package-lock.json
+
+# Where `just svg` and `just scene` write when nobody names an output.
+/map.svg
+/scene.json
