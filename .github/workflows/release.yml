@@ -138,6 +138,7 @@ jobs:
       proceed: ${{ steps.r.outputs.proceed }}
       ref: ${{ steps.r.outputs.ref }}
       publish: ${{ steps.r.outputs.publish }}
+      version: ${{ steps.r.outputs.version }}
     steps:
       - id: r
         env:
@@ -161,10 +162,15 @@ jobs:
             # A dry run: build the artifacts, publish nothing.
             proceed=true; publish=false; ref="$REF_NAME"
           fi
+          # The bare version, for consumers that tag with it rather than check out a
+          # ref -- the container registry, so far. Empty unless this is a release.
+          version=""
+          if [ "$publish" = true ]; then version="${ref#v}"; fi
           echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          echo "event=$EVENT ref=$ref proceed=$proceed publish=$publish"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "event=$EVENT ref=$ref proceed=$proceed publish=$publish version=$version"
 
   verify:
     name: test the tagged commit
@@ -275,3 +281,21 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+
+  # The runtime image, tagged with the release and moved to `latest`. Called from
+  # here rather than triggered by the tag, because the auto-release tag is pushed
+  # with GITHUB_TOKEN and so starts no workflow runs -- the same reason `publish`
+  # lives in this file. It hangs off `verify` rather than `publish`: the image is
+  # built from source and owes PyPI nothing, so a stalled PyPI upload should not
+  # hold it back, and `resolve` has already decided whether this is a release.
+  docker:
+    name: publish the runtime image
+    needs: [resolve, verify]
+    if: needs.resolve.outputs.publish == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker.yml
+    with:
+      ref: ${{ needs.resolve.outputs.ref }}
+      version: ${{ needs.resolve.outputs.version }}
