@@ -10,7 +10,9 @@ Signatures come from each callable's ``__text_signature__`` where PyO3 provides
 one, and fall back to ``(*args, **kwargs)`` where it does not.
 """
 
+import ast
 import inspect
+import keyword
 import pathlib
 import sys
 
@@ -39,17 +41,80 @@ from typing import Any
 '''
 
 
-def signature_of(obj, drop_self=False):
+def split_parameters(text):
+    """Split the body of a ``__text_signature__`` on its top-level commas.
+
+    Defaults are arbitrary source, so a naive ``text.split(",")`` breaks on
+    anything like ``sep=(1, 2)`` or ``byteorder=','``.
+    """
+    parts, current, depth, quote = [], [], 0, None
+    for char in text:
+        if quote is not None:
+            current.append(char)
+            if char == quote:
+                quote = None
+            continue
+        if char in "\"'":
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def parameter_name(parameter):
+    return parameter.split("=", 1)[0].split(":", 1)[0].strip().lstrip("*")
+
+
+def rename_keyword_parameters(parameters):
+    """Rename parameters that are Python keywords, e.g. ``canChangeLane(self, from, to)``.
+
+    A native binding can name a parameter ``from``; a stub that repeats the name
+    verbatim is not parseable, and one unparseable stub aborts the whole mypy
+    run for anything that imports us. Such a parameter can never be passed by
+    keyword from Python anyway, so it is renamed and everything up to it is
+    marked positional-only -- valid syntax, and a closer description of what the
+    binding actually accepts. A signature that already carries a ``/`` is left
+    to say for itself where the positional-only group ends.
+    """
+    renamed, out = -1, []
+    for index, parameter in enumerate(parameters):
+        name = parameter_name(parameter)
+        if keyword.iskeyword(name):
+            parameter = parameter.replace(name, name + "_", 1)
+            renamed = index
+        out.append(parameter)
+    if renamed >= 0 and "/" not in out:
+        out.insert(renamed + 1, "/")
+    return out
+
+
+def signature_of(obj):
     text = getattr(obj, "__text_signature__", None)
     if not text:
         return "(*args: Any, **kwargs: Any)"
-    if drop_self and text.startswith("($self, "):
-        text = "(self, " + text[len("($self, "):]
-    elif drop_self and text == "($self)":
-        text = "(self)"
-    elif drop_self and text.startswith("($self"):
-        text = "(self" + text[len("($self"):]
-    return text.replace("$self", "self").replace("$module, ", "").replace("$module", "")
+    parameters = []
+    for parameter in split_parameters(text[1:-1]):
+        if parameter == "$module":
+            continue
+        if parameter == "$self":
+            parameter = "self"
+        elif parameter == "$type":
+            # Argument Clinic marks a classmethod's class parameter `$type`, the
+            # way it marks a method's instance parameter `$self`. It reaches us
+            # through `int.from_bytes`, inherited by the enum classes.
+            parameter = "cls"
+        parameters.append(parameter)
+    return "({})".format(", ".join(rename_keyword_parameters(parameters)))
 
 
 def emit_class(name, cls, out):
@@ -69,7 +134,7 @@ def emit_class(name, cls, out):
             out.append("    def {}(self) -> Any: ...".format(member_name))
             wrote = True
         elif callable(member):
-            out.append("    def {}{} -> Any: ...".format(member_name, signature_of(member, True)))
+            out.append("    def {}{} -> Any: ...".format(member_name, signature_of(member)))
             wrote = True
         elif member is not None and not inspect.isclass(member):
             out.append("    {}: Any".format(member_name))
@@ -98,7 +163,20 @@ def stub_module(module, name, target, filename):
     out.append("")
     path = target / filename
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(out), encoding="utf-8")
+    text = "\n".join(out)
+    # Signature text is not guaranteed to be valid Python, and mypy treats an
+    # unparseable stub as fatal -- one bad line stops the type-check run of every
+    # project that imports us. Refuse to write one rather than ship it.
+    try:
+        ast.parse(text)
+    except SyntaxError as error:
+        line = text.splitlines()[error.lineno - 1] if error.lineno else ""
+        raise SystemExit(
+            "{}: generated stub does not parse at line {}: {}\n    {}".format(
+                path, error.lineno, error.msg, line.strip()
+            )
+        )
+    path.write_text(text, encoding="utf-8")
     print("wrote", path)
 
 
