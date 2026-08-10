@@ -262,10 +262,20 @@ jobs:
     permissions:
       id-token: write   # Trusted Publishing; no token in secrets.
     steps:
+      # Named explicitly rather than "everything in the run". The Docker jobs upload
+      # a `*.dockerbuild` build record each, and an unfiltered download pulls those
+      # into `dist/` too -- where at best `twine check` rejects them, and in practice
+      # the download itself fails and takes the release with it. That is what kept
+      # 1.0.4, 1.1.0 and 1.1.1 off PyPI after their tags had already been cut.
       - uses: actions/download-artifact@v4
         with:
+          pattern: wheel-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
       - run: ls -l dist
 
       # PyPI rejects an upload whose metadata names a file the archive does not
