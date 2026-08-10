@@ -147,7 +147,7 @@ dependencies = [
 
 [[package]]
 name = "ll2-viz"
-version = "1.0.4"
+version = "1.1.0"
 dependencies = [
  "ll2-core",
  "ll2-io",
@@ -156,7 +156,7 @@ dependencies = [
 
 [[package]]
 name = "ll2-wasm"
-version = "1.0.4"
+version = "1.1.0"
 dependencies = [
  "console_error_panic_hook",
  "ll2-core",

@@ -3,7 +3,7 @@
 
 The version lives in three files and the release workflow refuses to publish unless
 they match: `pyproject.toml` (what PyPI sees), `Cargo.toml`'s `[workspace.package]`
-(what the crates carry), and `Cargo.lock` (the seven local `ll2-*` entries, which
+(what the crates carry), and `Cargo.lock` (one entry per workspace crate, which
 `cargo --locked` would otherwise reject). Editing them by hand is how they drift, so
 the auto-release job calls this instead.
 
@@ -26,19 +26,30 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 CARGO_TOML = ROOT / "Cargo.toml"
 CARGO_LOCK = ROOT / "Cargo.lock"
+CRATES = ROOT / "crates"
 
-# The crates defined in this workspace. Their versions track workspace.package, so the
-# lock file's entries for exactly these names move together -- and only these, so a
-# dependency that happens to share a version number is never touched.
-LOCAL_CRATES = (
-    "ll2-core",
-    "ll2-io",
-    "ll2-matching",
-    "ll2-projection",
-    "ll2-python",
-    "ll2-routing",
-    "ll2-traffic-rules",
-)
+
+def local_crates() -> tuple[str, ...]:
+    """The crates defined in this workspace, read from `crates/*/Cargo.toml`.
+
+    Their versions track `workspace.package`, so the lock file's entries for exactly
+    these names move together -- and only these, so a dependency that happens to share
+    a version number is never touched.
+
+    Discovered rather than listed: a hardcoded list is a list that goes stale. It did.
+    `ll2-viz` and `ll2-wasm` arrived with the viewer and were not added here, so the
+    1.1.0 bump left them at 1.0.4 in `Cargo.lock` and every `cargo --locked` invocation
+    on main -- the Docker image build among them -- failed until this was noticed.
+    """
+    names = []
+    for manifest in sorted(CRATES.glob("*/Cargo.toml")):
+        match = re.search(r'(?m)^\s*name\s*=\s*"([^"]+)"', manifest.read_text())
+        if match is None:
+            raise SystemExit(f"could not find a package name in {manifest}")
+        names.append(match.group(1))
+    if not names:
+        raise SystemExit(f"found no workspace crates under {CRATES}")
+    return tuple(names)
 
 
 def current_version() -> str:
@@ -90,7 +101,7 @@ def set_cargo_toml(version: str) -> None:
 
 def set_cargo_lock(version: str) -> None:
     text = CARGO_LOCK.read_text()
-    for crate in LOCAL_CRATES:
+    for crate in local_crates():
         text, count = re.subn(
             rf'(\[\[package\]\]\nname = "{re.escape(crate)}"\nversion = )"[^"]+"',
             rf'\g<1>"{version}"',
