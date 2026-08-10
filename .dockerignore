@@ -1,0 +1,23 @@
+# Deny everything, then name what the wheel build actually reads. An allow-list
+# rather than a deny-list because the interesting failure is the silent one: a new
+# directory at the root (a fixture set, a vendored upstream checkout) landing in the
+# build context and invalidating every cached layer without anyone noticing.
+*
+
+!Cargo.toml
+!Cargo.lock
+!pyproject.toml
+!crates
+!python
+
+# maturin reads `readme` and the licence out of pyproject.toml's metadata, and fails
+# the build if the files they name are absent.
+!README.md
+!LICENSE
+!NOTICE
+
+# Re-excluded from the directories admitted above. Not `crates/**/target`: this is
+# one cargo workspace, so every crate builds into the root `target/`, which the
+# leading `*` already denies.
+**/__pycache__
+**/*.so

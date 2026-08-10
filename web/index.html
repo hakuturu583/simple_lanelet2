@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Lanelet2 map viewer — simple_lanelet2</title>
+    <meta
+      name="description"
+      content="Drag and drop a Lanelet2 .osm map to view it. Parsed and styled entirely in your browser by simple_lanelet2 compiled to WebAssembly."
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2311141a'/%3E%3Cpath d='M6 25 L14 7' stroke='%23e8ecf2' stroke-width='2.5' fill='none'/%3E%3Cpath d='M18 25 L26 7' stroke='%23e8ecf2' stroke-width='2.5' stroke-dasharray='4 3' fill='none'/%3E%3Cpath d='M12 25 L20 7' stroke='%234dd0e1' stroke-width='1.5' stroke-dasharray='3 3' fill='none'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body data-theme="dark">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M6 26 L14 6" fill="none" stroke="currentColor" stroke-width="2.4" />
+          <path d="M18 26 L26 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-dasharray="4 3" />
+          <path d="M12 26 L20 6" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="3 3" />
+        </svg>
+        <div>
+          <h1>Lanelet2 map viewer</h1>
+          <p>
+            <span id="version-label">simple_lanelet2</span> compiled to WebAssembly —
+            nothing leaves your browser
+          </p>
+        </div>
+      </div>
+      <nav class="links">
+        <a href="./embed.html?map=./sample/mapping_example.osm&amp;theme=dark" rel="noopener">Embed</a>
+        <a href="https://github.com/hakuturu583/simple_lanelet2" rel="noopener">GitHub</a>
+        <a href="https://autowarefoundation.github.io/AWSIM/GettingStarted/QuickStartDemo/" rel="noopener">AWSIM</a>
+      </nav>
+    </header>
+
+    <main class="layout">
+      <aside class="panel" id="panel">
+        <section class="block">
+          <h2>Map</h2>
+          <div class="file-actions">
+            <label class="button primary">
+              Open a .osm file
+              <input type="file" id="file-input" accept=".osm,.xml,application/xml,text/xml" hidden />
+            </label>
+            <button class="button" id="sample-button" type="button">Load the example map</button>
+          </div>
+          <p class="hint">
+            Or drop a Lanelet2 <code>.osm</code> anywhere on this page. Autoware and AWSIM
+            maps work as they are — the projection is read from the file.
+          </p>
+          <dl class="facts" id="facts" hidden></dl>
+        </section>
+
+        <section class="block" id="layers-block" hidden>
+          <h2>Layers</h2>
+          <div class="toggles" id="layer-toggles"></div>
+        </section>
+
+        <section class="block" id="options-block" hidden>
+          <h2>Options</h2>
+          <label class="row">
+            <span>Theme</span>
+            <select id="theme-select">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </label>
+          <label class="row">
+            <span>Coordinates</span>
+            <select id="coordinates-select">
+              <option value="auto">Auto</option>
+              <option value="projected">Projected (lat/lon)</option>
+              <option value="local">local_x / local_y</option>
+            </select>
+          </label>
+          <label class="row checkbox">
+            <input type="checkbox" id="points-toggle" />
+            <span>Draw individual points</span>
+          </label>
+          <button class="button" id="export-button" type="button">Export SVG</button>
+        </section>
+
+        <section class="block" id="legend-block" hidden>
+          <h2>Legend</h2>
+          <ul class="legend" id="legend"></ul>
+        </section>
+
+        <section class="block problem" id="errors-block" hidden>
+          <h2>Parse warnings <span class="count" id="errors-count"></span></h2>
+          <pre id="errors"></pre>
+        </section>
+      </aside>
+
+      <div class="stage" id="stage">
+        <!-- Everything inside this element belongs to the viewer: it mounts a
+             shadow root of its own and sizes itself from this box. The demo's
+             chrome is deliberately outside it — see EMBEDDING.md. -->
+        <div class="viewer" id="viewer"></div>
+
+        <div class="dropzone" id="dropzone">
+          <div class="dropzone-inner">
+            <svg viewBox="0 0 64 64" aria-hidden="true">
+              <path
+                d="M12 44 L26 12 M38 44 L52 12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="3"
+                stroke-linecap="round"
+              />
+              <path
+                d="M25 44 L39 12"
+                fill="none"
+                stroke="var(--accent)"
+                stroke-width="2"
+                stroke-dasharray="4 4"
+                stroke-linecap="round"
+              />
+            </svg>
+            <p class="big">Drop a Lanelet2 <code>.osm</code> map here</p>
+            <p class="small">
+              It is parsed by the Rust library itself, in this tab. No upload, no server.
+            </p>
+          </div>
+        </div>
+
+        <div class="overlay-status" id="status" hidden><span class="spinner"></span><span id="status-text"></span></div>
+      </div>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
