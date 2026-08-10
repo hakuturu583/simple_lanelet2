@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "simple-lanelet2"
-version = "1.1.1"
+version = "1.1.2"
 description = "A drop-in reimplementation of the Lanelet2 Python API, in Rust"
 readme = "README.md"
 requires-python = ">=3.9"
