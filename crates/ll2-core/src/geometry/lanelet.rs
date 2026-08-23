@@ -10,7 +10,7 @@
 //! Upstream: `lanelet2_core/include/lanelet2_core/geometry/impl/Lanelet.h:25-145`
 
 use crate::geometry::bbox;
-use crate::geometry::distance::{covered_by_ring, distance_2d_point_polyline};
+use crate::geometry::distance::{self, covered_by_ring, distance_2d_point_polyline};
 use crate::geometry::linestring::{self, Point2, Point3};
 use crate::lanelet::Lanelet;
 use crate::point::Point;
@@ -58,6 +58,27 @@ pub fn length_3d(lanelet: &Lanelet) -> f64 {
 /// The sampled length of the *left bound*, which is what routing costs use.
 pub fn approximated_length_2d(lanelet: &Lanelet) -> f64 {
     linestring::approximated_length_2d(&flat_2d(&lanelet.left_bound().points()))
+}
+
+/// The mean gap between a lanelet's bounds, measured at each end.
+///
+/// Four points, so it asks for four points: materialising both boundaries to read
+/// their ends would clone an `Arc` and take a lock per vertex, once per lanelet, for
+/// numbers already thrown away. A lanelet whose bounds are empty has no width to
+/// measure and gets a road-sized default rather than a zero or a NaN.
+pub fn mean_width_2d(lanelet: &Lanelet) -> f64 {
+    let (left, right) = (lanelet.left_bound(), lanelet.right_bound());
+    let ends = [(left.front(), right.front()), (left.back(), right.back())];
+    let mut total = 0.0;
+    let mut count = 0.0;
+    for (a, b) in ends {
+        if let (Some(a), Some(b)) = (a, b) {
+            let ([ax, ay, _], [bx, by, _]) = (a.xyz(), b.xyz());
+            total += distance::distance_2d_point_point([ax, ay], [bx, by]);
+            count += 1.0;
+        }
+    }
+    if count == 0.0 { 3.0 } else { total / count }
 }
 
 pub fn distance_to_centerline_2d(lanelet: &Lanelet, point: Point2) -> f64 {
@@ -269,6 +290,25 @@ mod tests {
         assert!(inside(&ll, [5.0, 1.0]), "on the left bound");
         assert!(!inside(&ll, [5.0, 2.0]));
         assert!(!inside(&ll, [-1.0, 0.0]));
+    }
+
+    #[test]
+    fn the_mean_width_is_the_gap_between_the_bounds() {
+        // `corridor` puts its bounds at y = ±1, so two metres apart at both ends.
+        assert!((mean_width_2d(&corridor(1, 0.0, 10.0)) - 2.0).abs() < 1e-9);
+
+        // A funnel: three metres at one end, one at the other.
+        let funnel = Lanelet::new(
+            2,
+            line(21, &[(0.0, 1.5), (10.0, 0.5)]),
+            line(22, &[(0.0, -1.5), (10.0, -0.5)]),
+            AttributeMap::new(),
+        );
+        assert!((mean_width_2d(&funnel) - 2.0).abs() < 1e-9);
+
+        // Nothing to measure gets a road-sized default rather than zero or a NaN.
+        let empty = Lanelet::new(3, line(31, &[]), line(32, &[]), AttributeMap::new());
+        assert_eq!(mean_width_2d(&empty), 3.0);
     }
 
     #[test]

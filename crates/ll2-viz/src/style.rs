@@ -152,6 +152,17 @@ impl Style {
         self
     }
 
+    /// A width with no stroke colour.
+    ///
+    /// Both 2D renderers emit a width only alongside a colour, so this is invisible
+    /// to them. It exists for a shape that is a filled triangle on a page and a line
+    /// with thickness in a 3D viewer — so that viewer reads its dimension from this
+    /// table like every other, instead of inventing a constant of its own.
+    fn stroke_width(mut self, width: f32) -> Self {
+        self.stroke_width = width;
+        self
+    }
+
     /// A dash pattern, and the zoom below which it stops being worth drawing.
     ///
     /// Dashing a city's worth of lane markings costs more than every fill and
@@ -389,8 +400,21 @@ pub fn area_style(subtype: &str, palette: &Palette) -> Style {
     Style::new(&name, label, Z_AREA).fill(color, opacity)
 }
 
+/// Which of a standalone `area=yes` way's tags names it.
+///
+/// `type` is the usual carrier, but Autoware's polygons sometimes name themselves
+/// through `subtype` instead. Decided here rather than in each renderer, so the next
+/// carrier tag is a one-line change in one file.
+pub fn polygon_key<'a>(kind: &'a str, subtype: &'a str) -> &'a str {
+    if kind.is_empty() || kind == "polygon" {
+        subtype
+    } else {
+        kind
+    }
+}
+
 /// The fill for a standalone `area=yes` way — Autoware's `crosswalk_polygon`,
-/// `hatched_road_markings` and friends.
+/// `hatched_road_markings` and friends. `kind` is [`polygon_key`]'s answer.
 pub fn polygon_style(kind: &str, palette: &Palette) -> Style {
     let (color, opacity, label) = match kind {
         "crosswalk_polygon" => (palette.crosswalk, 0.35, "Crosswalk polygon"),
@@ -413,6 +437,19 @@ pub fn is_regulatory_linestring(kind: &str) -> bool {
         kind,
         "stop_line" | "traffic_light" | "traffic_sign" | "light_bulbs" | "arrow"
     )
+}
+
+/// Which layer a linestring is drawn in, from its `type`.
+///
+/// The predicate above says *what* a linestring is; this says where it goes. Both
+/// live here so that adding a regulatory type does not mean editing every renderer's
+/// traversal to agree about which layer it landed in.
+pub fn linestring_layer(kind: &str) -> VizLayer {
+    if is_regulatory_linestring(kind) {
+        VizLayer::Regulatory
+    } else {
+        VizLayer::Bound
+    }
 }
 
 /// The stroke for a linestring, chosen by `type` and refined by `subtype`.
@@ -499,10 +536,12 @@ pub fn centerline_style(palette: &Palette) -> Style {
         .dashed(6.0, 5.0)
 }
 
-/// The driving-direction arrowheads, drawn as filled triangles.
+/// The driving-direction arrowheads, drawn as filled triangles — or, where a
+/// renderer has real arrows, as shafts of [`Style::stroke_width`].
 pub fn direction_style(palette: &Palette) -> Style {
     Style::new("direction", "Driving direction", Z_DIRECTION)
         .fill(palette.direction, 0.9)
+        .stroke_width(3.0)
         .hidden_from_legend()
         // An arrowhead is a speck once a lane is four pixels wide.
         .hidden_below(4.0)
@@ -572,5 +611,48 @@ mod tests {
     #[test]
     fn colours_render_as_six_digit_hex() {
         assert_eq!(Color(0x00, 0x0a, 0xff).to_hex(), "#000aff");
+    }
+
+    /// There are two statements of the stacking order in this project: `Style::z`,
+    /// which the 2D renderers sort by, and `VizLayer`'s declaration order, which the
+    /// Rerun renderer turns into real separation along z. They agree today by
+    /// coincidence, and a lane marking sinking into the road it is painted on is
+    /// what disagreement looks like — so the coincidence is checked here.
+    #[test]
+    fn the_z_bands_run_in_vizlayer_declaration_order() {
+        let palette = Theme::Dark.palette();
+        let z_of = |layer: VizLayer| match layer {
+            VizLayer::LaneletFill => lanelet_style("road", &palette).z,
+            VizLayer::Area => area_style("parking_lot", &palette).z,
+            VizLayer::Polygon => polygon_style("crosswalk_polygon", &palette).z,
+            VizLayer::Bound => linestring_style("curbstone", "", &palette).z,
+            VizLayer::Regulatory => linestring_style("stop_line", "", &palette).z,
+            VizLayer::Centerline => centerline_style(&palette).z,
+            VizLayer::Direction => direction_style(&palette).z,
+            VizLayer::Point => point_style(&palette).z,
+        };
+        for pair in VizLayer::ALL.windows(2) {
+            assert!(
+                z_of(pair[0]) < z_of(pair[1]),
+                "{:?} does not sort below {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+
+    #[test]
+    fn a_polygons_name_comes_from_whichever_tag_carries_it() {
+        assert_eq!(polygon_key("crosswalk_polygon", ""), "crosswalk_polygon");
+        // Autoware writes the generic `type` and names the thing in `subtype`.
+        assert_eq!(polygon_key("polygon", "parking_lot"), "parking_lot");
+        assert_eq!(polygon_key("", "parking_lot"), "parking_lot");
+    }
+
+    #[test]
+    fn a_linestrings_layer_follows_its_type() {
+        assert_eq!(linestring_layer("stop_line"), VizLayer::Regulatory);
+        assert_eq!(linestring_layer("curbstone"), VizLayer::Bound);
+        assert_eq!(linestring_layer("something_new"), VizLayer::Bound);
     }
 }

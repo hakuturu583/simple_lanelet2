@@ -13,6 +13,7 @@
 //! whichever of the three you are looking at.
 
 use ll2_core::area::Area;
+use ll2_core::geometry::lanelet::{centerline_3d, mean_width_2d};
 use ll2_core::lanelet::Lanelet;
 use ll2_core::linestring::LineString;
 use ll2_core::map::{LaneletMap, as_area, as_lanelet, as_linestring, as_point};
@@ -71,6 +72,14 @@ pub struct LayerCounts {
     pub points: usize,
 }
 
+/// What a map held and what was drawn from it — everything worth keeping once the
+/// geometry itself has been handed to Rerun.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MapSummary {
+    pub stats: MapStats,
+    pub counts: LayerCounts,
+}
+
 /// A map as Rerun archetypes: one per layer, each `None` when its layer is switched
 /// off or the map has nothing in it.
 ///
@@ -126,6 +135,26 @@ impl MapLayers {
         Ok(())
     }
 
+    /// [`log_to`](Self::log_to), plus the blueprint that makes a viewer open this as
+    /// a map rather than as eight unrelated entities.
+    pub fn log_with_blueprint(
+        &self,
+        rec: &RecordingStream,
+        root: &str,
+    ) -> RecordingStreamResult<()> {
+        self.log_to(rec, root)?;
+        crate::blueprint::spatial3d(root)
+            .send(rec, rerun::blueprint::BlueprintActivation::default())
+    }
+
+    /// What the map held and what was drawn from it.
+    pub fn summary(&self) -> MapSummary {
+        MapSummary {
+            stats: self.stats,
+            counts: self.counts,
+        }
+    }
+
     /// Whether anything at all was built.
     pub fn is_empty(&self) -> bool {
         self.counts == LayerCounts::default()
@@ -175,10 +204,7 @@ impl<'a> Builder<'a> {
             bounds: StripParts::default(),
             regulatory: StripParts::default(),
             centerlines: StripParts::default(),
-            direction: ArrowParts {
-                radius: Radius::new_ui_points((1.5 * options.line_scale).max(0.1)),
-                ..ArrowParts::default()
-            },
+            direction: ArrowParts::default(),
             points: PointParts::default(),
         }
     }
@@ -192,12 +218,9 @@ impl<'a> Builder<'a> {
 
     /// A stroke's colour, keeping its opacity: Rerun blends lines and points.
     fn stroke_color(&self, style: &Style) -> rerun::Color {
-        let color = style.stroke.unwrap_or(self.palette.text);
-        rerun::Color::from_unmultiplied_rgba(
-            color.0,
-            color.1,
-            color.2,
-            opacity_to_alpha(style.stroke_opacity),
+        rgba(
+            style.stroke.unwrap_or(self.palette.text),
+            style.stroke_opacity,
         )
     }
 
@@ -212,8 +235,10 @@ impl<'a> Builder<'a> {
     /// once, and the mesh goes over opaque and looking like the SVG does.
     fn fill_color(&self, style: &Style) -> rerun::Color {
         let color = style.fill.unwrap_or(self.palette.area_other);
-        let blended = blend(color, self.palette.background, style.fill_opacity);
-        rerun::Color::from_unmultiplied_rgba(blended.0, blended.1, blended.2, 255)
+        rgba(
+            blend(color, self.palette.background, style.fill_opacity),
+            1.0,
+        )
     }
 
     fn radius(&self, style: &Style) -> Radius {
@@ -229,36 +254,24 @@ impl<'a> Builder<'a> {
             return;
         }
 
-        let (fill_lift, centerline_lift, arrow_lift) = (
+        let (fill_lift, centerline_lift) = (
             self.lift(VizLayer::LaneletFill),
             self.lift(VizLayer::Centerline),
-            self.lift(VizLayer::Direction),
         );
         let centerline_style = style::centerline_style(&self.palette);
         let (centerline_color, centerline_radius) = (
             self.stroke_color(&centerline_style),
             self.radius(&centerline_style),
         );
-        let direction_style = style::direction_style(&self.palette);
-        let direction_color = {
-            let color = direction_style.fill.unwrap_or(self.palette.direction);
-            rerun::Color::from_unmultiplied_rgba(
-                color.0,
-                color.1,
-                color.2,
-                opacity_to_alpha(direction_style.fill_opacity),
-            )
-        };
+        if wants_arrows {
+            self.direction.reserve(map.lanelets.len());
+        }
 
         for primitive in map.lanelets.all() {
             let Some(lanelet) = as_lanelet(&primitive) else {
                 continue;
             };
             let subtype = attribute(lanelet.attributes(), "subtype");
-            // One description, shared by the surface, the centerline and every
-            // arrow: whichever the cursor lands on has to be able to answer "what
-            // lanelet is this?".
-            let description = describe_lanelet(lanelet, &subtype);
 
             if wants_fill {
                 let left = points_3d(&lanelet.left_bound());
@@ -270,7 +283,12 @@ impl<'a> Builder<'a> {
             }
 
             if wants_centerline || wants_arrows {
-                let centerline = points_3d(&lanelet.centerline());
+                // One description, shared by the centerline and every arrow: whichever
+                // the cursor lands on has to be able to answer "what lanelet is this?".
+                // The surface cannot use it — a `Mesh3D` is one merged blob with no
+                // per-lanelet label — so it is not built unless something wants it.
+                let description = describe_lanelet(lanelet, &subtype);
+                let centerline = centerline_3d(lanelet);
                 if wants_centerline {
                     self.centerlines.push(
                         &centerline,
@@ -281,24 +299,23 @@ impl<'a> Builder<'a> {
                     );
                 }
                 if wants_arrows {
-                    // Sized from the lanelet's own width, so a footpath does not get
-                    // a motorway-sized chevron.
-                    let size = (lanelet_width(lanelet).clamp(1.0, 6.0) * 0.9).clamp(1.2, 5.0);
-                    let label = format!("{description} ▸");
-                    for (position, heading) in
-                        geometry::sample_along(&centerline, self.options.viz.arrow_spacing)
-                    {
-                        self.direction.push(
-                            position,
-                            heading,
-                            size,
-                            direction_color,
-                            label.clone(),
-                            arrow_lift,
-                        );
-                    }
+                    self.add_arrows(lanelet, &centerline, &description);
                 }
             }
+        }
+    }
+
+    /// One lanelet's chevrons, sampled along its centerline and sized from its own
+    /// width so a footpath does not get a motorway-sized arrow.
+    fn add_arrows(&mut self, lanelet: &Lanelet, centerline: &[Point3], description: &str) {
+        let size = (mean_width_2d(lanelet).clamp(1.0, 6.0) * 0.9).clamp(1.2, 5.0);
+        let label = format!("{description} ▸");
+        let lift = self.lift(VizLayer::Direction);
+        for (position, heading) in
+            geometry::sample_along(centerline, self.options.viz.arrow_spacing)
+        {
+            self.direction
+                .push(position, heading, size, label.clone(), lift);
         }
     }
 
@@ -337,16 +354,9 @@ impl<'a> Builder<'a> {
                 continue;
             }
             let attributes = line.attributes();
-            // `type` is the usual carrier, but Autoware's polygons sometimes name
-            // themselves through `subtype` instead.
             let kind = attribute(attributes, "type");
             let subtype = attribute(attributes, "subtype");
-            let key = if kind.is_empty() || kind == "polygon" {
-                subtype
-            } else {
-                kind
-            };
-            let style = style::polygon_style(&key, &self.palette);
+            let style = style::polygon_style(style::polygon_key(&kind, &subtype), &self.palette);
             let triangles = geometry::triangulate_ring(&ring);
             self.polygons
                 .push(&ring, &triangles, self.fill_color(&style), lift);
@@ -361,6 +371,11 @@ impl<'a> Builder<'a> {
         }
         let (bound_lift, regulatory_lift) =
             (self.lift(VizLayer::Bound), self.lift(VizLayer::Regulatory));
+        // Nearly every linestring in a map is a boundary; the regulatory ones are a
+        // handful, so only the bulk is worth reserving for.
+        if wants_bounds {
+            self.bounds.reserve(map.line_strings.len());
+        }
 
         for primitive in map.line_strings.all() {
             let Some(line) = as_linestring(&primitive) else {
@@ -369,11 +384,7 @@ impl<'a> Builder<'a> {
             let attributes = line.attributes();
             let kind = attribute(attributes, "type");
             let subtype = attribute(attributes, "subtype");
-            let layer = if style::is_regulatory_linestring(&kind) {
-                VizLayer::Regulatory
-            } else {
-                VizLayer::Bound
-            };
+            let layer = style::linestring_layer(&kind);
             if !self.options.viz.wants_layer(layer) {
                 continue;
             }
@@ -398,23 +409,31 @@ impl<'a> Builder<'a> {
             return;
         }
         let lift = self.lift(VizLayer::Point);
-        let style = style::point_style(&self.palette);
-        let (color, radius) = (self.stroke_color(&style), self.radius(&style));
+        self.points.reserve(map.points.len());
         for primitive in map.points.all() {
             let Some(point) = as_point(&primitive) else {
                 continue;
             };
-            self.points.push(
-                point.xyz(),
-                color,
-                radius,
-                format!("point {}", point.id()),
-                lift,
-            );
+            self.points
+                .push(point.xyz(), format!("point {}", point.id()), lift);
         }
     }
 
     fn finish(self, stats: MapStats) -> MapLayers {
+        // Every arrow in the map is one colour and one thickness, and so is every
+        // point; the look is decided here, once, rather than copied onto each of the
+        // hundreds of thousands of them.
+        let arrows = style::direction_style(&self.palette);
+        let direction_color = rgba(
+            arrows.fill.unwrap_or(self.palette.direction),
+            // Not `fill_color`: an arrow is drawn over the road rather than being
+            // part of it, so it keeps its opacity instead of being blended away.
+            arrows.fill_opacity,
+        );
+        let direction_radius = self.radius(&arrows);
+        let dots = style::point_style(&self.palette);
+        let (point_color, point_radius) = (self.stroke_color(&dots), self.radius(&dots));
+
         let counts = LayerCounts {
             triangles: self.lanelet_fill.triangles.len()
                 + self.areas.triangles.len()
@@ -432,8 +451,8 @@ impl<'a> Builder<'a> {
             bounds: self.bounds.finish(),
             regulatory: self.regulatory.finish(),
             centerlines: self.centerlines.finish(),
-            direction: self.direction.finish(),
-            points: self.points.finish(),
+            direction: self.direction.finish(direction_color, direction_radius),
+            points: self.points.finish(point_color, point_radius),
             stats,
             counts,
         }
@@ -467,8 +486,7 @@ impl MeshParts {
         }
         let base = self.positions.len() as u32;
         for point in positions {
-            self.positions
-                .push(geometry::to_f32([point[0], point[1], point[2] + lift]));
+            self.positions.push(geometry::lifted(*point, lift));
             self.colors.push(color);
         }
         self.triangles.extend(
@@ -499,6 +517,13 @@ struct StripParts {
 }
 
 impl StripParts {
+    fn reserve(&mut self, count: usize) {
+        self.strips.reserve(count);
+        self.colors.reserve(count);
+        self.radii.reserve(count);
+        self.labels.reserve(count);
+    }
+
     fn push(
         &mut self,
         points: &[Point3],
@@ -510,12 +535,8 @@ impl StripParts {
         if points.len() < 2 {
             return;
         }
-        self.strips.push(
-            points
-                .iter()
-                .map(|point| geometry::to_f32([point[0], point[1], point[2] + lift]))
-                .collect(),
-        );
+        self.strips
+            .push(points.iter().map(|p| geometry::lifted(*p, lift)).collect());
         self.colors.push(color);
         self.radii.push(radius);
         self.labels.push(label);
@@ -537,39 +558,22 @@ impl StripParts {
     }
 }
 
+#[derive(Default)]
 struct ArrowParts {
     origins: Vec<[f32; 3]>,
     vectors: Vec<[f32; 3]>,
-    colors: Vec<rerun::Color>,
     labels: Vec<String>,
-    /// One radius for every arrow in the map. Rerun splats a single-element batch
-    /// across the whole archetype, so this costs one component rather than one per
-    /// arrowhead — and there are a great many arrowheads.
-    radius: Radius,
-}
-
-impl Default for ArrowParts {
-    fn default() -> Self {
-        ArrowParts {
-            origins: Vec::new(),
-            vectors: Vec::new(),
-            colors: Vec::new(),
-            labels: Vec::new(),
-            radius: Radius::new_ui_points(1.5),
-        }
-    }
 }
 
 impl ArrowParts {
-    fn push(
-        &mut self,
-        position: Point3,
-        heading: Point3,
-        size: f64,
-        color: rerun::Color,
-        label: String,
-        lift: f64,
-    ) {
+    /// A lanelet yields at least one arrow, so its count is the floor.
+    fn reserve(&mut self, lanelets: usize) {
+        self.origins.reserve(lanelets);
+        self.vectors.reserve(lanelets);
+        self.labels.reserve(lanelets);
+    }
+
+    fn push(&mut self, position: Point3, heading: Point3, size: f64, label: String, lift: f64) {
         // The arrow is centred on the sample, so a chevron sits across the point the
         // sampler chose rather than starting at it.
         let half = [
@@ -577,29 +581,35 @@ impl ArrowParts {
             heading[1] * size * 0.5,
             heading[2] * size * 0.5,
         ];
-        self.origins.push(geometry::to_f32([
-            position[0] - half[0],
-            position[1] - half[1],
-            position[2] - half[2] + lift,
-        ]));
+        self.origins.push(geometry::lifted(
+            [
+                position[0] - half[0],
+                position[1] - half[1],
+                position[2] - half[2],
+            ],
+            lift,
+        ));
+        // A vector is a displacement, not a position: it does not get the lift.
         self.vectors.push(geometry::to_f32([
             half[0] * 2.0,
             half[1] * 2.0,
             half[2] * 2.0,
         ]));
-        self.colors.push(color);
         self.labels.push(label);
     }
 
-    fn finish(self) -> Option<Arrows3D> {
+    /// The colour and the radius go over as one-element batches: Rerun splats those
+    /// across the whole archetype, so they cost one component each rather than one
+    /// per arrowhead — and there are a great many arrowheads.
+    fn finish(self, color: rerun::Color, radius: Radius) -> Option<Arrows3D> {
         if self.vectors.is_empty() {
             return None;
         }
         Some(
             Arrows3D::from_vectors(self.vectors)
                 .with_origins(self.origins)
-                .with_colors(self.colors)
-                .with_radii([self.radius])
+                .with_colors([color])
+                .with_radii([radius])
                 .with_labels(self.labels)
                 .with_show_labels(false),
         )
@@ -609,38 +619,32 @@ impl ArrowParts {
 #[derive(Default)]
 struct PointParts {
     positions: Vec<[f32; 3]>,
-    colors: Vec<rerun::Color>,
-    radii: Vec<Radius>,
     labels: Vec<String>,
 }
 
 impl PointParts {
-    fn push(
-        &mut self,
-        position: Point3,
-        color: rerun::Color,
-        radius: Radius,
-        label: String,
-        lift: f64,
-    ) {
-        self.positions.push(geometry::to_f32([
-            position[0],
-            position[1],
-            position[2] + lift,
-        ]));
-        self.colors.push(color);
-        self.radii.push(radius);
+    /// The one layer that reaches millions on a city map, and so the one where
+    /// doubling a `Vec` up from empty is worth not doing.
+    fn reserve(&mut self, count: usize) {
+        self.positions.reserve(count);
+        self.labels.reserve(count);
+    }
+
+    fn push(&mut self, position: Point3, label: String, lift: f64) {
+        self.positions.push(geometry::lifted(position, lift));
         self.labels.push(label);
     }
 
-    fn finish(self) -> Option<Points3D> {
+    /// One colour and one radius for every point in the map — see
+    /// [`ArrowParts::finish`], for the same reason and rather more of them.
+    fn finish(self, color: rerun::Color, radius: Radius) -> Option<Points3D> {
         if self.positions.is_empty() {
             return None;
         }
         Some(
             Points3D::new(self.positions)
-                .with_colors(self.colors)
-                .with_radii(self.radii)
+                .with_colors([color])
+                .with_radii([radius])
                 .with_labels(self.labels)
                 .with_show_labels(false),
         )
@@ -681,25 +685,10 @@ fn area_ring(area: &Area) -> Vec<Point3> {
     open_ring(ring)
 }
 
-/// A lanelet's mean width, from the gap between its bounds at each end. Only ever
-/// used to keep a footpath from getting a motorway-sized arrow.
-fn lanelet_width(lanelet: &Lanelet) -> f64 {
-    let (left, right) = (lanelet.left_bound(), lanelet.right_bound());
-    let ends = [(left.front(), right.front()), (left.back(), right.back())];
-    let mut total = 0.0;
-    let mut count = 0.0;
-    for (a, b) in ends {
-        if let (Some(a), Some(b)) = (a, b) {
-            let ([ax, ay, _], [bx, by, _]) = (a.xyz(), b.xyz());
-            total += ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt();
-            count += 1.0;
-        }
-    }
-    if count == 0.0 { 3.0 } else { total / count }
-}
-
-fn opacity_to_alpha(opacity: f32) -> u8 {
-    (opacity.clamp(0.0, 1.0) * 255.0).round() as u8
+/// A palette colour at an opacity, as Rerun wants it.
+fn rgba(color: Color, opacity: f32) -> rerun::Color {
+    let alpha = (opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+    rerun::Color::from_unmultiplied_rgba(color.0, color.1, color.2, alpha)
 }
 
 /// `color` laid over `under` at `opacity`, in straight sRGB.
@@ -919,19 +908,5 @@ mod tests {
         let layers = MapLayers::from_map(&map, &MapOptions::default());
         assert!(layers.polygons.is_some(), "a closed way should fill");
         assert_eq!(layers.counts.triangles, 2);
-    }
-
-    #[test]
-    fn a_narrow_lanelet_gets_a_smaller_arrow_than_a_wide_one() {
-        assert!(lanelet_width(&one_lanelet(3.0)) < lanelet_width(&one_lanelet(6.0)));
-    }
-
-    fn one_lanelet(width: f64) -> Lanelet {
-        Lanelet::new(
-            3,
-            line(1, &[[0.0, width, 0.0], [30.0, width, 0.0]], &[]),
-            line(2, &[[0.0, 0.0, 0.0], [30.0, 0.0, 0.0]], &[]),
-            AttributeMap::new(),
-        )
     }
 }

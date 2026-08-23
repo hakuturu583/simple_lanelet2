@@ -11,7 +11,10 @@
 //!   triangles, so rings are ear-clipped and lanelets are stitched into ribbons.
 //! * Samples along a centerline in 3D, for the driving-direction arrows.
 
-/// A point in map coordinates: metres, x east, y north, z up.
+use ll2_core::geometry::linestring::distance_3d;
+
+/// A point in map coordinates: metres, x east, y north, z up. The same alias
+/// `ll2-core`'s geometry uses, so its helpers apply unchanged.
 pub type Point3 = [f64; 3];
 
 /// Map coordinates as Rerun wants them.
@@ -23,6 +26,12 @@ pub type Point3 = [f64; 3];
 /// surveyed.
 pub fn to_f32(point: Point3) -> [f32; 3] {
     [point[0] as f32, point[1] as f32, point[2] as f32]
+}
+
+/// A point raised onto its layer and cast for Rerun — [`to_f32`] with the layer lift
+/// added, which is what every position logged from a map goes through.
+pub fn lifted(point: Point3, lift: f64) -> [f32; 3] {
+    to_f32([point[0], point[1], point[2] + lift])
 }
 
 /// Twice the signed area of a ring, projected onto the ground plane.
@@ -174,17 +183,12 @@ pub fn ribbon(left: &[Point3], right: &[Point3]) -> (Vec<Point3>, Vec<[u32; 3]>)
 /// Returns nothing for a polyline with no length: two identical points describe no
 /// direction, and every caller here would go on to build a degenerate shape from it.
 fn resample(points: &[Point3], count: usize) -> Vec<Point3> {
-    if points.len() < 2 || count < 2 {
+    if count < 2 {
         return Vec::new();
     }
-    let lengths: Vec<f64> = points
-        .windows(2)
-        .map(|pair| distance(pair[0], pair[1]))
-        .collect();
-    let total: f64 = lengths.iter().sum();
-    if total <= 0.0 || !total.is_finite() {
+    let Some((lengths, total)) = arc_lengths(points) else {
         return Vec::new();
-    }
+    };
 
     let mut samples = Vec::with_capacity(count);
     let step = total / (count as f64 - 1.0);
@@ -220,17 +224,9 @@ pub fn sample_along(points: &[Point3], spacing: f64) -> Vec<(Point3, Point3)> {
     } else {
         25.0
     };
-    if points.len() < 2 {
+    let Some((lengths, total)) = arc_lengths(points) else {
         return Vec::new();
-    }
-    let lengths: Vec<f64> = points
-        .windows(2)
-        .map(|pair| distance(pair[0], pair[1]))
-        .collect();
-    let total: f64 = lengths.iter().sum();
-    if total <= 0.0 || !total.is_finite() {
-        return Vec::new();
-    }
+    };
 
     let count = (total / spacing).floor().max(1.0) as usize;
     let step = total / (count as f64 + 1.0);
@@ -258,17 +254,29 @@ pub fn sample_along(points: &[Point3], spacing: f64) -> Vec<(Point3, Point3)> {
     samples
 }
 
+/// Each segment's length and their total, or `None` for a polyline with no length.
+///
+/// Two identical points describe no direction, and every caller here would go on to
+/// build a degenerate shape from one — so the rule lives in one place rather than at
+/// the top of each sampler.
+fn arc_lengths(points: &[Point3]) -> Option<(Vec<f64>, f64)> {
+    if points.len() < 2 {
+        return None;
+    }
+    let lengths: Vec<f64> = points
+        .windows(2)
+        .map(|pair| distance_3d(pair[0], pair[1]))
+        .collect();
+    let total: f64 = lengths.iter().sum();
+    (total > 0.0 && total.is_finite()).then_some((lengths, total))
+}
+
 fn lerp(from: Point3, to: Point3, ratio: f64) -> Point3 {
     [
         from[0] + (to[0] - from[0]) * ratio,
         from[1] + (to[1] - from[1]) * ratio,
         from[2] + (to[2] - from[2]) * ratio,
     ]
-}
-
-fn distance(from: Point3, to: Point3) -> f64 {
-    let (dx, dy, dz) = (to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-    (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
 #[cfg(test)]

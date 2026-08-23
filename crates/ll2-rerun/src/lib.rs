@@ -72,7 +72,7 @@ pub mod map;
 pub use ll2_viz::{
     CoordinateSource, LoadOptions, LoadedMap, MapStats, Theme, VizLayer, VizOptions, load_osm_str,
 };
-pub use map::{LayerCounts, MapLayers, MapOptions, entity_path};
+pub use map::{LayerCounts, MapLayers, MapOptions, MapSummary, entity_path};
 
 use std::path::PathBuf;
 
@@ -127,7 +127,7 @@ pub fn log_map(
     rec: &RecordingStream,
     map: &LaneletMap,
     options: &MapOptions,
-) -> Result<MapLayers, Error> {
+) -> Result<MapSummary, Error> {
     log_map_at(rec, ROOT, map, options)
 }
 
@@ -136,16 +136,20 @@ pub fn log_map(
 /// Sends a blueprint as well as the geometry, and so takes over the viewer's layout.
 /// To put a map into a recording that already has one, build the layers yourself and
 /// call [`MapLayers::log_to`].
+///
+/// What comes back is the summary rather than the geometry: the archetypes have been
+/// handed to Rerun by the time this returns, and on a city map they are hundreds of
+/// megabytes with nothing left to do. A caller who wants to keep them builds them
+/// itself with [`MapLayers::from_map`].
 pub fn log_map_at(
     rec: &RecordingStream,
     root: &str,
     map: &LaneletMap,
     options: &MapOptions,
-) -> Result<MapLayers, Error> {
+) -> Result<MapSummary, Error> {
     let layers = MapLayers::from_map(map, options);
-    layers.log_to(rec, root)?;
-    blueprint::spatial3d(root).send(rec, rerun::blueprint::BlueprintActivation::default())?;
-    Ok(layers)
+    layers.log_with_blueprint(rec, root)?;
+    Ok(layers.summary())
 }
 
 /// Reads OSM XML and writes it to an `.rrd` file, ready to open in the viewer.
@@ -158,7 +162,7 @@ pub fn save_osm(
     text: &str,
     path: impl Into<PathBuf>,
     options: &MapOptions,
-) -> Result<MapLayers, Error> {
+) -> Result<MapSummary, Error> {
     let loaded = load_osm_str(text, &LoadOptions::default()).map_err(Error::Load)?;
     let rec = RecordingStreamBuilder::new(APPLICATION_ID).save(path)?;
     log_map(&rec, &loaded.map, options)
@@ -169,7 +173,7 @@ pub fn save_osm(
 /// Needs the `rerun` binary on `PATH` — `pip install rerun-sdk` or `cargo install
 /// rerun-cli` puts one there. An already-running viewer is reused rather than
 /// duplicated.
-pub fn spawn_osm(text: &str, options: &MapOptions) -> Result<MapLayers, Error> {
+pub fn spawn_osm(text: &str, options: &MapOptions) -> Result<MapSummary, Error> {
     let loaded = load_osm_str(text, &LoadOptions::default()).map_err(Error::Load)?;
     let rec = RecordingStreamBuilder::new(APPLICATION_ID).spawn()?;
     log_map(&rec, &loaded.map, options)
@@ -191,12 +195,12 @@ mod tests {
             .memory()
             .unwrap();
         let loaded = load_osm_str(&example_map(), &LoadOptions::default()).unwrap();
-        let layers = log_map(&rec, &loaded.map, &MapOptions::default()).unwrap();
+        let summary = log_map(&rec, &loaded.map, &MapOptions::default()).unwrap();
 
-        assert!(layers.stats.lanelets > 50);
-        assert!(layers.counts.triangles > 100);
-        assert!(layers.counts.strips > 100);
-        assert!(layers.counts.arrows > 50);
+        assert!(summary.stats.lanelets > 50);
+        assert!(summary.counts.triangles > 100);
+        assert!(summary.counts.strips > 100);
+        assert!(summary.counts.arrows > 50);
 
         rec.flush_blocking().unwrap();
         assert!(
@@ -207,8 +211,6 @@ mod tests {
 
     #[test]
     fn a_file_that_is_not_a_map_is_an_error_rather_than_an_empty_recording() {
-        // `MapLayers` holds Rerun archetypes and is not `Debug`, so the error has to
-        // be matched out rather than unwrapped.
         let Err(error) = save_osm("hello", "/dev/null", &MapOptions::default()) else {
             panic!("a file that is not a map produced a recording");
         };

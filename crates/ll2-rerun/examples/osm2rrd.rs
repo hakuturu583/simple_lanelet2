@@ -12,15 +12,21 @@ use rerun::RecordingStreamBuilder;
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    let positional: Vec<&String> = arguments.iter().filter(|a| !a.starts_with("--")).collect();
+    let positional: Vec<&str> = arguments
+        .iter()
+        .map(String::as_str)
+        .filter(|a| !a.starts_with("--"))
+        .collect();
     let has = |flag: &str| arguments.iter().any(|a| a == flag);
     let spawn = has("--spawn");
 
     // `--spawn` streams to a viewer, so it takes no output path; without it there
     // has to be one.
     if positional.len() != if spawn { 1 } else { 2 } {
-        eprintln!("usage: osm2rrd <map.osm> <out.rrd> [--light] [--centerlines] [--points]");
-        eprintln!("       osm2rrd <map.osm> --spawn [--light] [--centerlines] [--points]");
+        eprintln!(
+            "usage: osm2rrd <map.osm> <out.rrd> [--light] [--centerlines] [--points]\n\
+             \x20      osm2rrd <map.osm> --spawn [--light] [--centerlines] [--points]"
+        );
         return ExitCode::FAILURE;
     }
 
@@ -78,13 +84,9 @@ fn main() -> ExitCode {
         }
     };
 
-    // `log_map` would do both of these, but it would also rebuild the layers that
-    // have already been built above to check that there were any.
-    let logged = layers.log_to(&recording, ll2_rerun::ROOT).and_then(|()| {
-        ll2_rerun::blueprint::spatial3d(ll2_rerun::ROOT)
-            .send(&recording, rerun::blueprint::BlueprintActivation::default())
-    });
-    if let Err(error) = logged {
+    // `log_map` would do the same, but it would also rebuild the layers that have
+    // already been built above to check that there were any.
+    if let Err(error) = layers.log_with_blueprint(&recording, ll2_rerun::ROOT) {
         eprintln!("{error}");
         return ExitCode::FAILURE;
     }
