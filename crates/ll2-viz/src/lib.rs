@@ -44,7 +44,7 @@ pub mod source;
 pub mod style;
 pub mod svg;
 
-pub use scene::{MapStats, Scene, Shape, VizOptions};
+pub use scene::{MapStats, Scene, Shape, VizOptions, attribute, describe, describe_lanelet};
 pub use source::{CoordinateSource, LoadOptions, LoadedMap, load_osm_str};
 pub use style::{Color, Palette, Style, StyleTable, Theme, VizLayer};
 pub use svg::{SvgOptions, render_svg};

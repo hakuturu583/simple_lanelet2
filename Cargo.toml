@@ -18,6 +18,7 @@ ll2-projection = { path = "crates/ll2-projection" }
 ll2-routing = { path = "crates/ll2-routing" }
 ll2-traffic-rules = { path = "crates/ll2-traffic-rules" }
 ll2-viz = { path = "crates/ll2-viz" }
+ll2-rerun = { path = "crates/ll2-rerun" }
 
 parking_lot = "0.12"
 rstar = "0.13"

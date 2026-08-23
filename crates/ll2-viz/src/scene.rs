@@ -10,7 +10,7 @@
 use ll2_core::area::Area;
 use ll2_core::geometry::bbox::BoundingBox2d;
 use ll2_core::geometry::distance::distance_2d_point_point;
-use ll2_core::geometry::lanelet::{centerline_2d, outline_2d};
+use ll2_core::geometry::lanelet::{centerline_2d, mean_width_2d, outline_2d};
 use ll2_core::id::Id;
 use ll2_core::lanelet::Lanelet;
 use ll2_core::linestring::LineString;
@@ -298,7 +298,7 @@ impl Builder<'_> {
         if centerline.len() < 2 {
             return;
         }
-        let width = lanelet_width(lanelet).clamp(1.0, 6.0);
+        let width = mean_width_2d(lanelet).clamp(1.0, 6.0);
         let size = (width * 0.45).clamp(0.6, 2.5);
         let style = self.direction_style();
         let label = format!("{description} ▸");
@@ -358,16 +358,9 @@ impl Builder<'_> {
                 continue;
             };
             let attributes = line.attributes();
-            // `type` is the usual carrier, but Autoware's polygons sometimes name
-            // themselves through `subtype` instead.
             let kind = attribute(attributes, "type");
             let subtype = attribute(attributes, "subtype");
-            let key = if kind.is_empty() || kind == "polygon" {
-                subtype.clone()
-            } else {
-                kind.clone()
-            };
-            let style = style::polygon_style(&key, &self.palette);
+            let style = style::polygon_style(style::polygon_key(&kind, &subtype), &self.palette);
             let label = describe(line.id(), "polygon", &kind, &subtype);
             self.push(
                 VizLayer::Polygon,
@@ -393,11 +386,7 @@ impl Builder<'_> {
             let attributes = line.attributes();
             let kind = attribute(attributes, "type");
             let subtype = attribute(attributes, "subtype");
-            let layer = if style::is_regulatory_linestring(&kind) {
-                VizLayer::Regulatory
-            } else {
-                VizLayer::Bound
-            };
+            let layer = style::linestring_layer(&kind);
             if !self.options.wants_layer(layer) {
                 continue;
             }
@@ -431,7 +420,12 @@ impl Builder<'_> {
     }
 }
 
-fn attribute(attributes: &ll2_core::refs::Attrs, key: &str) -> String {
+/// One attribute's value, or the empty string when it is absent.
+///
+/// Public because every renderer built on this crate has to read the same handful
+/// of tags to label what it draws, and reading them twice is how two viewers end up
+/// disagreeing about what a primitive is called.
+pub fn attribute(attributes: &ll2_core::refs::Attrs, key: &str) -> String {
     attributes
         .read()
         .get(key)
@@ -460,26 +454,6 @@ fn area_outline(area: &Area) -> Vec<[f64; 2]> {
         }
     }
     outline
-}
-
-/// A lanelet's mean width, from the gap between its bounds at each end.
-///
-/// Four points, so it asks for four points: materialising both boundaries to read
-/// their ends would clone an `Arc` and take a lock per vertex, once per lanelet,
-/// for numbers already thrown away.
-fn lanelet_width(lanelet: &Lanelet) -> f64 {
-    let (left, right) = (lanelet.left_bound(), lanelet.right_bound());
-    let ends = [(left.front(), right.front()), (left.back(), right.back())];
-    let mut total = 0.0;
-    let mut count = 0.0;
-    for (a, b) in ends {
-        if let (Some(a), Some(b)) = (a, b) {
-            let ([ax, ay, _], [bx, by, _]) = (a.xyz(), b.xyz());
-            total += distance_2d_point_point([ax, ay], [bx, by]);
-            count += 1.0;
-        }
-    }
-    if count == 0.0 { 3.0 } else { total / count }
 }
 
 /// Positions and headings at roughly `spacing` metres along a polyline.
@@ -548,7 +522,9 @@ fn arrowhead(position: [f64; 2], heading: [f64; 2], size: f64) -> Vec<[f64; 2]> 
     ]
 }
 
-fn describe(id: Id, kind: &str, type_tag: &str, subtype: &str) -> String {
+/// The one-line description a tooltip, a status bar or a Rerun label shows for a
+/// primitive: what it is, which id it has, and the tags that classified it.
+pub fn describe(id: Id, kind: &str, type_tag: &str, subtype: &str) -> String {
     let mut text = format!("{kind} {id}");
     if !type_tag.is_empty() {
         text.push_str(" · ");
@@ -561,7 +537,9 @@ fn describe(id: Id, kind: &str, type_tag: &str, subtype: &str) -> String {
     text
 }
 
-fn describe_lanelet(lanelet: &Lanelet, subtype: &str) -> String {
+/// [`describe`] for a lanelet, which has more worth saying: its subtype, its speed
+/// limit and how many regulatory elements apply to it.
+pub fn describe_lanelet(lanelet: &Lanelet, subtype: &str) -> String {
     let mut text = format!("lanelet {}", lanelet.id());
     if !subtype.is_empty() {
         text.push_str(" · ");
