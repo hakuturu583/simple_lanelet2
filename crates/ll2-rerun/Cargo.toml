@@ -1,0 +1,22 @@
+[package]
+name = "ll2-rerun"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+# The rest of the workspace compiles on 1.85; the Rerun SDK asks for more. This
+# crate is outside the drop-in compatibility surface and nothing in the wheel
+# imports it, so it carries that requirement alone rather than raising it for
+# everyone.
+rust-version = "1.95"
+description = "Logs Lanelet2 maps into Rerun, for viewing in a Spatial3D view"
+
+[dependencies]
+ll2-core.workspace = true
+ll2-viz.workspace = true
+
+# `sdk` is the recording half of Rerun: enough to build archetypes, write an .rrd
+# and stream to a viewer. The default features drag in the viewer itself, the
+# dataframe API and the MCAP importers, none of which a map logger needs.
+rerun = { version = "0.36", default-features = false, features = ["sdk"] }

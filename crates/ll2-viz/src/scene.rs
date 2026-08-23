@@ -431,7 +431,12 @@ impl Builder<'_> {
     }
 }
 
-fn attribute(attributes: &ll2_core::refs::Attrs, key: &str) -> String {
+/// One attribute's value, or the empty string when it is absent.
+///
+/// Public because every renderer built on this crate has to read the same handful
+/// of tags to label what it draws, and reading them twice is how two viewers end up
+/// disagreeing about what a primitive is called.
+pub fn attribute(attributes: &ll2_core::refs::Attrs, key: &str) -> String {
     attributes
         .read()
         .get(key)
@@ -548,7 +553,9 @@ fn arrowhead(position: [f64; 2], heading: [f64; 2], size: f64) -> Vec<[f64; 2]> 
     ]
 }
 
-fn describe(id: Id, kind: &str, type_tag: &str, subtype: &str) -> String {
+/// The one-line description a tooltip, a status bar or a Rerun label shows for a
+/// primitive: what it is, which id it has, and the tags that classified it.
+pub fn describe(id: Id, kind: &str, type_tag: &str, subtype: &str) -> String {
     let mut text = format!("{kind} {id}");
     if !type_tag.is_empty() {
         text.push_str(" · ");
@@ -561,7 +568,9 @@ fn describe(id: Id, kind: &str, type_tag: &str, subtype: &str) -> String {
     text
 }
 
-fn describe_lanelet(lanelet: &Lanelet, subtype: &str) -> String {
+/// [`describe`] for a lanelet, which has more worth saying: its subtype, its speed
+/// limit and how many regulatory elements apply to it.
+pub fn describe_lanelet(lanelet: &Lanelet, subtype: &str) -> String {
     let mut text = format!("lanelet {}", lanelet.id());
     if !subtype.is_empty() {
         text.push_str(" · ");

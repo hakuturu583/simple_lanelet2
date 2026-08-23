@@ -87,11 +87,11 @@ cell, frames `web/embed.html` and drives it over `postMessage`.
 [both are live](https://hakuturu583.github.io/simple_lanelet2/embed-example.html).
 
 None of this is part of the drop-in Lanelet2 surface. Upstream has no viewer to be
-compatible with, so `ll2-viz` and `ll2-wasm` are outside the compatibility claim
-and have no Python bindings — nothing in the wheel imports them, and the diff
-harness does not touch them.
+compatible with, so `ll2-viz`, `ll2-wasm` and `ll2-rerun` are outside the
+compatibility claim and have no Python bindings — nothing in the wheel imports
+them, and the diff harness does not touch them.
 
-Two crates carry it, and neither needs a browser:
+Three crates carry it, and none of them needs a browser:
 
 - [`ll2-viz`](crates/ll2-viz) turns a `LaneletMap` into a `Scene` — a flat list of
   styled polylines and polygons in map coordinates — and renders one to SVG. It
@@ -101,15 +101,24 @@ Two crates carry it, and neither needs a browser:
 - [`ll2-wasm`](crates/ll2-wasm) hands a scene across the WebAssembly boundary as
   typed arrays, which is what lets the demo's `<canvas>` draw a city-scale map from
   a few dozen calls per frame.
+- [`ll2-rerun`](crates/ll2-rerun) logs the map into [Rerun](https://rerun.io) as 3D
+  archetypes, for a Spatial3D view. It reads the same tag-to-style table, so a map
+  is coloured the same there as it is here — but it keeps every node's `ele`
+  instead of flattening it, because the point of that viewer is having the map in
+  the same space as the lidar sweep, the ego pose and the trajectory beside it.
 
 ```rust
 // a .osm to an .svg, no browser involved
 let svg = ll2_viz::svg_from_osm(&text, &ll2_viz::VizOptions::default())?;
+
+// the same map in 3D, in a Rerun viewer it opens for you
+ll2_rerun::spawn_osm(&text, &ll2_rerun::MapOptions::default())?;
 ```
 
 ```bash
 just svg tests/data/mapping_example.osm map.svg   # the same thing from a shell
 just scene tests/data/mapping_example.osm s.json  # or the scene itself, to draw elsewhere
+just rrd tests/data/mapping_example.osm map.rrd   # or a Rerun recording, to open in 3D
 just web-serve                                    # the demo, on localhost:8000
 ```
 
@@ -119,6 +128,13 @@ A `Scene` being renderer-agnostic is meant literally: the SVG writer, the demo's
 serialiser — it writes the styled shapes, both palettes and the layer table as
 JSON, which is enough to draw the map somewhere this repository has never heard
 of.
+
+`ll2-rerun` is the one that does not read a `Scene`, and the reason is the only
+interesting thing about it: a `Scene` is flat. Rerun gets the map's own elevations
+instead, one entity per layer under `map/`, so the eight groups the SVG writer emits
+are eight checkboxes in the viewer's blueprint tree. Painter's order becomes two
+centimetres of real separation per layer, which is what stops a lane marking and the
+road it is painted on from fighting over the same depth value.
 
 The viewer differs from `lanelet2.io.load` in one deliberate way. It has no origin
 to be given, so it takes the median of the file's own latitudes and longitudes and
