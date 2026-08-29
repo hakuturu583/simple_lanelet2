@@ -14,14 +14,14 @@
 use ll2_core::area::Area;
 use ll2_core::geometry::bbox::{BoundingBox2d, BoundingBox3d};
 use ll2_core::geometry::lanelet::{centerline_3d, mean_width_2d, outline_3d};
-use ll2_core::geometry::linestring::distance_3d;
 use ll2_core::id::Id;
 use ll2_core::lanelet::Lanelet;
 use ll2_core::linestring::LineString;
 use ll2_core::map::{LaneletMap, as_area, as_lanelet, as_linestring, as_point};
 
+use crate::polyline::{Point3, sample_along};
 use crate::style::{self, Palette, Style, StyleTable, Theme, VizLayer};
-use crate::view::{Point3, View};
+use crate::view::View;
 
 /// What to draw, and how much of it.
 #[derive(Clone, Debug)]
@@ -208,13 +208,18 @@ impl Scene {
             };
         }
         let mut bounds = self.bounds;
-        for axis in 0..2 {
-            if (bounds.max[axis] - bounds.min[axis]).abs() < 1e-9 {
-                bounds.min[axis] -= 1.0;
-                bounds.max[axis] += 1.0;
-            }
-        }
+        widen_flat_axes(&mut bounds.min[..2], &mut bounds.max[..2]);
         bounds
+    }
+
+    /// Metres between the map's lowest point and its highest — how much relief there
+    /// is for a tilted view to show, and zero for the many files whose nodes carry no
+    /// `ele` at all. See [`crate::view::worth_tilting`].
+    pub fn relief(&self) -> f64 {
+        if self.bounds.is_empty() {
+            return 0.0;
+        }
+        (self.bounds.max[2] - self.bounds.min[2]).max(0.0)
     }
 
     /// The extent of the map *as `view` draws it*, on the page, never degenerate.
@@ -225,12 +230,7 @@ impl Scene {
     /// sits in the middle of the page with a band of nothing above and below it.
     pub fn view_bounds(&self, view: &View) -> BoundingBox2d {
         let mut bounds = view.project_bounds(&self.safe_bounds());
-        for axis in 0..2 {
-            if (bounds.max[axis] - bounds.min[axis]).abs() < 1e-9 {
-                bounds.min[axis] -= 1.0;
-                bounds.max[axis] += 1.0;
-            }
-        }
+        widen_flat_axes(&mut bounds.min, &mut bounds.max);
         bounds
     }
 
@@ -254,20 +254,42 @@ impl Scene {
         if view.is_plan() {
             return order;
         }
-        let band = |index: usize| {
-            self.styles
-                .get(self.shapes[index].style)
-                .map(|style| style.z)
-                .unwrap_or(0)
-        };
-        let depth: Vec<f64> = self.shapes.iter().map(|shape| shape.depth(view)).collect();
-        order.sort_by(|a, b| {
-            band(*a)
-                .cmp(&band(*b))
+        // Both keys in one linear pass. Deriving the band inside the comparator
+        // instead would chase a style index through the shape table twice per
+        // comparison — n log n scattered reads over tens of megabytes, for a value
+        // that does not change.
+        let keys: Vec<(i32, f64)> = self
+            .shapes
+            .iter()
+            .map(|shape| {
+                let band = self
+                    .styles
+                    .get(shape.style)
+                    .map(|style| style.z)
+                    .unwrap_or(0);
+                (band, shape.depth(view))
+            })
+            .collect();
+        order.sort_unstable_by(|a, b| {
+            keys[*a]
+                .0
+                .cmp(&keys[*b].0)
                 // Furthest first, so the nearest shape in a band is painted last.
-                .then_with(|| depth[*b].total_cmp(&depth[*a]))
+                .then_with(|| keys[*b].1.total_cmp(&keys[*a].1))
         });
         order
+    }
+}
+
+/// Widens any axis with no extent, so a caller fitting a view to a box never
+/// divides by zero. The threshold and the margin live here rather than at each of
+/// the two call sites that would otherwise state them.
+fn widen_flat_axes(min: &mut [f64], max: &mut [f64]) {
+    for (low, high) in min.iter_mut().zip(max) {
+        if (*high - *low).abs() < 1e-9 {
+            *low -= 1.0;
+            *high += 1.0;
+        }
     }
 }
 
@@ -510,14 +532,24 @@ pub fn attribute(attributes: &ll2_core::refs::Attrs, key: &str) -> String {
         .unwrap_or_default()
 }
 
-fn points_of(line: &LineString) -> Vec<Point3> {
+/// A linestring's vertices, elevation and all.
+///
+/// Public for the same reason [`attribute`] is: it is the one statement of how a
+/// Lanelet2 primitive becomes coordinates, and a renderer that writes its own
+/// gets to disagree about it.
+pub fn points_of(line: &LineString) -> Vec<Point3> {
     line.points()
         .iter()
         .map(ll2_core::point::Point::xyz)
         .collect()
 }
 
-fn area_outline(area: &Area) -> Vec<Point3> {
+/// An area's outer bound, stitched into one ring.
+///
+/// The members of a ring share their end points, so the joins are dropped as they
+/// are met; the ring is left closed — its last point repeats its first — for a
+/// caller that wants it that way.
+pub fn area_outline(area: &Area) -> Vec<Point3> {
     let mut outline: Vec<Point3> = Vec::new();
     for line in area.outer_bound() {
         for point in points_of(&line) {
@@ -528,62 +560,6 @@ fn area_outline(area: &Area) -> Vec<Point3> {
         }
     }
     outline
-}
-
-/// Positions and unit headings at roughly `spacing` metres along a polyline.
-///
-/// Distances are measured in three dimensions, so a ramp gets the arrows its own
-/// length earns rather than the shorter count its map-view shadow would.
-///
-/// Always yields at least one sample — a five-metre lanelet still gets an arrow,
-/// placed at its middle, because a lanelet with no arrow reads as one with no
-/// direction rather than as one that was too short to mark.
-fn sample_along(points: &[Point3], spacing: f64) -> Vec<(Point3, Point3)> {
-    let spacing = if spacing.is_finite() && spacing > 0.1 {
-        spacing
-    } else {
-        25.0
-    };
-    let lengths: Vec<f64> = points
-        .windows(2)
-        .map(|pair| distance_3d(pair[0], pair[1]))
-        .collect();
-    let total: f64 = lengths.iter().sum();
-    if total <= 0.0 {
-        return Vec::new();
-    }
-
-    let count = (total / spacing).floor().max(1.0) as usize;
-    let step = total / (count as f64 + 1.0);
-    let mut samples = Vec::with_capacity(count);
-    let mut target = step;
-    let mut travelled = 0.0;
-
-    for (index, length) in lengths.iter().enumerate() {
-        if *length <= 0.0 {
-            continue;
-        }
-        let (start, end) = (points[index], points[index + 1]);
-        let heading = [
-            (end[0] - start[0]) / length,
-            (end[1] - start[1]) / length,
-            (end[2] - start[2]) / length,
-        ];
-        while target <= travelled + length && samples.len() < count {
-            let ratio = (target - travelled) / length;
-            samples.push((
-                [
-                    start[0] + (end[0] - start[0]) * ratio,
-                    start[1] + (end[1] - start[1]) * ratio,
-                    start[2] + (end[2] - start[2]) * ratio,
-                ],
-                heading,
-            ));
-            target += step;
-        }
-        travelled += length;
-    }
-    samples
 }
 
 /// A triangle of the given size pointing along `heading`.
@@ -875,6 +851,13 @@ mod tests {
         }
         assert_eq!(scene.bounds.min[2], 4.0);
         assert_eq!(scene.bounds.max[2], 9.0);
+        assert_eq!(scene.relief(), 5.0);
+        // A flat map has no relief to show, and neither has an empty one.
+        assert_eq!(Scene::from_map(&one_lanelet_map(), &options).relief(), 0.0);
+        assert_eq!(
+            Scene::from_map(&LaneletMap::new_map(), &options).relief(),
+            0.0
+        );
     }
 
     /// Seen from above, two shapes cannot hide each other and the style's z band is
@@ -915,6 +898,36 @@ mod tests {
             scene.draw_order(&View::plan()),
             (0..scene.shapes.len()).collect::<Vec<_>>()
         );
+    }
+
+    /// The SVG writer emits one `<g>` per layer by starting a new group whenever
+    /// the layer changes along the draw order, which only produces one group per
+    /// layer while every style in a layer shares one z band. That holds today by
+    /// construction rather than by rule, and depth sorting inside a band is what
+    /// would expose it: interleave two layers and the export silently grows a
+    /// second `<g>` for each. So it is checked on a real map, tilted.
+    #[test]
+    fn a_layer_stays_in_one_run_of_the_draw_order() {
+        let text = std::fs::read_to_string("../../tests/data/mapping_example.osm").unwrap();
+        let loaded = crate::load_osm_str(&text, &crate::LoadOptions::default()).unwrap();
+        let options = VizOptions {
+            centerlines: true,
+            points: true,
+            ..VizOptions::default()
+        };
+        let scene = Scene::from_map(&loaded.map, &options);
+        let mut seen: Vec<VizLayer> = Vec::new();
+        let mut previous: Option<VizLayer> = None;
+        for index in scene.draw_order(&View::three_quarter()) {
+            let layer = scene.shapes[index].layer;
+            if previous == Some(layer) {
+                continue;
+            }
+            assert!(!seen.contains(&layer), "{layer:?} comes back after a gap");
+            seen.push(layer);
+            previous = Some(layer);
+        }
+        assert!(seen.len() > 4, "only saw {seen:?}");
     }
 
     /// Depth decides *within* a band, never across one. A lane marking belongs to

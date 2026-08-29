@@ -9,6 +9,14 @@
 //! three-dimensional; a flat renderer reads every third number and ignores it.
 //! `bounds` is `[minX, minY, minZ, maxX, maxY, maxZ]` in the same units, relative to
 //! `centre` in x and y and absolute in z.
+//!
+//! What is *not* here is the camera. A reader that wants the plan view has it — drop
+//! every third number — but one that wants relief has to project for itself, and
+//! `ll2_viz::view` is the statement of how: orthographic, screen x never
+//! foreshortened, y up in metres, elevation exaggerated before the tilt is applied.
+//! Handing over the map rather than a picture of it is the point of this file, so
+//! that is the right way round; it does mean a third renderer that wants 3D costs a
+//! serialiser plus a camera rather than a serialiser alone.
 use std::fmt::Write as _;
 
 fn main() {

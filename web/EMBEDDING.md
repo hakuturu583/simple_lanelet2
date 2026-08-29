@@ -73,7 +73,8 @@ await viewer.loadOsm(osmText);
 | `setLayers(keysOrMap)` / `getLayers()` | show and hide layers; instant, no reparse |
 | `setDrawPoints(bool)` | individual map points — one of the two options that rebuild |
 | `setView3d(bool\|{enabled, yaw, pitch, exaggeration})` / `getView3d()` | draw the map in relief instead of from straight above; rebuilds, and refits |
-| `viewer.relief` | metres from the map's lowest point to its highest, `0` when its nodes carry no `ele` |
+| `viewer.relief` / `viewer.hasRelief` | metres from the map's lowest point to its highest, and whether that is enough to be worth a 3D view |
+| `CAMERA` | the default camera and the range Rust clamps it to, from Rust — populated once `ready` resolves |
 | `setCoordinates('auto'\|'projected'\|'local')` | re-reads the file |
 | `setBackground(colour\|'transparent'\|null)` | `null` uses the theme's own |
 | `setInteractive(bool)` | off for a static picture |
@@ -89,7 +90,7 @@ await viewer.loadOsm(osmText);
 Events, as `CustomEvent`s: `loadstart`, `load`, `error`, `hover`, `select`,
 `viewchange`, `view3dchange`. `hover` and `select` carry `{id, label, layer}` or
 `null`; `load` carries `{name, stats, errors, problems, coordinateSource,
-projection, origin, bounds, relief}`, where `errors` is upstream's `loadRobust`
+projection, origin, bounds, relief, hasRelief}`, where `errors` is upstream's `loadRobust`
 shape — a header line then one line per problem — and `problems` is how many that
 is. `view3dchange` carries `{enabled, yaw, pitch, exaggeration}`, and fires for the
 viewer's own 3D button as well as for `setView3d` — a host with a control of its
@@ -105,8 +106,10 @@ legible on a map that is kilometres wide.
 Three consequences worth knowing before you build a control for it:
 
 * **It rebuilds.** The projection happens in Rust and what crosses to the canvas is
-  already flat, so a camera move costs a scene rebuild rather than a repaint. Fine
-  for a slider, wrong for a drag-to-orbit on a city-scale map.
+  already flat, so a camera move costs a scene rebuild rather than a repaint. The
+  viewer coalesces those to one a frame and ignores a camera that changes nothing,
+  which is what makes a slider affordable; a drag-to-orbit on a city-scale map is
+  still the wrong shape for it.
 * **It refits.** Tilting moves everything on the page, so the viewer reframes rather
   than leaving the map half out of view. A host holding a `getView()` from before
   should re-read it after.
@@ -114,9 +117,13 @@ Three consequences worth knowing before you build a control for it:
   map coordinate at the centre of the screen. The scale bar does stay honest: the
   projection never foreshortens screen x.
 
-Check `viewer.relief` before offering it. Plenty of maps carry no `ele` at all, and
-tilting one of those gives a flat sheet at an angle — which reads as a broken viewer
-rather than as a map with nothing to show.
+Check `viewer.hasRelief` before offering it: plenty of maps carry no `ele` at all,
+and tilting one of those gives a flat sheet at an angle, which reads as a broken
+viewer rather than as a map with nothing to show. Where the threshold sits is Rust's
+answer rather than yours — it is `CAMERA.minRelief` — so a host, the viewer's own 3D
+button and the SVG exporter all agree about which files are worth it. A viewer
+already in 3D that is handed a flat map drops back to the plan view by itself and
+says so on `view3dchange`.
 
 Layer keys: `lanelet_fill`, `area`, `polygon`, `bound`, `regulatory`,
 `centerline`, `direction`, `point`. The list is not written down here twice: it
@@ -221,7 +228,7 @@ frame.contentWindow.postMessage({ type: 'lanelet2.load', osm: text }, '*');
 | --- | --- |
 | `lanelet2.ready` | `{version}` — post nothing before this arrives |
 | `lanelet2.loadstart` | `{name}` |
-| `lanelet2.loaded` | `{name, stats, errors, coordinateSource, projection, origin, bounds, relief}` |
+| `lanelet2.loaded` | `{name, stats, errors, coordinateSource, projection, origin, bounds, relief, hasRelief}` |
 | `lanelet2.error` | `{message}` |
 | `lanelet2.hover` / `lanelet2.select` | `{shape}` — `{id, label, layer}` or `null` |
 | `lanelet2.view` | `{x, y, scale}` |

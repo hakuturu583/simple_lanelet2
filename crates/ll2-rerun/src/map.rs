@@ -12,11 +12,11 @@
 //! it the entity path too means a map looks the same and is called the same thing
 //! whichever of the three you are looking at.
 
-use ll2_core::area::Area;
 use ll2_core::geometry::lanelet::{centerline_3d, mean_width_2d};
 use ll2_core::lanelet::Lanelet;
-use ll2_core::linestring::LineString;
 use ll2_core::map::{LaneletMap, as_area, as_lanelet, as_linestring, as_point};
+use ll2_viz::polyline::sample_along;
+use ll2_viz::scene::{area_outline, points_of};
 use ll2_viz::style::{self, Color, Palette, Style};
 use ll2_viz::{MapStats, VizLayer, VizOptions, attribute, describe, describe_lanelet};
 use rerun::{
@@ -274,8 +274,8 @@ impl<'a> Builder<'a> {
             let subtype = attribute(lanelet.attributes(), "subtype");
 
             if wants_fill {
-                let left = points_3d(&lanelet.left_bound());
-                let right = points_3d(&lanelet.right_bound());
+                let left = points_of(&lanelet.left_bound());
+                let right = points_of(&lanelet.right_bound());
                 let (positions, triangles) = geometry::ribbon(&left, &right);
                 let fill = style::lanelet_style(&subtype, &self.palette);
                 self.lanelet_fill
@@ -311,9 +311,7 @@ impl<'a> Builder<'a> {
         let size = (mean_width_2d(lanelet).clamp(1.0, 6.0) * 0.9).clamp(1.2, 5.0);
         let label = format!("{description} ▸");
         let lift = self.lift(VizLayer::Direction);
-        for (position, heading) in
-            geometry::sample_along(centerline, self.options.viz.arrow_spacing)
-        {
+        for (position, heading) in sample_along(centerline, self.options.viz.arrow_spacing) {
             self.direction
                 .push(position, heading, size, label.clone(), lift);
         }
@@ -328,7 +326,7 @@ impl<'a> Builder<'a> {
             let Some(area) = as_area(&primitive) else {
                 continue;
             };
-            let ring = area_ring(area);
+            let ring = open_ring(area_outline(area));
             if ring.len() < 3 {
                 continue;
             }
@@ -349,7 +347,7 @@ impl<'a> Builder<'a> {
             let Some(line) = as_linestring(&primitive) else {
                 continue;
             };
-            let ring = open_ring(points_3d(line));
+            let ring = open_ring(points_of(line));
             if ring.len() < 3 {
                 continue;
             }
@@ -388,7 +386,7 @@ impl<'a> Builder<'a> {
             if !self.options.viz.wants_layer(layer) {
                 continue;
             }
-            let points = points_3d(line);
+            let points = points_of(line);
             if points.len() < 2 {
                 continue;
             }
@@ -653,36 +651,17 @@ impl PointParts {
 
 // --- small helpers ------------------------------------------------------------
 
-fn points_3d(line: &LineString) -> Vec<Point3> {
-    line.points()
-        .iter()
-        .map(ll2_core::point::Point::xyz)
-        .collect()
-}
-
 /// A ring with its closing vertex removed, if it has one.
 ///
 /// Ways in an OSM file repeat their first node to close themselves; a triangulator
 /// treats that repeat as a zero-length edge and a vertex that can never be an ear.
+/// A renderer that fills a path does not care, which is why this is the one part of
+/// building a ring that is not shared with [`ll2_viz::scene::area_outline`].
 fn open_ring(mut ring: Vec<Point3>) -> Vec<Point3> {
     if ring.len() > 1 && ring.first() == ring.last() {
         ring.pop();
     }
     ring
-}
-
-/// An area's outer boundary, walked into one ring.
-fn area_ring(area: &Area) -> Vec<Point3> {
-    let mut ring: Vec<Point3> = Vec::new();
-    for line in area.outer_bound() {
-        for point in points_3d(&line) {
-            // Consecutive members of a ring share their end points.
-            if ring.last() != Some(&point) {
-                ring.push(point);
-            }
-        }
-    }
-    open_ring(ring)
 }
 
 /// A palette colour at an opacity, as Rerun wants it.
@@ -712,6 +691,7 @@ mod tests {
     use super::*;
     use ll2_core::attribute::{Attribute, AttributeMap};
     use ll2_core::id::Id;
+    use ll2_core::linestring::LineString;
     use ll2_core::map::Primitive;
     use ll2_core::point::Point;
     use ll2_viz::Theme;

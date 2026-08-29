@@ -75,6 +75,14 @@ pub struct LoadedMap {
     pub coordinates: CoordinateSource,
     /// Whether the file carried a UTM zone the origin could be placed in.
     pub projection: &'static str,
+    /// Metres between the file's lowest node and its highest.
+    ///
+    /// A fact about the file rather than about anything drawn from it, which is why
+    /// it is answered here: a caller deciding whether to offer a 3D view can ask
+    /// before it has built a scene, and the answer cannot change when it builds
+    /// another. Zero for the many maps whose nodes carry no `ele` at all — see
+    /// [`crate::view::worth_tilting`].
+    pub relief: f64,
 }
 
 /// Reads OSM XML into a map, deciding the projection from the file itself.
@@ -122,6 +130,7 @@ pub fn load_osm_str(text: &str, options: &LoadOptions) -> Result<LoadedMap, Stri
     }
 
     let problems = errors.len();
+    let relief = relief(&map);
     Ok(LoadedMap {
         map,
         errors: ll2_io::wrap_errors(ll2_io::PARSE_ERROR_HEADER, errors),
@@ -129,7 +138,25 @@ pub fn load_osm_str(text: &str, options: &LoadOptions) -> Result<LoadedMap, Stri
         origin,
         coordinates,
         projection,
+        relief,
     })
+}
+
+/// The elevation span of a map's nodes, in metres, and zero when it has none.
+fn relief(map: &LaneletMap) -> f64 {
+    let mut low = f64::INFINITY;
+    let mut high = f64::NEG_INFINITY;
+    for primitive in map.points.all() {
+        let Some(point) = as_point(&primitive) else {
+            continue;
+        };
+        let [_, _, z] = point.xyz();
+        if z.is_finite() {
+            low = low.min(z);
+            high = high.max(z);
+        }
+    }
+    if low > high { 0.0 } else { high - low }
 }
 
 /// Picks the coordinate source, given how big the map turns out to be either way.
@@ -417,5 +444,22 @@ mod tests {
         let loaded = load_osm_str(&text, &LoadOptions::default()).unwrap();
         assert!(loaded.map.lanelets.len() > 50);
         assert_eq!(loaded.coordinates, CoordinateSource::Projected);
+    }
+
+    /// Whether a map has an elevation is a question about the file, answerable
+    /// before anything is drawn from it — which is the point of it living here.
+    #[test]
+    fn the_relief_comes_from_the_file_and_is_zero_when_it_has_none() {
+        let flat = load_osm_str(GEOREFERENCED, &LoadOptions::default()).unwrap();
+        assert_eq!(flat.relief, 0.0);
+        assert!(!crate::view::worth_tilting(flat.relief));
+
+        let hilly = GEOREFERENCED.replace(
+            "<node id='4' lat='49.0001000' lon='8.4010000'/>",
+            "<node id='4' lat='49.0001000' lon='8.4010000'><tag k='ele' v='31'/></node>",
+        );
+        let loaded = load_osm_str(&hilly, &LoadOptions::default()).unwrap();
+        assert!((loaded.relief - 31.0).abs() < 1e-6, "{}", loaded.relief);
+        assert!(crate::view::worth_tilting(loaded.relief));
     }
 }

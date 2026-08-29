@@ -78,6 +78,29 @@ pub fn layers() -> String {
     out
 }
 
+/// The 3D camera a viewer should start from, as
+/// `{"yaw":…,"pitch":…,"exaggeration":…,"pitchRange":[…],"exaggerationRange":[…],
+/// "minRelief":…}`.
+///
+/// A free function for the same reason [`layers`] is one: these are Rust's numbers,
+/// and a renderer that hardcoded its own would be stating a second opinion about
+/// what a map looks like with nothing to keep the two in step. The ranges are the
+/// angles [`View::oblique`] will actually honour, so a slider built from them cannot
+/// ask for a camera it will not get, and `minRelief` is the elevation span below
+/// which offering 3D at all is a disservice.
+#[wasm_bindgen]
+pub fn camera() -> String {
+    let view = View::three_quarter();
+    format!(
+        "{{\"yaw\":{},\"pitch\":{},\"exaggeration\":{},\
+         \"pitchRange\":[1,90],\"exaggerationRange\":[0,100],\"minRelief\":{}}}",
+        view.yaw(),
+        view.pitch(),
+        view.exaggeration(),
+        ll2_viz::view::MIN_USEFUL_RELIEF,
+    )
+}
+
 /// What to draw. Construct with `new SceneOptions()` and assign to the fields.
 #[wasm_bindgen(getter_with_clone)]
 #[derive(Clone, Debug)]
@@ -243,6 +266,24 @@ impl LaneletMapHandle {
         self.loaded.projection.to_owned()
     }
 
+    /// Metres between the map's lowest node and its highest.
+    ///
+    /// A fact about the file, so it is answered here beside the other ones rather
+    /// than by a scene: a caller deciding whether to offer a 3D view can ask before
+    /// it has built anything, and the answer cannot change when it builds another.
+    pub fn relief(&self) -> f64 {
+        self.loaded.relief
+    }
+
+    /// Whether this map has enough relief to be worth drawing in 3D.
+    ///
+    /// The threshold is Rust's — see `camera()`'s `minRelief` — because "is a tilted
+    /// view of this map worth showing?" is one decision, and a viewer that answered
+    /// it separately would disagree with the SVG exporter about the same file.
+    pub fn has_relief(&self) -> bool {
+        ll2_viz::worth_tilting(self.loaded.relief)
+    }
+
     pub fn origin_lat(&self) -> f64 {
         self.loaded.origin.lat
     }
@@ -305,7 +346,6 @@ pub struct SceneData {
     centre: [f64; 2],
     min: [f64; 2],
     max: [f64; 2],
-    relief: f64,
     styles_json: String,
     background: String,
     highlight: String,
@@ -316,10 +356,9 @@ impl SceneData {
     ///
     /// Everything downstream — the paths, the spatial index, the hit testing, the
     /// fit — works in the projected frame, so it needs no notion of a third
-    /// dimension. The one thing that does not survive the projection is the map's
-    /// own relief, which is why it is measured here and carried over separately.
+    /// dimension. What the projection discards, the map's own relief, is a fact
+    /// about the file and is answered by `LaneletMapHandle::relief` instead.
     fn build(scene: Scene, view: View) -> SceneData {
-        let map_bounds = scene.safe_bounds();
         let bounds = scene.view_bounds(&view);
         // Everything the table and the palette need, before the shapes are moved
         // out from under them.
@@ -376,7 +415,6 @@ impl SceneData {
             centre,
             min: bounds.min,
             max: bounds.max,
-            relief: (map_bounds.max[2] - map_bounds.min[2]).max(0.0),
             styles_json,
             background: palette.background.to_hex(),
             highlight: palette.highlight.to_hex(),
@@ -441,15 +479,6 @@ impl SceneData {
     /// they are shorter along y than the map is, because that is what a tilt does.
     pub fn bounds(&self) -> Vec<f64> {
         vec![self.min[0], self.min[1], self.max[0], self.max[1]]
-    }
-
-    /// Metres between the map's lowest and highest point.
-    ///
-    /// Zero for the many maps whose nodes carry no `ele` at all — worth asking
-    /// before offering to draw one in 3D, since a tilted view of a flat map is a
-    /// tilted flat sheet and looks like a broken renderer rather than like a map.
-    pub fn relief(&self) -> f64 {
-        self.relief
     }
 
     /// The style table: `[{"name":…,"label":…,"stroke":…,"fill":…,…}, …]`, indexed
@@ -755,16 +784,33 @@ mod tests {
     /// camera, so it is answered the same way whichever view is asked for.
     #[test]
     fn the_relief_is_reported_so_a_caller_can_tell_a_flat_map_from_a_hill() {
-        let flat = LaneletMapHandle::parse(MAP, "auto")
-            .unwrap()
-            .build_scene(&SceneOptions::new());
+        // Answered by the file, before any scene is built and whatever camera a
+        // later one is built with.
+        let flat = LaneletMapHandle::parse(MAP, "auto").unwrap();
         assert_eq!(flat.relief(), 0.0);
+        assert!(!flat.has_relief());
 
         let handle = LaneletMapHandle::parse(RAISED, "auto").unwrap();
-        let mut options = SceneOptions::new();
-        options.three_d = true;
-        assert!((handle.build_scene(&options).relief() - 20.0).abs() < 0.5);
-        assert!((handle.build_scene(&SceneOptions::new()).relief() - 20.0).abs() < 0.5);
+        assert!((handle.relief() - 20.0).abs() < 0.5);
+        assert!(handle.has_relief());
+    }
+
+    /// The camera a viewer starts from is Rust's to state, like the layer table.
+    #[test]
+    fn the_default_camera_crosses_with_the_range_it_will_be_clamped_to() {
+        let table = camera();
+        let view = View::three_quarter();
+        assert!(
+            table.contains(&format!("\"pitch\":{}", view.pitch())),
+            "{table}"
+        );
+        assert!(table.contains("\"pitchRange\":[1,90]"), "{table}");
+        assert!(table.contains("\"minRelief\":0.5"), "{table}");
+        // The advertised range is the one `View::oblique` honours, so a slider built
+        // from it cannot ask for a camera it will not get.
+        assert_eq!(View::oblique(0.0, 1.0, 0.0).pitch(), 1.0);
+        assert_eq!(View::oblique(0.0, -5.0, 0.0).pitch(), 1.0);
+        assert_eq!(View::oblique(10.0, 200.0, 1.0).pitch(), 90.0);
     }
 
     #[test]

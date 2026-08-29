@@ -142,12 +142,14 @@ of.
 
 The third dimension is in the `Scene`, not in the renderers: every vertex carries the
 elevation its node had, and flattening happens once, at the very end, through the
-`View` a renderer is given. So the SVG writer, the demo's `<canvas>` and the JSON
-serialiser all draw the map in relief without any of them knowing how — what crosses
-to the browser is still two floats per vertex, already projected and already in
-painter's order, and the canvas needs no depth buffer to show a bridge over a road.
-Turning the camera rebuilds the scene rather than redrawing it, which is the right
-trade for a viewpoint that is chosen and then looked at.
+`View` a renderer is given. So the SVG writer and the demo's `<canvas>` both draw the
+map in relief without either of them knowing how — what crosses to the browser is
+still two floats per vertex, already projected and already in painter's order, and
+the canvas needs no depth buffer to show a bridge over a road. Turning the camera
+rebuilds the scene rather than redrawing it, which is the right trade for a viewpoint
+that is chosen and then looked at. The JSON serialiser is the exception, and
+deliberately so: it hands over the unprojected three dimensions and leaves the camera
+to whatever is drawing them.
 
 `ll2-rerun` is the one that does not read a `Scene`, and the reason survives that: it
 builds surfaces rather than outlines — ear-clipped rings, lanelets stitched into

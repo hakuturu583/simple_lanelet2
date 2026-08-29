@@ -118,7 +118,8 @@ check(svg.trimEnd().endsWith('</svg>'), 'the SVG document is closed');
 
 // The 3D view crosses the boundary as the same arrays with different numbers in
 // them, which is the whole reason the canvas renderer needs no notion of it.
-check(scene.relief() > 0, 'the example map has some elevation to draw');
+check(handle.relief() > 0, 'the example map has some elevation to draw');
+check(handle.has_relief(), 'and enough of it to be worth tilting');
 options.three_d = true;
 const tilted = handle.build_scene(options);
 const tiltedCoords = tilted.coords();
@@ -128,9 +129,20 @@ check(
   tiltedCoords.some((value, index) => value !== coords[index]),
   'and different coordinates in it',
 );
-check(tilted.relief() === scene.relief(), "the map's relief does not depend on the camera");
 check(handle.to_svg(options, 800, 600) !== svg, 'the SVG export follows the camera too');
 options.three_d = false;
+
+// The default camera is Rust's, so a renderer never states one of its own.
+const cameraTable = JSON.parse(wasm.camera());
+check(
+  Number.isFinite(cameraTable.yaw) && Number.isFinite(cameraTable.pitch),
+  'the default camera crosses as numbers',
+);
+check(
+  cameraTable.pitchRange[0] < cameraTable.pitch && cameraTable.pitch <= cameraTable.pitchRange[1],
+  'and sits inside the range it advertises',
+);
+check(cameraTable.minRelief > 0, 'and says how much relief is worth tilting');
 
 let threw = false;
 try {

@@ -73,7 +73,7 @@
 // arrives. Genuine transparency is available, reliably, by importing `viewer.js`
 // into the host document rather than framing this page.
 
-import { LaneletViewer, readFlag, splitList } from './viewer.js';
+import { LaneletViewer, readCamera, readFlag, splitList } from './viewer.js';
 
 const parameters = new URLSearchParams(location.search);
 const messageElement = document.getElementById('message');
@@ -94,23 +94,10 @@ const viewer = new LaneletViewer(document.getElementById('viewer'), {
   interactive: flag('interactive', true),
   background: parameters.get('background'),
   threeD: flag('3d', false),
-  ...camera(),
+  // `?exaggerate=` reads better in a URL than `?exaggeration=`, so it is the one
+  // name this page translates; the rest of the rule is `readCamera`'s.
+  ...readCamera((key) => parameters.get(key === 'exaggeration' ? 'exaggerate' : key)),
 });
-
-/// The camera angles that were actually given. An absent one is left out rather
-/// than passed as `undefined`, which would overwrite the viewer's own default.
-function camera() {
-  const angles = {};
-  for (const [name, key] of [
-    ['yaw', 'yaw'],
-    ['pitch', 'pitch'],
-    ['exaggerate', 'exaggeration'],
-  ]) {
-    const value = Number(parameters.get(name));
-    if (parameters.has(name) && Number.isFinite(value)) angles[key] = value;
-  }
-  return angles;
-}
 
 for (const [type, build] of [
   ['loadstart', (detail) => ({ name: detail.name })],

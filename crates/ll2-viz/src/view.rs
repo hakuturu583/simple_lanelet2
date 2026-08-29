@@ -28,8 +28,21 @@
 
 use ll2_core::geometry::bbox::{BoundingBox2d, BoundingBox3d};
 
-/// A point in map coordinates: metres, x east, y north, z up.
-pub type Point3 = [f64; 3];
+use crate::polyline::Point3;
+
+/// Metres of relief below which tilting the camera is not worth offering.
+///
+/// A Lanelet2 map is not required to carry `ele`, and plenty do not. Tilting one of
+/// those gives a flat sheet at an angle, which reads as a broken renderer rather
+/// than as a map with nothing to show — so the answer is stated once, here, and
+/// every caller that offers a 3D view asks [`worth_tilting`] rather than inventing
+/// a threshold of its own.
+pub const MIN_USEFUL_RELIEF: f64 = 0.5;
+
+/// Whether a map with this much relief, in metres, has anything to show in 3D.
+pub fn worth_tilting(relief: f64) -> bool {
+    relief.is_finite() && relief >= MIN_USEFUL_RELIEF
+}
 
 /// The direction the map is seen from.
 ///
@@ -42,8 +55,15 @@ pub struct View {
     exaggeration: f64,
     cos_yaw: f64,
     sin_yaw: f64,
-    cos_pitch: f64,
+    /// The two products every projected vertex needs, folded together here so the
+    /// hot loop is a multiply-add rather than two multiplies and a lookup: how far
+    /// up the page a metre of elevation moves a point, and how much nearer to the
+    /// viewer it brings it.
+    lift: f64,
+    sink: f64,
+    /// How much of the map's own northing survives onto the page, and into depth.
     sin_pitch: f64,
+    cos_pitch: f64,
     plan: bool,
 }
 
@@ -64,8 +84,12 @@ impl View {
             exaggeration: 1.0,
             cos_yaw: 1.0,
             sin_yaw: 0.0,
-            cos_pitch: 0.0,
+            // Never read — every consumer takes the `plan` branch first — but kept
+            // consistent so the derived `PartialEq` agrees with `oblique(0, 90, 1)`.
+            lift: 0.0,
+            sink: 1.0,
             sin_pitch: 1.0,
+            cos_pitch: 0.0,
             plan: true,
         }
     }
@@ -111,8 +135,10 @@ impl View {
             exaggeration,
             cos_yaw,
             sin_yaw,
-            cos_pitch,
+            lift: exaggeration * cos_pitch,
+            sink: exaggeration * sin_pitch,
             sin_pitch,
+            cos_pitch,
             plan: false,
         }
     }
@@ -151,10 +177,7 @@ impl View {
         }
         let east = point[0] * self.cos_yaw + point[1] * self.sin_yaw;
         let north = point[1] * self.cos_yaw - point[0] * self.sin_yaw;
-        [
-            east,
-            north * self.sin_pitch + point[2] * self.exaggeration * self.cos_pitch,
-        ]
+        [east, north * self.sin_pitch + point[2] * self.lift]
     }
 
     /// How far a point is from the viewer, in metres along the line of sight.
@@ -167,7 +190,7 @@ impl View {
             return -point[2];
         }
         let north = point[1] * self.cos_yaw - point[0] * self.sin_yaw;
-        north * self.cos_pitch - point[2] * self.exaggeration * self.sin_pitch
+        north * self.cos_pitch - point[2] * self.sink
     }
 
     /// The box a projected box occupies on the page.
@@ -289,19 +312,25 @@ mod tests {
         };
         let view = View::oblique(25.0, 50.0, 2.0);
         let projected = view.project_bounds(&bounds);
-        for corner in 0..8u8 {
-            let axis = |index: usize| {
-                if corner >> index & 1 == 0 {
-                    bounds.min[index]
-                } else {
-                    bounds.max[index]
-                }
-            };
-            let point = view.project([axis(0), axis(1), axis(2)]);
+        // The eight corners written out, rather than re-deriving them the way
+        // `project_bounds` does — a test that restates the code proves nothing.
+        for corner in [
+            [-10.0, -20.0, 0.0],
+            [-10.0, -20.0, 12.0],
+            [-10.0, 40.0, 0.0],
+            [-10.0, 40.0, 12.0],
+            [30.0, -20.0, 0.0],
+            [30.0, -20.0, 12.0],
+            [30.0, 40.0, 0.0],
+            [30.0, 40.0, 12.0],
+        ] {
+            let point = view.project(corner);
             assert!(projected.contains(point), "{point:?} outside {projected:?}");
         }
-        // And it is tight, not merely covering: the plan view of the same box is
-        // the box itself.
+        // Tight, not merely covering: an interior point cannot reach a boundary the
+        // corners did not already touch.
+        assert!(projected.contains(view.project([5.0, 0.0, 6.0])));
+        // And the plan view of the box is the box itself.
         assert_eq!(
             View::plan().project_bounds(&bounds),
             BoundingBox2d {

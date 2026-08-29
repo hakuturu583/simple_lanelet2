@@ -15,6 +15,7 @@
 //! * [`view`] says where the map is looked at from, and is what turns those three
 //!   coordinates into the two a page has room for. The default is the map view;
 //!   [`View::oblique`] is the 3D one, and is where a map's relief becomes visible.
+//!   [`polyline`] holds the small amount of 3D arithmetic they share.
 //! * [`svg`] draws a scene. So does the `<canvas>` in this repository's web demo,
 //!   from the same scene across a WebAssembly boundary — which is the point of the
 //!   scene being renderer-agnostic rather than an SVG builder.
@@ -61,17 +62,19 @@
 //! );
 //! ```
 
+pub mod polyline;
 pub mod scene;
 pub mod source;
 pub mod style;
 pub mod svg;
 pub mod view;
 
+pub use polyline::{Point3, sample_along};
 pub use scene::{MapStats, Scene, Shape, VizOptions, attribute, describe, describe_lanelet};
 pub use source::{CoordinateSource, LoadOptions, LoadedMap, load_osm_str};
 pub use style::{Color, Palette, Style, StyleTable, Theme, VizLayer};
 pub use svg::{SvgOptions, render_svg};
-pub use view::{Point3, View};
+pub use view::{View, worth_tilting};
 
 /// Reads OSM XML and renders it as an SVG document, at the default page size.
 ///

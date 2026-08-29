@@ -160,9 +160,20 @@ try {
     );
     // Tilting refits the map, so the zoom the wheel left behind is gone.
     check(scaleBefore !== (await scaleLabel()), 'turning on 3D reframes the map');
-    await page.fill('#pitch-input', '25');
-    await page.dispatchEvent('#pitch-input', 'input');
+    // A slider drag has to reach Rust and come back. Rotation is the observable
+    // one: the projection never foreshortens screen x, so a tilt leaves the fit
+    // (and the scale bar) alone on a map this much wider than it is tall, while a
+    // turn swings the map's long side across it.
+    // The bar's width in pixels rather than its label: the label is rounded to a
+    // 1/2/5 step and a refit often lands on the same one.
+    const scaleWidth = () =>
+      page.evaluate(
+        () => document.querySelector('#viewer > div').shadowRoot.querySelector('.scalebar .bar').style.width,
+      );
+    const turnedBefore = await scaleWidth();
+    await page.fill('#yaw-input', '90');
     await page.waitForTimeout(400);
+    check(turnedBefore !== (await scaleWidth()), 'the rotation slider moves the camera');
     await page.uncheck('#three-d-toggle');
     await page.waitForTimeout(400);
     check(
@@ -265,31 +276,44 @@ try {
 
     // The 3D view, where the geometry is actually reachable: the same shapes, the
     // same style table, different coordinates, and the projection done in Rust.
-    const relief = await page.$eval('#element', async (element) => {
+    const tilted = await page.$eval('#element', async (element) => {
       const viewer = element.viewer;
       const before = Array.from(viewer._geometry.coords.slice(0, 400));
       const shapes = viewer._geometry.count;
       const events = [];
       viewer.addEventListener('view3dchange', (event) => events.push(event.detail));
       viewer.setView3d({ enabled: true, pitch: 40, exaggeration: 5 });
+      // Three more that change nothing: the same camera again, and two angle
+      // changes while the map view is on. None may cost a rebuild.
+      viewer.setView3d({ enabled: true, pitch: 40, exaggeration: 5 });
       await new Promise((resolve) => setTimeout(resolve, 600));
       const after = Array.from(viewer._geometry.coords.slice(0, 400));
-      const announced = events.length === 1 && events[0].enabled && events[0].pitch === 40;
       viewer.setView3d(false);
+      viewer.setView3d({ yaw: 123 });
+      await new Promise((resolve) => setTimeout(resolve, 300));
       return {
         relief: viewer.relief,
+        hasRelief: viewer.hasRelief,
         shapes: viewer._geometry.count === shapes,
         moved: after.some((value, index) => value !== before[index]),
         length: after.length === before.length,
-        // One event for the way in and one for the way out, and the second says
-        // the camera is off again.
-        announced: announced && events.length === 2 && !events[1].enabled,
+        events,
       };
     });
-    check(relief.relief > 0, `the element reports the map's relief (${relief.relief.toFixed(1)} m)`);
-    check(relief.moved && relief.length, '3D reprojects the vertices in place');
-    check(relief.shapes, 'without adding or losing a shape');
-    check(relief.announced, 'and announces the camera it was given');
+    check(
+      tilted.relief > 0 && tilted.hasRelief,
+      `the element reports the map's relief (${tilted.relief.toFixed(1)} m)`,
+    );
+    check(tilted.moved && tilted.length, '3D reprojects the vertices in place');
+    check(tilted.shapes, 'without adding or losing a shape');
+    // One event in, one out — the repeat and the angle-while-flat are dropped.
+    check(
+      tilted.events.length === 2 &&
+        tilted.events[0].enabled &&
+        tilted.events[0].pitch === 40 &&
+        !tilted.events[1].enabled,
+      `a camera that changes nothing costs nothing (${JSON.stringify(tilted.events)})`,
+    );
 
     await page.click('#element-centerlines');
     await page.waitForTimeout(200);

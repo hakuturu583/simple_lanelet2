@@ -29,13 +29,15 @@ fn main() -> ExitCode {
         }
     };
 
+    // The defaults are the crate's own, so `--3d` here and a viewer's 3D button
+    // start from the same camera.
+    let default = View::three_quarter();
     let view = if has("--3d") {
-        let angles = (
-            number("--yaw=", 30.0),
-            number("--pitch=", 55.0),
-            number("--exaggerate=", 1.0),
-        );
-        match angles {
+        match (
+            number("--yaw=", default.yaw()),
+            number("--pitch=", default.pitch()),
+            number("--exaggerate=", default.exaggeration()),
+        ) {
             (Ok(yaw), Ok(pitch), Ok(exaggeration)) => View::oblique(yaw, pitch, exaggeration),
             (Err(bad), _, _) | (_, Err(bad), _) | (_, _, Err(bad)) => {
                 eprintln!("not a number: {bad}");
@@ -77,7 +79,7 @@ fn main() -> ExitCode {
     }
 
     let scene = Scene::from_map(&loaded.map, &options);
-    let relief = scene.bounds.max[2] - scene.bounds.min[2];
+    let relief = loaded.relief;
     eprintln!(
         "{} lanelets, {} linestrings, {} areas, {} points -> {} shapes ({} coordinates, {}, \
          {relief:.0} m of relief)",
@@ -92,7 +94,7 @@ fn main() -> ExitCode {
     // A tilted view of a map whose nodes have no `ele` is a tilted flat sheet, which
     // reads as a broken renderer rather than as a map that never had a third
     // dimension. Saying so costs one line and saves the question.
-    if !view.is_plan() && relief < 0.5 {
+    if !view.is_plan() && !ll2_viz::worth_tilting(relief) {
         eprintln!(
             "note: every node in this map is at the same elevation — --3d will show a flat sheet"
         );
