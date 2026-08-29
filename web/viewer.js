@@ -19,6 +19,12 @@
 // matter how large the map is. Stroke widths are divided by the scale so a lane
 // marking stays one pixel wide at every zoom.
 //
+// That holds for the 3D view too, and it is why there is no 3D renderer here. A
+// Lanelet2 map has an elevation on every node; `setView3d` asks Rust to project the
+// scene from a tilted camera instead of from straight above, and what arrives is
+// the same flat arrays with different numbers in them, already in painter's order.
+// So relief costs a rebuild when the camera moves and nothing at all per frame.
+//
 //   import { LaneletViewer } from './viewer.js';
 //   const viewer = new LaneletViewer(element, { theme: 'auto' });
 //   viewer.addEventListener('load', (event) => console.log(event.detail.stats));
@@ -100,6 +106,9 @@ canvas.panning { cursor: grabbing; }
 }
 .controls button.small { font-size: 11px; }
 .controls button:hover { border-color: var(--ll2-accent, #4dd0e1); }
+/* A map whose nodes carry no elevation has nothing to draw in relief. */
+.controls button:disabled { opacity: 0.4; cursor: default; }
+.controls button:disabled:hover { border-color: var(--ll2-border, rgba(128,140,160,0.35)); }
 .scalebar {
   position: absolute; left: 10px; bottom: 10px; z-index: 2; pointer-events: none;
   color: var(--ll2-muted, #98a2b3);
@@ -139,11 +148,12 @@ const CHROME = {
  * | event | `detail` |
  * | --- | --- |
  * | `loadstart` | `{name}` |
- * | `load` | `{name, stats, errors, problems, coordinateSource, projection, origin, bounds}` |
+ * | `load` | `{name, stats, errors, problems, coordinateSource, projection, origin, bounds, relief}` |
  * | `error` | `{message}` |
  * | `hover` | `{id, label, layer} \| null` |
  * | `select` | `{id, label, layer} \| null` |
  * | `viewchange` | `{x, y, scale}` in map coordinates |
+ * | `view3dchange` | `{enabled, yaw, pitch, exaggeration}` |
  */
 export class LaneletViewer extends EventTarget {
   /**
@@ -162,6 +172,14 @@ export class LaneletViewer extends EventTarget {
       /// until the module is up.
       layers: null,
       drawPoints: false,
+      /// Draw the map in relief rather than from straight above. `false` is the
+      /// map view; the angles below are only read when it is on.
+      threeD: false,
+      /// Degrees the map is turned about the vertical, then degrees above the
+      /// horizon, then the multiplier on every elevation.
+      yaw: 30,
+      pitch: 55,
+      exaggeration: 1,
       controls: true,
       tooltip: true,
       scalebar: true,
@@ -243,10 +261,17 @@ export class LaneletViewer extends EventTarget {
 
     this._controls = document.createElement('div');
     this._controls.className = 'controls';
+    this._view3dButton = this._controlButton(
+      '3D',
+      'Draw the map in relief, using the elevation of its nodes',
+      () => this.setView3d(!this.options.threeD),
+      'small',
+    );
     this._controls.append(
       this._controlButton('+', 'Zoom in', () => this.zoomBy(1.4)),
       this._controlButton('−', 'Zoom out', () => this.zoomBy(1 / 1.4)),
       this._controlButton('Fit', 'Fit the map to the view', () => this.fit(), 'small'),
+      this._view3dButton,
     );
 
     this._root.append(this._canvas, this._scalebar, this._controls, this._tooltip);
@@ -271,6 +296,18 @@ export class LaneletViewer extends EventTarget {
     this._scalebar.hidden = !this.options.scalebar || !this._geometry;
     this._canvas.classList.toggle('interactive', this.options.interactive);
     if (!this.options.tooltip) this._tooltip.hidden = true;
+    // The button says what it will give you, and offering relief on a map that has
+    // none would give a tilted flat sheet and no way to tell why. It stays live
+    // while the 3D view is on, whatever the map: the way out must not be the thing
+    // that gets disabled.
+    this._view3dButton.textContent = this.options.threeD ? '2D' : '3D';
+    this._view3dButton.disabled =
+      Boolean(this._geometry) && !this.options.threeD && this.relief < 0.5;
+    this._view3dButton.title = this._view3dButton.disabled
+      ? 'Every node in this map is at the same elevation'
+      : this.options.threeD
+        ? 'Back to the map view'
+        : 'Draw the map in relief, using the elevation of its nodes';
   }
 
   _observeSize() {
@@ -376,6 +413,10 @@ export class LaneletViewer extends EventTarget {
       projection: handle.projection(),
       origin: { lat: handle.origin_lat(), lon: handle.origin_lon() },
       bounds: Array.from(this._scene.bounds()),
+      // Metres from the map's lowest point to its highest, and zero for the many
+      // files whose nodes carry no `ele` — the answer to "is there anything here
+      // for a 3D view to show?", which a host has no other way to ask.
+      relief: this._relief,
     };
     this.stats = detail.stats;
     this._emit('load', detail);
@@ -437,6 +478,7 @@ export class LaneletViewer extends EventTarget {
     this._geometry = null;
     this._index = null;
     this._source = null;
+    this._relief = 0;
     this.stats = null;
     this.legend = [];
     this._hover = -1;
@@ -499,6 +541,47 @@ export class LaneletViewer extends EventTarget {
   setDrawPoints(enabled) {
     this.options.drawPoints = Boolean(enabled);
     if (this._handle) this._rebuild({ keepView: true });
+  }
+
+  /**
+   * Draws the map in relief, from the elevation its nodes carry, instead of from
+   * straight above.
+   *
+   * Rebuilds the scene, because the projection happens in Rust — so this is a knob
+   * to set, not one to animate. Pass a partial object to change one angle:
+   * `setView3d({yaw: 90})` turns the map without leaving 3D.
+   *
+   * @param {boolean|{enabled?: boolean, yaw?: number, pitch?: number,
+   *   exaggeration?: number}} view `true`/`false` is shorthand for `{enabled}`.
+   */
+  setView3d(view) {
+    const settings = typeof view === 'boolean' ? { enabled: view } : (view ?? {});
+    if (settings.enabled !== undefined) this.options.threeD = Boolean(settings.enabled);
+    for (const key of ['yaw', 'pitch', 'exaggeration']) {
+      if (Number.isFinite(settings[key])) this.options[key] = settings[key];
+    }
+    // Turning the camera moves everything on the page, so a view kept from before
+    // would leave the map half out of frame; refitting is what a person expects.
+    if (this._handle) this._rebuild({ keepView: false });
+    this._applyChromeVisibility();
+    // The viewer has a 3D button of its own, so a host with a control for it needs
+    // to hear about the presses it did not make.
+    this._emit('view3dchange', this.getView3d());
+  }
+
+  /** `{enabled, yaw, pitch, exaggeration}` — the camera, as `setView3d` takes it. */
+  getView3d() {
+    const { threeD, yaw, pitch, exaggeration } = this.options;
+    return { enabled: threeD, yaw, pitch, exaggeration };
+  }
+
+  /**
+   * Metres between the loaded map's lowest and highest point, or `0` when its nodes
+   * carry no elevation at all — in which case there is nothing for the 3D view to
+   * show, and a host offering the option should say so.
+   */
+  get relief() {
+    return this._relief ?? 0;
   }
 
   /** `'auto'`, `'projected'` or `'local'`. Re-parses the file that is loaded. */
@@ -568,7 +651,13 @@ export class LaneletViewer extends EventTarget {
     this._emitViewChange();
   }
 
-  /** `{x, y, scale}` — the map coordinate at the centre, and pixels per metre. */
+  /**
+   * `{x, y, scale}` — the map coordinate at the centre, and pixels per metre.
+   *
+   * Under the 3D view these are the *drawing* coordinates rather than the map's: a
+   * tilted camera has no one map coordinate at the centre of the screen, since a
+   * point on a hill and one on the ground behind it are drawn in the same place.
+   */
   getView() {
     const centre = this._geometry?.centre ?? [0, 0];
     return {
@@ -661,6 +750,12 @@ export class LaneletViewer extends EventTarget {
   _sceneOptions({ forExport = false } = {}) {
     const options = new SceneOptions();
     options.theme = this.theme;
+    // The camera, so an SVG export is drawn from where the canvas is being looked
+    // at rather than always from above.
+    options.three_d = this.options.threeD;
+    options.yaw = this.options.yaw;
+    options.pitch = this.options.pitch;
+    options.exaggeration = this.options.exaggeration;
     for (const { key } of LAYERS) {
       // Points are the one layer that costs enough to build on demand; the rest
       // are always built and hidden, so a toggle is a repaint.
@@ -720,6 +815,7 @@ export class LaneletViewer extends EventTarget {
       styles,
     };
     this._geometry = geometry;
+    this._relief = data.relief();
     this._sceneBackground = data.background();
     this._highlightColour = data.highlight();
     this._groups = buildGroups(geometry);
@@ -835,6 +931,10 @@ export class LaneletViewer extends EventTarget {
     }
   }
 
+  /// The bar measures across the screen, and the projection never foreshortens that
+  /// axis — a tilt compresses the map along screen y and leaves screen x as it found
+  /// it. So the scale bar is telling the truth in the 3D view too, which is the one
+  /// place it would have been easy to leave quietly lying.
   _updateScalebar() {
     if (!this.options.scalebar || !this._geometry) {
       this._scalebar.hidden = true;
@@ -1288,10 +1388,11 @@ function basename(path) {
  * host that needs the full API is one property away.
  */
 export class Lanelet2ViewerElement extends HTMLElement {
-  static observedAttributes = ['src', 'theme', 'layers', 'coordinates', 'background', 'controls', 'tooltip', 'scalebar', 'interactive', 'points'];
+  static observedAttributes = ['src', 'theme', 'layers', 'coordinates', 'background', 'controls', 'tooltip', 'scalebar', 'interactive', 'points', 'three-d', 'yaw', 'pitch', 'exaggeration'];
 
   connectedCallback() {
     if (this.viewer) return;
+    const { enabled, ...angles } = this._camera();
     this.viewer = new LaneletViewer(this, {
       theme: this.getAttribute('theme') || 'dark',
       coordinates: this.getAttribute('coordinates') || 'auto',
@@ -1302,10 +1403,14 @@ export class Lanelet2ViewerElement extends HTMLElement {
       scalebar: flag(this, 'scalebar', true),
       interactive: flag(this, 'interactive', true),
       drawPoints: flag(this, 'points', false),
+      threeD: enabled,
+      // Only the angles actually given: an absent attribute must leave the
+      // viewer's own default alone rather than overwrite it with `undefined`.
+      ...angles,
       wasmUrl: this.getAttribute('wasm') || undefined,
     });
     // Re-dispatch on the element, so `addEventListener` on the tag works.
-    for (const type of ['loadstart', 'load', 'error', 'hover', 'select', 'viewchange']) {
+    for (const type of ['loadstart', 'load', 'error', 'hover', 'select', 'viewchange', 'view3dchange']) {
       this.viewer.addEventListener(type, (event) => {
         this.dispatchEvent(new CustomEvent(type, { detail: event.detail, bubbles: false }));
       });
@@ -1344,10 +1449,29 @@ export class Lanelet2ViewerElement extends HTMLElement {
       case 'interactive':
         viewer.setInteractive(flag(this, 'interactive', true));
         break;
+      case 'three-d':
+      case 'yaw':
+      case 'pitch':
+      case 'exaggeration':
+        viewer.setView3d(this._camera());
+        break;
       default:
         viewer.setChrome({ [name]: flag(this, name, true) });
         break;
     }
+  }
+
+  /// The camera attributes that are actually present. An absent or unparseable one
+  /// is left out entirely rather than reported as `undefined`, so neither the
+  /// constructor nor `setView3d` can overwrite a default with nothing.
+  _camera() {
+    const camera = { enabled: flag(this, 'three-d', false) };
+    for (const name of ['yaw', 'pitch', 'exaggeration']) {
+      if (!this.hasAttribute(name)) continue;
+      const value = Number(this.getAttribute(name));
+      if (Number.isFinite(value)) camera[name] = value;
+    }
+    return camera;
   }
 
   /** Convenience passthrough, so `element.loadOsm(text)` reads naturally. */

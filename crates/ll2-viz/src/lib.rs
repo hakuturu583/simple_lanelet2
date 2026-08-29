@@ -5,12 +5,16 @@
 //! part of this project's drop-in compatibility claim. There is no counterpart to
 //! be byte-identical to, no Python binding, and nothing in the wheel imports it.
 //!
-//! Three pieces that stack:
+//! Four pieces that stack:
 //!
 //! * [`source`] reads a `.osm` file — from a string, so it works with no filesystem
 //!   — and works out for itself how to turn its nodes into metres.
-//! * [`scene`] turns the resulting `LaneletMap` into a [`Scene`]: a flat list of
-//!   styled polylines and polygons in map coordinates, and nothing else.
+//! * [`scene`] turns the resulting `LaneletMap` into a [`Scene`]: a list of styled
+//!   polylines and polygons in map coordinates, and nothing else. Those coordinates
+//!   are three-dimensional, because Lanelet2 nodes carry an elevation.
+//! * [`view`] says where the map is looked at from, and is what turns those three
+//!   coordinates into the two a page has room for. The default is the map view;
+//!   [`View::oblique`] is the 3D one, and is where a map's relief becomes visible.
 //! * [`svg`] draws a scene. So does the `<canvas>` in this repository's web demo,
 //!   from the same scene across a WebAssembly boundary — which is the point of the
 //!   scene being renderer-agnostic rather than an SVG builder.
@@ -38,16 +42,36 @@
 //! println!("{} lanelets, {} shapes", scene.stats.lanelets, scene.shapes.len());
 //! let svg = render_svg(&scene, &SvgOptions::default());
 //! ```
+//!
+//! The same scene, drawn in three dimensions — one field, because the elevation was
+//! in the scene all along and only the viewpoint was ever missing:
+//!
+//! ```no_run
+//! use ll2_viz::{LoadOptions, Scene, SvgOptions, View, VizOptions, load_osm_str, render_svg};
+//!
+//! let text = std::fs::read_to_string("map.osm").unwrap();
+//! let loaded = load_osm_str(&text, &LoadOptions::default()).unwrap();
+//! let scene = Scene::from_map(&loaded.map, &VizOptions::default());
+//! let svg = render_svg(
+//!     &scene,
+//!     &SvgOptions {
+//!         view: View::three_quarter(),
+//!         ..SvgOptions::default()
+//!     },
+//! );
+//! ```
 
 pub mod scene;
 pub mod source;
 pub mod style;
 pub mod svg;
+pub mod view;
 
 pub use scene::{MapStats, Scene, Shape, VizOptions, attribute, describe, describe_lanelet};
 pub use source::{CoordinateSource, LoadOptions, LoadedMap, load_osm_str};
 pub use style::{Color, Palette, Style, StyleTable, Theme, VizLayer};
 pub use svg::{SvgOptions, render_svg};
+pub use view::{Point3, View};
 
 /// Reads OSM XML and renders it as an SVG document, at the default page size.
 ///

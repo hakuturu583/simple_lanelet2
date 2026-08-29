@@ -1,11 +1,11 @@
 //! Lanelet2 maps in [Rerun](https://rerun.io), in a Spatial3D view.
 //!
-//! [`ll2_viz`] draws a map flat, because that is what an SVG page and a `<canvas>`
-//! can hold. A Lanelet2 map is not flat — every node carries an `ele` — and neither
-//! is anything you would want to look at next to one: a lidar sweep, a vehicle pose,
-//! a planned trajectory. This crate is the other end of that: the map as Rerun
-//! archetypes, logged in metres, in the same 3D space as whatever else the recording
-//! holds.
+//! [`ll2_viz`] keeps every node's `ele` and projects it away at the end, because an
+//! SVG page and a `<canvas>` hold a picture of a map rather than a map. Rerun holds
+//! the map — and so does everything you would want to look at next to one: a lidar
+//! sweep, a vehicle pose, a planned trajectory. This crate is that end of it: the
+//! map as Rerun archetypes, logged in metres, in the same 3D space as whatever else
+//! the recording holds, with surfaces where the flat renderers have outlines.
 //!
 //! Like the rest of the visualisation side, none of it is part of this project's
 //! drop-in compatibility claim. Upstream has no Rerun integration to be

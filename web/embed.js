@@ -20,6 +20,8 @@
 // | `coordinates` | `auto` (default), `projected`, `local` |
 // | `layers` | comma-separated layer keys to show; omit for the defaults |
 // | `points` | `1` to draw individual map points |
+// | `3d` | `1` to draw the map in relief, from the elevation its nodes carry |
+// | `yaw`, `pitch`, `exaggerate` | the 3D camera: degrees, degrees above the horizon, and the multiplier on elevation |
 // | `controls`, `tooltip`, `scalebar` | `0` to hide that piece of chrome |
 // | `interactive` | `0` for a static picture: no pan, zoom or picking |
 // | `background` | a CSS colour. `transparent` is accepted but see the note below |
@@ -32,6 +34,7 @@
 //   { type: 'lanelet2.loadUrl',    url: 'https://…/map.osm', name? }
 //   { type: 'lanelet2.setOptions', theme?, layers?, points?, background?, interactive?,
 //                                  coordinates?, controls?, tooltip?, scalebar? }
+//   { type: 'lanelet2.setView3d',  enabled?, yaw?, pitch?, exaggeration? }
 //   { type: 'lanelet2.setView',    x?, y?, scale? }        // map coordinates
 //   { type: 'lanelet2.fit' }
 //   { type: 'lanelet2.highlight',  ids: [123, 456] }
@@ -48,6 +51,7 @@
 //   { type: 'lanelet2.hover',   shape: {id, label, layer} | null }
 //   { type: 'lanelet2.select',  shape: {id, label, layer} | null }
 //   { type: 'lanelet2.view',    x, y, scale }
+//   { type: 'lanelet2.view3d',  enabled, yaw, pitch, exaggeration }
 //   { type: 'lanelet2.svg',     svg, requestId }
 //
 // Every inbound message is answered on the `MessageChannel` port it arrived with,
@@ -89,7 +93,24 @@ const viewer = new LaneletViewer(document.getElementById('viewer'), {
   scalebar: flag('scalebar', true),
   interactive: flag('interactive', true),
   background: parameters.get('background'),
+  threeD: flag('3d', false),
+  ...camera(),
 });
+
+/// The camera angles that were actually given. An absent one is left out rather
+/// than passed as `undefined`, which would overwrite the viewer's own default.
+function camera() {
+  const angles = {};
+  for (const [name, key] of [
+    ['yaw', 'yaw'],
+    ['pitch', 'pitch'],
+    ['exaggerate', 'exaggeration'],
+  ]) {
+    const value = Number(parameters.get(name));
+    if (parameters.has(name) && Number.isFinite(value)) angles[key] = value;
+  }
+  return angles;
+}
 
 for (const [type, build] of [
   ['loadstart', (detail) => ({ name: detail.name })],
@@ -98,9 +119,10 @@ for (const [type, build] of [
   ['hover', (detail) => ({ shape: detail })],
   ['select', (detail) => ({ shape: detail })],
   ['viewchange', (detail) => ({ ...detail })],
+  ['view3dchange', (detail) => ({ ...detail })],
 ]) {
   viewer.addEventListener(type, (event) => {
-    const name = { load: 'loaded', viewchange: 'view' }[type] ?? type;
+    const name = { load: 'loaded', viewchange: 'view', view3dchange: 'view3d' }[type] ?? type;
     post({ type: `lanelet2.${name}`, ...build(event.detail ?? {}) });
   });
 }
@@ -164,6 +186,9 @@ function handle(data, reply) {
       // After the options have landed, so the page follows whatever they made of
       // the background rather than what it was a moment ago.
       paintPage();
+      break;
+    case 'lanelet2.setView3d':
+      viewer.setView3d(data);
       break;
     case 'lanelet2.setView':
       viewer.setView(data);

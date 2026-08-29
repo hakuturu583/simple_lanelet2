@@ -2,20 +2,49 @@
 //!
 //! ```text
 //! cargo run -p ll2-viz --example osm2svg -- map.osm map.svg [--light] [--centerlines]
+//! cargo run -p ll2-viz --example osm2svg -- map.osm map.svg --3d [--yaw=30] [--pitch=55] [--exaggerate=3]
 //! ```
 
 use std::process::ExitCode;
 
-use ll2_viz::{LoadOptions, Scene, SvgOptions, Theme, VizOptions, load_osm_str, render_svg};
+use ll2_viz::{LoadOptions, Scene, SvgOptions, Theme, View, VizOptions, load_osm_str, render_svg};
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let positional: Vec<&String> = arguments.iter().filter(|a| !a.starts_with("--")).collect();
     if positional.len() != 2 {
-        eprintln!("usage: osm2svg <map.osm> <out.svg> [--light] [--centerlines] [--points]");
+        eprintln!(
+            "usage: osm2svg <map.osm> <out.svg> [--light] [--centerlines] [--points]\n\
+             \x20                              [--3d [--yaw=D] [--pitch=D] [--exaggerate=N]]"
+        );
         return ExitCode::FAILURE;
     }
     let has = |flag: &str| arguments.iter().any(|a| a == flag);
+    // `--pitch=55`. A flag given a value that is not a number is a typo worth
+    // failing on rather than a silent fall back to the default.
+    let number = |name: &str, fallback: f64| -> Result<f64, String> {
+        match arguments.iter().find_map(|a| a.strip_prefix(name)) {
+            None => Ok(fallback),
+            Some(value) => value.parse().map_err(|_| format!("{name}{value}")),
+        }
+    };
+
+    let view = if has("--3d") {
+        let angles = (
+            number("--yaw=", 30.0),
+            number("--pitch=", 55.0),
+            number("--exaggerate=", 1.0),
+        );
+        match angles {
+            (Ok(yaw), Ok(pitch), Ok(exaggeration)) => View::oblique(yaw, pitch, exaggeration),
+            (Err(bad), _, _) | (_, Err(bad), _) | (_, _, Err(bad)) => {
+                eprintln!("not a number: {bad}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        View::plan()
+    };
 
     let options = VizOptions {
         theme: if has("--light") {
@@ -48,8 +77,10 @@ fn main() -> ExitCode {
     }
 
     let scene = Scene::from_map(&loaded.map, &options);
+    let relief = scene.bounds.max[2] - scene.bounds.min[2];
     eprintln!(
-        "{} lanelets, {} linestrings, {} areas, {} points -> {} shapes ({} coordinates, {})",
+        "{} lanelets, {} linestrings, {} areas, {} points -> {} shapes ({} coordinates, {}, \
+         {relief:.0} m of relief)",
         scene.stats.lanelets,
         scene.stats.line_strings,
         scene.stats.areas,
@@ -58,8 +89,20 @@ fn main() -> ExitCode {
         loaded.coordinates.key(),
         loaded.projection,
     );
+    // A tilted view of a map whose nodes have no `ele` is a tilted flat sheet, which
+    // reads as a broken renderer rather than as a map that never had a third
+    // dimension. Saying so costs one line and saves the question.
+    if !view.is_plan() && relief < 0.5 {
+        eprintln!(
+            "note: every node in this map is at the same elevation — --3d will show a flat sheet"
+        );
+    }
 
-    if let Err(error) = std::fs::write(positional[1], render_svg(&scene, &SvgOptions::default())) {
+    let page = SvgOptions {
+        view,
+        ..SvgOptions::default()
+    };
+    if let Err(error) = std::fs::write(positional[1], render_svg(&scene, &page)) {
         eprintln!("{}: {error}", positional[1]);
         return ExitCode::FAILURE;
     }

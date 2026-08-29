@@ -1,14 +1,12 @@
-//! The geometry a 3D viewer needs and a 2D one does not.
+//! The geometry a viewer of triangles needs and a viewer of paths does not.
 //!
-//! [`ll2_viz::Scene`] flattens everything to x and y, because an SVG page and a
-//! `<canvas>` have nowhere to put the third coordinate. A Spatial3D view does, and a
-//! Lanelet2 map carries it — `ele` on every node — so nothing here reads a `Scene`.
-//! It works from the map's own points and keeps their elevation.
+//! [`ll2_viz::Scene`] keeps every node's elevation, as this does, but what it holds
+//! are outlines: a page and a `<canvas>` fill a closed path, and a projection is all
+//! that stands between one and the other. A Spatial3D view has no such primitive, so
+//! nothing here reads a `Scene` — it works from the map's own points and builds two
+//! things the flat renderers get for free from the rasteriser:
 //!
-//! Two things then have to be built that the 2D side gets for free:
-//!
-//! * A surface. A browser fills a closed path; a renderer of triangles wants
-//!   triangles, so rings are ear-clipped and lanelets are stitched into ribbons.
+//! * A surface. Rings are ear-clipped and lanelets are stitched into ribbons.
 //! * Samples along a centerline in 3D, for the driving-direction arrows.
 
 use ll2_core::geometry::linestring::distance_3d;

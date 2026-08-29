@@ -117,6 +117,7 @@ frame.contentWindow.postMessage({ type: 'lanelet2.load', osm }, '*')</pre>
         <button id="dark" type="button">Dark theme</button>
         <button id="roads-only" type="button">Roads only</button>
         <button id="all-layers" type="button">All layers</button>
+        <button id="toggle-3d" type="button">Toggle 3D</button>
         <button id="export" type="button">Ask for an SVG</button>
       </div>
       <pre id="log"></pre>
@@ -156,6 +157,10 @@ frame.contentWindow.postMessage({ type: 'lanelet2.load', osm }, '*')</pre>
         log.scrollTop = log.scrollHeight;
       };
 
+      // The frame's camera, kept in step with it: the viewer has a 3D button of its
+      // own, and it announces every move on `lanelet2.view3d`.
+      let threeD = false;
+
       window.addEventListener('message', (event) => {
         const data = event.data;
         if (!data || typeof data.type !== 'string' || !data.type.startsWith('lanelet2.')) return;
@@ -167,6 +172,9 @@ frame.contentWindow.postMessage({ type: 'lanelet2.load', osm }, '*')</pre>
           // Too chatty to log.
         } else if (data.type === 'lanelet2.select') {
           write(`select: ${data.shape ? data.shape.label : '(nothing)'}`);
+        } else if (data.type === 'lanelet2.view3d') {
+          threeD = data.enabled;
+          write(`view3d: ${data.enabled ? `on, ${data.pitch}° above the horizon` : 'off'}`);
         } else {
           write(`${data.type.replace('lanelet2.', '')}: ${JSON.stringify(data).slice(0, 120)}`);
         }
@@ -192,6 +200,10 @@ frame.contentWindow.postMessage({ type: 'lanelet2.load', osm }, '*')</pre>
           layers: ['lanelet_fill', 'area', 'polygon', 'bound', 'regulatory', 'direction'],
         }),
       );
+      document.getElementById('toggle-3d').addEventListener('click', () => {
+        threeD = !threeD;
+        send({ type: 'lanelet2.setView3d', enabled: threeD, pitch: 50, exaggeration: 6 });
+      });
       document.getElementById('export').addEventListener('click', () =>
         send({ type: 'lanelet2.exportSvg', width: 1200, height: 800, requestId: 'demo' }),
       );

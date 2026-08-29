@@ -144,6 +144,32 @@ try {
     check((await page.$eval('body', (n) => n.dataset.theme)) === 'light', 'the theme control works');
     await page.selectOption('#theme-select', 'dark');
 
+    // The 3D view rebuilds the scene in Rust and hands back projected vertices,
+    // so the evidence that it worked is that the geometry moved and the sliders
+    // that steer it appeared.
+    const scaleBefore = await scaleLabel();
+    await page.check('#three-d-toggle');
+    await page.waitForTimeout(600);
+    check(
+      await page.$eval('#three-d-controls', (n) => !n.hidden),
+      'the 3D toggle reveals the camera controls',
+    );
+    check(
+      (await page.$eval('#relief-label', (n) => n.textContent)).includes('relief'),
+      "the panel states the map's relief",
+    );
+    // Tilting refits the map, so the zoom the wheel left behind is gone.
+    check(scaleBefore !== (await scaleLabel()), 'turning on 3D reframes the map');
+    await page.fill('#pitch-input', '25');
+    await page.dispatchEvent('#pitch-input', 'input');
+    await page.waitForTimeout(400);
+    await page.uncheck('#three-d-toggle');
+    await page.waitForTimeout(400);
+    check(
+      await page.$eval('#three-d-controls', (n) => n.hidden),
+      'and turning it off hides them again',
+    );
+
     const download = page.waitForEvent('download', { timeout: 30000 });
     await page.click('#export-button');
     check((await download).suggestedFilename() === 'mapping_example.svg', 'SVG export downloads');
@@ -197,6 +223,15 @@ try {
       'exportSvg replies with a document',
     );
 
+    // Round-trips `lanelet2.setView3d` and the `lanelet2.view3d` the frame answers
+    // with — the half of the protocol a host needs to keep a control of its own in
+    // step with the viewer's.
+    await page.click('#toggle-3d');
+    await logged('view3d: on');
+    check(true, 'setView3d round-trips through the iframe protocol');
+    await page.click('#toggle-3d');
+    await logged('view3d: off');
+
     check(
       /element: 371 lanelets/.test(await page.$eval('#log', (n) => n.textContent)),
       '<lanelet2-viewer src=…> loads on its own',
@@ -227,6 +262,34 @@ try {
     check(themed.sameBuffer, 'and does so without re-flattening the geometry');
     check(themed.sameStyles && themed.sameLegend, 'and keeps the style table aligned');
     await page.$eval('#element', (element) => element.viewer.setTheme('dark'));
+
+    // The 3D view, where the geometry is actually reachable: the same shapes, the
+    // same style table, different coordinates, and the projection done in Rust.
+    const relief = await page.$eval('#element', async (element) => {
+      const viewer = element.viewer;
+      const before = Array.from(viewer._geometry.coords.slice(0, 400));
+      const shapes = viewer._geometry.count;
+      const events = [];
+      viewer.addEventListener('view3dchange', (event) => events.push(event.detail));
+      viewer.setView3d({ enabled: true, pitch: 40, exaggeration: 5 });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const after = Array.from(viewer._geometry.coords.slice(0, 400));
+      const announced = events.length === 1 && events[0].enabled && events[0].pitch === 40;
+      viewer.setView3d(false);
+      return {
+        relief: viewer.relief,
+        shapes: viewer._geometry.count === shapes,
+        moved: after.some((value, index) => value !== before[index]),
+        length: after.length === before.length,
+        // One event for the way in and one for the way out, and the second says
+        // the camera is off again.
+        announced: announced && events.length === 2 && !events[1].enabled,
+      };
+    });
+    check(relief.relief > 0, `the element reports the map's relief (${relief.relief.toFixed(1)} m)`);
+    check(relief.moved && relief.length, '3D reprojects the vertices in place');
+    check(relief.shapes, 'without adding or losing a shape');
+    check(relief.announced, 'and announces the camera it was given');
 
     await page.click('#element-centerlines');
     await page.waitForTimeout(200);

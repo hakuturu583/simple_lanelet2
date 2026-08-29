@@ -116,6 +116,22 @@ check(svg.startsWith('<svg'), 'SVG export produces a document');
 check(svg.includes('non-scaling-stroke'), 'SVG strokes are zoom-independent');
 check(svg.trimEnd().endsWith('</svg>'), 'the SVG document is closed');
 
+// The 3D view crosses the boundary as the same arrays with different numbers in
+// them, which is the whole reason the canvas renderer needs no notion of it.
+check(scene.relief() > 0, 'the example map has some elevation to draw');
+options.three_d = true;
+const tilted = handle.build_scene(options);
+const tiltedCoords = tilted.coords();
+check(tilted.shape_count() === count, '3D draws the same shapes');
+check(tiltedCoords.length === coords.length, 'and hands over the same array shape');
+check(
+  tiltedCoords.some((value, index) => value !== coords[index]),
+  'and different coordinates in it',
+);
+check(tilted.relief() === scene.relief(), "the map's relief does not depend on the camera");
+check(handle.to_svg(options, 800, 600) !== svg, 'the SVG export follows the camera too');
+options.three_d = false;
+
 let threw = false;
 try {
   wasm.load_osm('this is not a map', 'auto');

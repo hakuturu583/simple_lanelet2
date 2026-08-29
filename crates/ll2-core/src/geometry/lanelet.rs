@@ -34,6 +34,12 @@ pub fn outline_2d(lanelet: &Lanelet) -> Vec<Point2> {
     flat_2d(&lanelet.polygon().points())
 }
 
+/// The same ring, keeping each point's elevation — what a renderer that can put a
+/// road on a hill needs, and what dropping z here would have thrown away.
+pub fn outline_3d(lanelet: &Lanelet) -> Vec<Point3> {
+    flat_3d(&lanelet.polygon().points())
+}
+
 pub fn centerline_2d(lanelet: &Lanelet) -> Vec<Point2> {
     flat_2d(&lanelet.centerline().points())
 }

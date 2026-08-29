@@ -27,6 +27,12 @@ const elements = {
   themeSelect: document.getElementById('theme-select'),
   coordinatesSelect: document.getElementById('coordinates-select'),
   pointsToggle: document.getElementById('points-toggle'),
+  threeDToggle: document.getElementById('three-d-toggle'),
+  threeDControls: document.getElementById('three-d-controls'),
+  reliefLabel: document.getElementById('relief-label'),
+  yawInput: document.getElementById('yaw-input'),
+  pitchInput: document.getElementById('pitch-input'),
+  exaggerationInput: document.getElementById('exaggeration-input'),
   status: document.getElementById('status'),
   statusText: document.getElementById('status-text'),
   versionLabel: document.getElementById('version-label'),
@@ -46,12 +52,24 @@ viewer.addEventListener('load', (event) => {
   showErrors(event.detail.errors, event.detail.problems);
   showLayerToggles();
   showLegend();
+  showViewControls(event.detail.relief);
   elements.dropzone.hidden = true;
   elements.layersBlock.hidden = false;
   elements.optionsBlock.hidden = false;
 });
 
 viewer.addEventListener('error', (event) => showError(event.detail.message));
+
+// The viewer has a 3D button on the canvas as well, so the sidebar follows the
+// camera rather than being a second, disagreeing statement of it.
+viewer.addEventListener('view3dchange', (event) => {
+  const camera = event.detail;
+  elements.threeDToggle.checked = camera.enabled;
+  elements.threeDControls.hidden = !camera.enabled;
+  elements.yawInput.value = camera.yaw;
+  elements.pitchInput.value = camera.pitch;
+  elements.exaggerationInput.value = camera.exaggeration;
+});
 
 // --- boot --------------------------------------------------------------------
 
@@ -105,6 +123,23 @@ function wireUp() {
     showLayerToggles();
     showLegend();
   });
+
+  elements.threeDToggle.addEventListener('change', () => {
+    viewer.setView3d(elements.threeDToggle.checked);
+    elements.threeDControls.hidden = !elements.threeDToggle.checked;
+  });
+
+  // `input` rather than `change`, so dragging a slider turns the map as you drag.
+  // Each one rebuilds the scene in Rust, which for a map of any size is a frame's
+  // work — the reason the angles are sliders here and not a drag on the canvas,
+  // where the same cost would land on every pointer move over a city.
+  for (const [input, key] of [
+    [elements.yawInput, 'yaw'],
+    [elements.pitchInput, 'pitch'],
+    [elements.exaggerationInput, 'exaggeration'],
+  ]) {
+    input.addEventListener('input', () => viewer.setView3d({ [key]: Number(input.value) }));
+  }
 
   installDragAndDrop();
 
@@ -177,6 +212,27 @@ function formatExtent([minX, minY, maxX, maxY]) {
   const one = (metres) =>
     metres >= 1000 ? `${(metres / 1000).toFixed(metres >= 10000 ? 0 : 1)} km` : `${Math.round(metres)} m`;
   return `${one(maxX - minX)} × ${one(maxY - minY)}`;
+}
+
+/// The 3D controls, offered only when the file has something for them to show.
+///
+/// A Lanelet2 map is not required to carry `ele`, and plenty do not; tilting the
+/// camera over one of those gives a flat sheet at an angle, which reads as a broken
+/// viewer. So the relief is stated next to the toggle, and a map without any turns
+/// the toggle off rather than leaving it to disappoint.
+function showViewControls(relief) {
+  const flat = !(relief >= 0.5);
+  elements.threeDToggle.disabled = flat;
+  elements.reliefLabel.textContent = flat ? 'no elevation in this map' : `${Math.round(relief)} m of relief`;
+  if (flat && elements.threeDToggle.checked) {
+    elements.threeDToggle.checked = false;
+    viewer.setView3d(false);
+  }
+  const camera = viewer.getView3d();
+  elements.yawInput.value = camera.yaw;
+  elements.pitchInput.value = camera.pitch;
+  elements.exaggerationInput.value = camera.exaggeration;
+  elements.threeDControls.hidden = !elements.threeDToggle.checked;
 }
 
 function showLayerToggles() {
