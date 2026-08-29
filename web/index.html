@@ -81,6 +81,24 @@
             <input type="checkbox" id="points-toggle" />
             <span>Draw individual points</span>
           </label>
+          <label class="row checkbox">
+            <input type="checkbox" id="three-d-toggle" />
+            <span>3D view <span class="count" id="relief-label"></span></span>
+          </label>
+          <div id="three-d-controls" hidden>
+            <label class="row">
+              <span>Rotation</span>
+              <input type="range" id="yaw-input" min="0" max="359" step="1" value="30" />
+            </label>
+            <label class="row">
+              <span>Tilt</span>
+              <input type="range" id="pitch-input" min="5" max="90" step="1" value="55" />
+            </label>
+            <label class="row">
+              <span>Height ×</span>
+              <input type="range" id="exaggeration-input" min="1" max="20" step="1" value="1" />
+            </label>
+          </div>
           <button class="button" id="export-button" type="button">Export SVG</button>
         </section>
 

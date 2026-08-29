@@ -23,11 +23,19 @@
 //! separately as `f64`. That matters: MGRS-local coordinates run to 100 000 metres,
 //! where an `f32` resolves about 8 mm — visible. Recentred, the exponent tracks the
 //! map's own radius and a kilometre-wide map resolves to well under a millimetre.
+//!
+//! Two floats per vertex, not three, even though the scene behind them is
+//! three-dimensional: the projection happens *here*, on the way out, and the
+//! coordinates that cross are the ones to draw. So a tilted view costs the canvas
+//! renderer nothing — no shader, no depth buffer, not even a change to its hit
+//! testing, because a shape's outline on the page is what a pointer is over. The
+//! price is that turning the camera rebuilds the scene rather than redrawing it,
+//! which is the right way round for a view that is chosen and then looked at.
 
 use ll2_viz::style::VizLayer;
 use ll2_viz::{
-    CoordinateSource, LoadOptions, LoadedMap, Scene, SvgOptions, Theme, VizOptions, load_osm_str,
-    render_svg,
+    CoordinateSource, LoadOptions, LoadedMap, Scene, SvgOptions, Theme, View, VizOptions,
+    load_osm_str, render_svg,
 };
 use wasm_bindgen::prelude::*;
 
@@ -70,6 +78,29 @@ pub fn layers() -> String {
     out
 }
 
+/// The 3D camera a viewer should start from, as
+/// `{"yaw":…,"pitch":…,"exaggeration":…,"pitchRange":[…],"exaggerationRange":[…],
+/// "minRelief":…}`.
+///
+/// A free function for the same reason [`layers`] is one: these are Rust's numbers,
+/// and a renderer that hardcoded its own would be stating a second opinion about
+/// what a map looks like with nothing to keep the two in step. The ranges are the
+/// angles [`View::oblique`] will actually honour, so a slider built from them cannot
+/// ask for a camera it will not get, and `minRelief` is the elevation span below
+/// which offering 3D at all is a disservice.
+#[wasm_bindgen]
+pub fn camera() -> String {
+    let view = View::three_quarter();
+    format!(
+        "{{\"yaw\":{},\"pitch\":{},\"exaggeration\":{},\
+         \"pitchRange\":[1,90],\"exaggerationRange\":[0,100],\"minRelief\":{}}}",
+        view.yaw(),
+        view.pitch(),
+        view.exaggeration(),
+        ll2_viz::view::MIN_USEFUL_RELIEF,
+    )
+}
+
 /// What to draw. Construct with `new SceneOptions()` and assign to the fields.
 #[wasm_bindgen(getter_with_clone)]
 #[derive(Clone, Debug)]
@@ -86,11 +117,23 @@ pub struct SceneOptions {
     pub points: bool,
     /// Metres between driving-direction arrowheads.
     pub arrow_spacing: f64,
+
+    /// Draw the map in relief, using the elevation its nodes carry, instead of
+    /// straight down. The other three fields are ignored while this is `false`.
+    pub three_d: bool,
+    /// Degrees the map is turned about the vertical. Zero puts north up.
+    pub yaw: f64,
+    /// Degrees above the horizon: 90 is the map view, 0 is edge-on.
+    pub pitch: f64,
+    /// Multiplies every elevation. `1` is the truth; more makes gentle relief
+    /// legible on a map that is kilometres wide and tens of metres tall.
+    pub exaggeration: f64,
 }
 
 impl Default for SceneOptions {
     fn default() -> Self {
         let defaults = VizOptions::default();
+        let view = View::three_quarter();
         SceneOptions {
             theme: defaults.theme.key().to_owned(),
             lanelet_fill: defaults.lanelet_fill,
@@ -102,6 +145,12 @@ impl Default for SceneOptions {
             direction_arrows: defaults.direction_arrows,
             points: defaults.points,
             arrow_spacing: defaults.arrow_spacing,
+            // Off, but with the angles a "3D" button would want already in place, so
+            // turning it on is one assignment rather than four.
+            three_d: false,
+            yaw: view.yaw(),
+            pitch: view.pitch(),
+            exaggeration: view.exaggeration(),
         }
     }
 }
@@ -134,6 +183,16 @@ impl SceneOptions {
 }
 
 impl SceneOptions {
+    /// Where the map is drawn from — the plan view unless [`SceneOptions::three_d`]
+    /// says otherwise.
+    fn to_view(&self) -> View {
+        if self.three_d {
+            View::oblique(self.yaw, self.pitch, self.exaggeration)
+        } else {
+            View::plan()
+        }
+    }
+
     fn to_viz(&self) -> VizOptions {
         VizOptions {
             theme: Theme::from_key(&self.theme).unwrap_or_default(),
@@ -207,6 +266,24 @@ impl LaneletMapHandle {
         self.loaded.projection.to_owned()
     }
 
+    /// Metres between the map's lowest node and its highest.
+    ///
+    /// A fact about the file, so it is answered here beside the other ones rather
+    /// than by a scene: a caller deciding whether to offer a 3D view can ask before
+    /// it has built anything, and the answer cannot change when it builds another.
+    pub fn relief(&self) -> f64 {
+        self.loaded.relief
+    }
+
+    /// Whether this map has enough relief to be worth drawing in 3D.
+    ///
+    /// The threshold is Rust's — see `camera()`'s `minRelief` — because "is a tilted
+    /// view of this map worth showing?" is one decision, and a viewer that answered
+    /// it separately would disagree with the SVG exporter about the same file.
+    pub fn has_relief(&self) -> bool {
+        ll2_viz::worth_tilting(self.loaded.relief)
+    }
+
     pub fn origin_lat(&self) -> f64 {
         self.loaded.origin.lat
     }
@@ -232,15 +309,20 @@ impl LaneletMapHandle {
 
     /// Builds a drawable scene.
     pub fn build_scene(&self, options: &SceneOptions) -> SceneData {
-        SceneData::build(Scene::from_map(&self.loaded.map, &options.to_viz()))
+        SceneData::build(
+            Scene::from_map(&self.loaded.map, &options.to_viz()),
+            options.to_view(),
+        )
     }
 
-    /// Renders the map as a standalone SVG document.
+    /// Renders the map as a standalone SVG document, from the same viewpoint the
+    /// canvas is drawn from — which is what makes the export what you see.
     pub fn to_svg(&self, options: &SceneOptions, width: f64, height: f64) -> String {
         let scene = Scene::from_map(&self.loaded.map, &options.to_viz());
         let page = SvgOptions {
             width,
             height,
+            view: options.to_view(),
             ..SvgOptions::default()
         };
         render_svg(&scene, &page)
@@ -270,13 +352,20 @@ pub struct SceneData {
 }
 
 impl SceneData {
-    fn build(scene: Scene) -> SceneData {
-        let bounds = scene.safe_bounds();
+    /// Flattens a scene through `view`.
+    ///
+    /// Everything downstream — the paths, the spatial index, the hit testing, the
+    /// fit — works in the projected frame, so it needs no notion of a third
+    /// dimension. What the projection discards, the map's own relief, is a fact
+    /// about the file and is answered by `LaneletMapHandle::relief` instead.
+    fn build(scene: Scene, view: View) -> SceneData {
+        let bounds = scene.view_bounds(&view);
         // Everything the table and the palette need, before the shapes are moved
         // out from under them.
         let styles_json = styles_json(&scene);
         let palette = scene.theme.palette();
-        let shapes = scene.shapes;
+        let order = scene.draw_order(&view);
+        let mut shapes = scene.shapes;
         let centre = [
             (bounds.min[0] + bounds.max[0]) * 0.5,
             (bounds.min[1] + bounds.max[1]) * 0.5,
@@ -291,11 +380,19 @@ impl SceneData {
         let mut ids = Vec::with_capacity(shapes.len());
         let mut labels = Vec::with_capacity(shapes.len());
 
-        for shape in shapes {
+        // Painter's order, so a renderer that walks these arrays start to end draws
+        // the nearest shape of a layer last without knowing why.
+        for index in order {
+            // Every index appears exactly once, so the label can be taken rather
+            // than copied — a city map is hundreds of thousands of small strings,
+            // and paying to duplicate them all is the kind of thing this whole
+            // flattening exists to avoid.
+            let shape = &mut shapes[index];
             // In vertices, not floats: the renderer indexes points, and halving the
             // number here is one fewer place to get the factor of two wrong.
             offsets.push((coords.len() / 2) as u32);
-            for [x, y] in &shape.points {
+            for point in &shape.points {
+                let [x, y] = view.project(*point);
                 coords.push((x - centre[0]) as f32);
                 coords.push((y - centre[1]) as f32);
             }
@@ -303,7 +400,7 @@ impl SceneData {
             layers.push(shape.layer.index());
             closed.push(u8::from(shape.closed));
             ids.push(shape.id as f64);
-            labels.push(shape.label);
+            labels.push(std::mem::take(&mut shape.label));
         }
         offsets.push((coords.len() / 2) as u32);
 
@@ -375,7 +472,11 @@ impl SceneData {
         self.centre[1]
     }
 
-    /// The map's extent in map coordinates, as `[minX, minY, maxX, maxY]`.
+    /// The map's extent *as drawn*, as `[minX, minY, maxX, maxY]` in metres.
+    ///
+    /// Under the plan view these are map coordinates. Under a tilted one they are
+    /// the page's, which is what a caller fitting a view to the scene needs — and
+    /// they are shorter along y than the map is, because that is what a tilt does.
     pub fn bounds(&self) -> Vec<f64> {
         vec![self.min[0], self.min[1], self.max[0], self.max[1]]
     }
@@ -476,6 +577,23 @@ mod tests {
   <node id='2' lat='49.0000000' lon='8.4010000'/>
   <node id='3' lat='49.0001000' lon='8.4000000'/>
   <node id='4' lat='49.0001000' lon='8.4010000'/>
+  <way id='10'><nd ref='1'/><nd ref='2'/><tag k='type' v='line_thin'/><tag k='subtype' v='solid'/></way>
+  <way id='11'><nd ref='3'/><nd ref='4'/><tag k='type' v='line_thin'/><tag k='subtype' v='dashed'/></way>
+  <relation id='20'>
+    <member type='way' ref='11' role='left'/>
+    <member type='way' ref='10' role='right'/>
+    <tag k='type' v='lanelet'/><tag k='subtype' v='road'/>
+  </relation>
+</osm>"#;
+
+    /// The same map with one bound twenty metres up — a bridge, as far as anything
+    /// that reads elevation is concerned.
+    const RAISED: &str = r#"<?xml version='1.0' encoding='UTF-8'?>
+<osm version='0.6'>
+  <node id='1' lat='49.0000000' lon='8.4000000'/>
+  <node id='2' lat='49.0000000' lon='8.4010000'/>
+  <node id='3' lat='49.0001000' lon='8.4000000'><tag k='ele' v='20'/></node>
+  <node id='4' lat='49.0001000' lon='8.4010000'><tag k='ele' v='20'/></node>
   <way id='10'><nd ref='1'/><nd ref='2'/><tag k='type' v='line_thin'/><tag k='subtype' v='solid'/></way>
   <way id='11'><nd ref='3'/><nd ref='4'/><tag k='type' v='line_thin'/><tag k='subtype' v='dashed'/></way>
   <relation id='20'>
@@ -617,6 +735,95 @@ mod tests {
         let svg = handle.to_svg(&SceneOptions::new(), 800.0, 600.0);
         assert!(svg.contains("width=\"800\""));
         assert!(svg.contains("data-layer=\"lanelet_fill\""));
+    }
+
+    /// The 3D option's whole visible effect on this side of the boundary: the same
+    /// shapes, in the same arrays, with different coordinates in them.
+    #[test]
+    fn the_three_d_option_projects_the_coordinates_it_hands_over() {
+        let handle = LaneletMapHandle::parse(RAISED, "auto").unwrap();
+        let flat = handle.build_scene(&SceneOptions::new());
+
+        let mut options = SceneOptions::new();
+        options.three_d = true;
+        let tilted = handle.build_scene(&options);
+
+        assert_eq!(tilted.shape_count(), flat.shape_count());
+        assert_eq!(tilted.coords().len(), flat.coords().len());
+        assert_ne!(tilted.coords(), flat.coords());
+        let span = |data: &SceneData| {
+            let b = data.bounds();
+            b[3] - b[1]
+        };
+        // Tilting foreshortens the ground: the same map with its relief thrown away
+        // is shorter across the page than the plan view of it. Measured without the
+        // yaw, which turns the map and so mixes its long side into the short one.
+        let mut flattened = options.clone();
+        flattened.yaw = 0.0;
+        flattened.exaggeration = 0.0;
+        assert!(
+            span(&handle.build_scene(&flattened)) < span(&flat),
+            "the camera did not tilt"
+        );
+        // Put the relief back and the twenty metres of it more than make up for the
+        // foreshortening of a map eleven metres across.
+        let mut upright = flattened.clone();
+        upright.exaggeration = 1.0;
+        assert!(
+            span(&handle.build_scene(&upright)) > span(&handle.build_scene(&flattened)) + 10.0,
+            "the elevation did not reach the page"
+        );
+        // And the export follows the canvas rather than staying flat behind it.
+        assert_ne!(
+            handle.to_svg(&options, 800.0, 600.0),
+            handle.to_svg(&SceneOptions::new(), 800.0, 600.0)
+        );
+    }
+
+    /// Whether a map *has* an elevation is a question about the file, not about the
+    /// camera, so it is answered the same way whichever view is asked for.
+    #[test]
+    fn the_relief_is_reported_so_a_caller_can_tell_a_flat_map_from_a_hill() {
+        // Answered by the file, before any scene is built and whatever camera a
+        // later one is built with.
+        let flat = LaneletMapHandle::parse(MAP, "auto").unwrap();
+        assert_eq!(flat.relief(), 0.0);
+        assert!(!flat.has_relief());
+
+        let handle = LaneletMapHandle::parse(RAISED, "auto").unwrap();
+        assert!((handle.relief() - 20.0).abs() < 0.5);
+        assert!(handle.has_relief());
+    }
+
+    /// The camera a viewer starts from is Rust's to state, like the layer table.
+    #[test]
+    fn the_default_camera_crosses_with_the_range_it_will_be_clamped_to() {
+        let table = camera();
+        let view = View::three_quarter();
+        assert!(
+            table.contains(&format!("\"pitch\":{}", view.pitch())),
+            "{table}"
+        );
+        assert!(table.contains("\"pitchRange\":[1,90]"), "{table}");
+        assert!(table.contains("\"minRelief\":0.5"), "{table}");
+        // The advertised range is the one `View::oblique` honours, so a slider built
+        // from it cannot ask for a camera it will not get.
+        assert_eq!(View::oblique(0.0, 1.0, 0.0).pitch(), 1.0);
+        assert_eq!(View::oblique(0.0, -5.0, 0.0).pitch(), 1.0);
+        assert_eq!(View::oblique(10.0, 200.0, 1.0).pitch(), 90.0);
+    }
+
+    #[test]
+    fn a_nonsense_camera_is_clamped_rather_than_drawn() {
+        let handle = LaneletMapHandle::parse(RAISED, "auto").unwrap();
+        let mut options = SceneOptions::new();
+        options.three_d = true;
+        options.pitch = -400.0;
+        options.yaw = f64::NAN;
+        options.exaggeration = f64::INFINITY;
+        let data = handle.build_scene(&options);
+        assert!(data.coords().iter().all(|value| value.is_finite()));
+        assert!(data.bounds().iter().all(|value| value.is_finite()));
     }
 
     #[test]

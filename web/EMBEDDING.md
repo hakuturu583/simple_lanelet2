@@ -31,7 +31,10 @@ the file to read if you would rather see it than read about it.
 ></lanelet2-viewer>
 ```
 
-Attributes are live — set `theme` and the theme changes. The full API is on
+Attributes are live — set `theme` and the theme changes. They mirror the
+constructor options: `src`, `theme`, `layers`, `coordinates`, `background`,
+`points`, `controls`, `tooltip`, `scalebar`, `interactive`, and `three-d` with its
+`yaw`, `pitch` and `exaggeration`. The full API is on
 `element.viewer`, or construct it yourself and skip the element:
 
 ```js
@@ -68,7 +71,10 @@ await viewer.loadOsm(osmText);
 | `clear()` | discard the map |
 | `setTheme('dark'\|'light'\|'auto')` | `auto` follows `prefers-color-scheme` and keeps following it |
 | `setLayers(keysOrMap)` / `getLayers()` | show and hide layers; instant, no reparse |
-| `setDrawPoints(bool)` | individual map points — the one option that rebuilds |
+| `setDrawPoints(bool)` | individual map points — one of the two options that rebuild |
+| `setView3d(bool\|{enabled, yaw, pitch, exaggeration})` / `getView3d()` | draw the map in relief instead of from straight above; rebuilds, and refits |
+| `viewer.relief` / `viewer.hasRelief` | metres from the map's lowest point to its highest, and whether that is enough to be worth a 3D view |
+| `CAMERA` | the default camera and the range Rust clamps it to, from Rust — populated once `ready` resolves |
 | `setCoordinates('auto'\|'projected'\|'local')` | re-reads the file |
 | `setBackground(colour\|'transparent'\|null)` | `null` uses the theme's own |
 | `setInteractive(bool)` | off for a static picture |
@@ -82,10 +88,42 @@ await viewer.loadOsm(osmText);
 | `destroy()` | |
 
 Events, as `CustomEvent`s: `loadstart`, `load`, `error`, `hover`, `select`,
-`viewchange`. `hover` and `select` carry `{id, label, layer}` or `null`; `load`
-carries `{name, stats, errors, problems, coordinateSource, projection, origin,
-bounds}`, where `errors` is upstream's `loadRobust` shape — a header line then one
-line per problem — and `problems` is how many that is.
+`viewchange`, `view3dchange`. `hover` and `select` carry `{id, label, layer}` or
+`null`; `load` carries `{name, stats, errors, problems, coordinateSource,
+projection, origin, bounds, relief, hasRelief}`, where `errors` is upstream's `loadRobust`
+shape — a header line then one line per problem — and `problems` is how many that
+is. `view3dchange` carries `{enabled, yaw, pitch, exaggeration}`, and fires for the
+viewer's own 3D button as well as for `setView3d` — a host with a control of its
+own should follow it rather than assume it is the only thing moving the camera.
+
+### The 3D view
+
+A Lanelet2 map has an elevation on every node, and `setView3d(true)` draws it:
+orthographic, from a compass bearing (`yaw`) and an angle above the horizon
+(`pitch`), with `exaggeration` multiplying the relief so that tens of metres are
+legible on a map that is kilometres wide.
+
+Three consequences worth knowing before you build a control for it:
+
+* **It rebuilds.** The projection happens in Rust and what crosses to the canvas is
+  already flat, so a camera move costs a scene rebuild rather than a repaint. The
+  viewer coalesces those to one a frame and ignores a camera that changes nothing,
+  which is what makes a slider affordable; a drag-to-orbit on a city-scale map is
+  still the wrong shape for it.
+* **It refits.** Tilting moves everything on the page, so the viewer reframes rather
+  than leaving the map half out of view. A host holding a `getView()` from before
+  should re-read it after.
+* **`getView`/`setView` stop being map coordinates.** A tilted camera has no single
+  map coordinate at the centre of the screen. The scale bar does stay honest: the
+  projection never foreshortens screen x.
+
+Check `viewer.hasRelief` before offering it: plenty of maps carry no `ele` at all,
+and tilting one of those gives a flat sheet at an angle, which reads as a broken
+viewer rather than as a map with nothing to show. Where the threshold sits is Rust's
+answer rather than yours — it is `CAMERA.minRelief` — so a host, the viewer's own 3D
+button and the SVG exporter all agree about which files are worth it. A viewer
+already in 3D that is handed a flat map drops back to the plan view by itself and
+says so on `view3dchange`.
 
 Layer keys: `lanelet_fill`, `area`, `polygon`, `bound`, `regulatory`,
 `centerline`, `direction`, `point`. The list is not written down here twice: it
@@ -157,6 +195,8 @@ That alone is a working map. Everything past it is optional.
 | `coordinates` | `auto` (default), `projected`, `local` |
 | `layers` | comma-separated layer keys; omit for the defaults |
 | `points` | `1` to draw individual map points |
+| `3d` | `1` to draw the map in relief, from the elevation its nodes carry |
+| `yaw`, `pitch`, `exaggerate` | the 3D camera: degrees about the vertical, degrees above the horizon, and the multiplier on elevation |
 | `controls`, `tooltip`, `scalebar` | `0` to hide that piece of chrome |
 | `interactive` | `0` for a static picture — no pan, zoom or picking |
 | `background` | a CSS colour (URL-encode the `#`), or `transparent` — see below |
@@ -176,6 +216,7 @@ frame.contentWindow.postMessage({ type: 'lanelet2.load', osm: text }, '*');
 | `lanelet2.load` | `{osm, name?, coordinates?}` |
 | `lanelet2.loadUrl` | `{url, name?}` |
 | `lanelet2.setOptions` | `{theme?, layers?, points?, background?, interactive?, coordinates?, controls?, tooltip?, scalebar?}` |
+| `lanelet2.setView3d` | `{enabled?, yaw?, pitch?, exaggeration?}` — the relief camera |
 | `lanelet2.setView` | `{x?, y?, scale?}` in map coordinates |
 | `lanelet2.fit` | |
 | `lanelet2.highlight` | `{ids: [123, 456]}` |
@@ -187,10 +228,11 @@ frame.contentWindow.postMessage({ type: 'lanelet2.load', osm: text }, '*');
 | --- | --- |
 | `lanelet2.ready` | `{version}` — post nothing before this arrives |
 | `lanelet2.loadstart` | `{name}` |
-| `lanelet2.loaded` | `{name, stats, errors, coordinateSource, projection, origin, bounds}` |
+| `lanelet2.loaded` | `{name, stats, errors, coordinateSource, projection, origin, bounds, relief, hasRelief}` |
 | `lanelet2.error` | `{message}` |
 | `lanelet2.hover` / `lanelet2.select` | `{shape}` — `{id, label, layer}` or `null` |
 | `lanelet2.view` | `{x, y, scale}` |
+| `lanelet2.view3d` | `{enabled, yaw, pitch, exaggeration}` |
 | `lanelet2.svg` | `{svg, requestId}` |
 
 A request that arrives with a `MessagePort` is answered on that port, so

@@ -6,7 +6,7 @@
 // if this file needs nothing privileged, neither does a Foxglove panel or a wandb
 // HTML block. See EMBEDDING.md.
 
-import { LaneletViewer } from './viewer.js';
+import { CAMERA, LaneletViewer } from './viewer.js';
 
 const elements = {
   stage: document.getElementById('stage'),
@@ -27,6 +27,12 @@ const elements = {
   themeSelect: document.getElementById('theme-select'),
   coordinatesSelect: document.getElementById('coordinates-select'),
   pointsToggle: document.getElementById('points-toggle'),
+  threeDToggle: document.getElementById('three-d-toggle'),
+  threeDControls: document.getElementById('three-d-controls'),
+  reliefLabel: document.getElementById('relief-label'),
+  yawInput: document.getElementById('yaw-input'),
+  pitchInput: document.getElementById('pitch-input'),
+  exaggerationInput: document.getElementById('exaggeration-input'),
   status: document.getElementById('status'),
   statusText: document.getElementById('status-text'),
   versionLabel: document.getElementById('version-label'),
@@ -46,12 +52,27 @@ viewer.addEventListener('load', (event) => {
   showErrors(event.detail.errors, event.detail.problems);
   showLayerToggles();
   showLegend();
+  showViewControls(event.detail);
   elements.dropzone.hidden = true;
   elements.layersBlock.hidden = false;
   elements.optionsBlock.hidden = false;
 });
 
 viewer.addEventListener('error', (event) => showError(event.detail.message));
+
+// The viewer has a 3D button on the canvas as well, and turns 3D off by itself for
+// a map with no elevation — so the sidebar follows the camera rather than being a
+// second, disagreeing statement of it.
+viewer.addEventListener('view3dchange', (event) => showCamera(event.detail));
+
+/// The panel's copy of the camera. One writer, so a fourth slider is one edit.
+function showCamera(camera) {
+  elements.threeDToggle.checked = camera.enabled;
+  elements.threeDControls.hidden = !camera.enabled;
+  elements.yawInput.value = camera.yaw;
+  elements.pitchInput.value = camera.pitch;
+  elements.exaggerationInput.value = camera.exaggeration;
+}
 
 // --- boot --------------------------------------------------------------------
 
@@ -67,6 +88,16 @@ viewer.ready
   });
 
 function wireUp() {
+  // The tilt and height sliders are bounded by what `View::oblique` will actually
+  // honour, so dragging one to its end cannot ask for a camera Rust clamps away.
+  // A slider whose end does nothing is how a user learns not to trust the control.
+  const [minPitch, maxPitch] = CAMERA.pitchRange ?? [1, 90];
+  elements.pitchInput.min = minPitch;
+  elements.pitchInput.max = maxPitch;
+  // Exaggeration is unbounded in principle; twenty times is where a road map stops
+  // being one, so the slider stops there rather than at Rust's hundred.
+  elements.exaggerationInput.min = Math.max(1, CAMERA.exaggerationRange?.[0] ?? 0);
+
   elements.fileInput.addEventListener('change', () => {
     const file = elements.fileInput.files && elements.fileInput.files[0];
     if (file) viewer.loadFile(file);
@@ -105,6 +136,23 @@ function wireUp() {
     showLayerToggles();
     showLegend();
   });
+
+  // No need to touch the controls here: `setView3d` answers with `view3dchange`,
+  // and `showCamera` is the one thing that writes them.
+  elements.threeDToggle.addEventListener('change', () =>
+    viewer.setView3d(elements.threeDToggle.checked),
+  );
+
+  // `input` rather than `change`, so dragging a slider turns the map as you drag.
+  // The viewer coalesces the rebuild to one a frame, which is what makes that
+  // affordable — a rebuild is the whole scene, not a repaint.
+  for (const [input, key] of [
+    [elements.yawInput, 'yaw'],
+    [elements.pitchInput, 'pitch'],
+    [elements.exaggerationInput, 'exaggeration'],
+  ]) {
+    input.addEventListener('input', () => viewer.setView3d({ [key]: Number(input.value) }));
+  }
 
   installDragAndDrop();
 
@@ -177,6 +225,20 @@ function formatExtent([minX, minY, maxX, maxY]) {
   const one = (metres) =>
     metres >= 1000 ? `${(metres / 1000).toFixed(metres >= 10000 ? 0 : 1)} km` : `${Math.round(metres)} m`;
   return `${one(maxX - minX)} × ${one(maxY - minY)}`;
+}
+
+/// The 3D controls, offered only when the file has something for them to show.
+///
+/// A Lanelet2 map is not required to carry `ele`, and plenty do not. Whether what
+/// it has is worth tilting is Rust's call, not this page's; all that is decided
+/// here is saying so next to the toggle, since a disabled checkbox with no reason
+/// beside it is just a broken one.
+function showViewControls({ relief, hasRelief }) {
+  elements.threeDToggle.disabled = !hasRelief;
+  elements.reliefLabel.textContent = hasRelief
+    ? `${Math.round(relief)} m of relief`
+    : 'no elevation in this map';
+  showCamera(viewer.getView3d());
 }
 
 function showLayerToggles() {

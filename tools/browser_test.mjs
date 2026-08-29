@@ -144,6 +144,43 @@ try {
     check((await page.$eval('body', (n) => n.dataset.theme)) === 'light', 'the theme control works');
     await page.selectOption('#theme-select', 'dark');
 
+    // The 3D view rebuilds the scene in Rust and hands back projected vertices,
+    // so the evidence that it worked is that the geometry moved and the sliders
+    // that steer it appeared.
+    const scaleBefore = await scaleLabel();
+    await page.check('#three-d-toggle');
+    await page.waitForTimeout(600);
+    check(
+      await page.$eval('#three-d-controls', (n) => !n.hidden),
+      'the 3D toggle reveals the camera controls',
+    );
+    check(
+      (await page.$eval('#relief-label', (n) => n.textContent)).includes('relief'),
+      "the panel states the map's relief",
+    );
+    // Tilting refits the map, so the zoom the wheel left behind is gone.
+    check(scaleBefore !== (await scaleLabel()), 'turning on 3D reframes the map');
+    // A slider drag has to reach Rust and come back. Rotation is the observable
+    // one: the projection never foreshortens screen x, so a tilt leaves the fit
+    // (and the scale bar) alone on a map this much wider than it is tall, while a
+    // turn swings the map's long side across it.
+    // The bar's width in pixels rather than its label: the label is rounded to a
+    // 1/2/5 step and a refit often lands on the same one.
+    const scaleWidth = () =>
+      page.evaluate(
+        () => document.querySelector('#viewer > div').shadowRoot.querySelector('.scalebar .bar').style.width,
+      );
+    const turnedBefore = await scaleWidth();
+    await page.fill('#yaw-input', '90');
+    await page.waitForTimeout(400);
+    check(turnedBefore !== (await scaleWidth()), 'the rotation slider moves the camera');
+    await page.uncheck('#three-d-toggle');
+    await page.waitForTimeout(400);
+    check(
+      await page.$eval('#three-d-controls', (n) => n.hidden),
+      'and turning it off hides them again',
+    );
+
     const download = page.waitForEvent('download', { timeout: 30000 });
     await page.click('#export-button');
     check((await download).suggestedFilename() === 'mapping_example.svg', 'SVG export downloads');
@@ -197,6 +234,15 @@ try {
       'exportSvg replies with a document',
     );
 
+    // Round-trips `lanelet2.setView3d` and the `lanelet2.view3d` the frame answers
+    // with — the half of the protocol a host needs to keep a control of its own in
+    // step with the viewer's.
+    await page.click('#toggle-3d');
+    await logged('view3d: on');
+    check(true, 'setView3d round-trips through the iframe protocol');
+    await page.click('#toggle-3d');
+    await logged('view3d: off');
+
     check(
       /element: 371 lanelets/.test(await page.$eval('#log', (n) => n.textContent)),
       '<lanelet2-viewer src=…> loads on its own',
@@ -227,6 +273,47 @@ try {
     check(themed.sameBuffer, 'and does so without re-flattening the geometry');
     check(themed.sameStyles && themed.sameLegend, 'and keeps the style table aligned');
     await page.$eval('#element', (element) => element.viewer.setTheme('dark'));
+
+    // The 3D view, where the geometry is actually reachable: the same shapes, the
+    // same style table, different coordinates, and the projection done in Rust.
+    const tilted = await page.$eval('#element', async (element) => {
+      const viewer = element.viewer;
+      const before = Array.from(viewer._geometry.coords.slice(0, 400));
+      const shapes = viewer._geometry.count;
+      const events = [];
+      viewer.addEventListener('view3dchange', (event) => events.push(event.detail));
+      viewer.setView3d({ enabled: true, pitch: 40, exaggeration: 5 });
+      // Three more that change nothing: the same camera again, and two angle
+      // changes while the map view is on. None may cost a rebuild.
+      viewer.setView3d({ enabled: true, pitch: 40, exaggeration: 5 });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const after = Array.from(viewer._geometry.coords.slice(0, 400));
+      viewer.setView3d(false);
+      viewer.setView3d({ yaw: 123 });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return {
+        relief: viewer.relief,
+        hasRelief: viewer.hasRelief,
+        shapes: viewer._geometry.count === shapes,
+        moved: after.some((value, index) => value !== before[index]),
+        length: after.length === before.length,
+        events,
+      };
+    });
+    check(
+      tilted.relief > 0 && tilted.hasRelief,
+      `the element reports the map's relief (${tilted.relief.toFixed(1)} m)`,
+    );
+    check(tilted.moved && tilted.length, '3D reprojects the vertices in place');
+    check(tilted.shapes, 'without adding or losing a shape');
+    // One event in, one out — the repeat and the angle-while-flat are dropped.
+    check(
+      tilted.events.length === 2 &&
+        tilted.events[0].enabled &&
+        tilted.events[0].pitch === 40 &&
+        !tilted.events[1].enabled,
+      `a camera that changes nothing costs nothing (${JSON.stringify(tilted.events)})`,
+    );
 
     await page.click('#element-centerlines');
     await page.waitForTimeout(200);

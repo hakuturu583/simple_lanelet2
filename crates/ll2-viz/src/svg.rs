@@ -6,15 +6,22 @@
 //! stays 1.2 *pixels* whatever the scale — the same rule the canvas renderer
 //! follows, and the reason a lane marking is visible on a city-sized map at all.
 //!
+//! A scene is three-dimensional and a page is not, so every vertex goes through
+//! [`SvgOptions::view`] on the way out. Under the default plan view that is the
+//! identity on x and y and the document is exactly what it always was; tilt the view
+//! and the same machinery draws the map in relief, because the projection happens
+//! before the page transform rather than instead of it.
+//!
 //! No dependency: an SVG document is text, and the alternative is pulling a whole
 //! writer in for eight element names.
 
 use std::fmt::Write as _;
 
-use crate::scene::Scene;
+use crate::scene::{Scene, Shape};
 use crate::style::{Style, VizLayer};
+use crate::view::View;
 
-/// Page size and margin for an SVG export.
+/// Page size, margin and viewpoint for an SVG export.
 #[derive(Clone, Copy, Debug)]
 pub struct SvgOptions {
     pub width: f64,
@@ -22,6 +29,9 @@ pub struct SvgOptions {
     pub margin: f64,
     /// Paint the theme's background colour behind the map.
     pub background: bool,
+    /// Where the map is drawn from. [`View::plan`] is the map view; anything else
+    /// is the 3D one, and is the only way the scene's elevations reach the page.
+    pub view: View,
 }
 
 impl Default for SvgOptions {
@@ -31,6 +41,7 @@ impl Default for SvgOptions {
             height: 1000.0,
             margin: 24.0,
             background: true,
+            view: View::plan(),
         }
     }
 }
@@ -40,8 +51,9 @@ pub fn render_svg(scene: &Scene, options: &SvgOptions) -> String {
     let width = options.width.max(1.0);
     let height = options.height.max(1.0);
     let margin = options.margin.clamp(0.0, width.min(height) / 2.0 - 1.0);
+    let view = &options.view;
 
-    let bounds = scene.safe_bounds();
+    let bounds = scene.view_bounds(view);
     let span_x = bounds.max[0] - bounds.min[0];
     let span_y = bounds.max[1] - bounds.min[1];
     let scale = ((width - 2.0 * margin) / span_x).min((height - 2.0 * margin) / span_y);
@@ -82,10 +94,13 @@ pub fn render_svg(scene: &Scene, options: &SvgOptions) -> String {
         number(-scale)
     );
 
-    // One group per layer, in the order shapes were sorted into, so an exported file
-    // can have its layers toggled in an editor exactly as in the demo.
+    // One group per layer, in the order shapes are drawn in, so an exported file can
+    // have its layers toggled in an editor exactly as in the demo. Layers stay
+    // contiguous under a tilted camera too: depth only reorders shapes within a
+    // style's z band, and a band is a layer.
     let mut current: Option<VizLayer> = None;
-    for shape in &scene.shapes {
+    for index in scene.draw_order(view) {
+        let shape = &scene.shapes[index];
         let Some(style) = scene.styles.get(shape.style) else {
             continue;
         };
@@ -107,7 +122,7 @@ pub fn render_svg(scene: &Scene, options: &SvgOptions) -> String {
             current = Some(shape.layer);
         }
         let dashed = (scale as f32) >= style.solid_below_scale;
-        write_shape(&mut out, shape, style, dashed);
+        write_shape(&mut out, shape, style, dashed, view);
     }
     if current.is_some() {
         out.push_str("</g>\n");
@@ -117,14 +132,14 @@ pub fn render_svg(scene: &Scene, options: &SvgOptions) -> String {
     out
 }
 
-fn write_shape(out: &mut String, shape: &crate::scene::Shape, style: &Style, dashed: bool) {
+fn write_shape(out: &mut String, shape: &Shape, style: &Style, dashed: bool, view: &View) {
     if shape.points.is_empty() {
         return;
     }
     // A lone point has no path to draw; a small circle is the honest rendering, and
     // its radius is in world units so it does not swamp the map when zoomed out.
     if shape.points.len() == 1 {
-        let [x, y] = shape.points[0];
+        let [x, y] = view.project(shape.points[0]);
         let color = style
             .stroke
             .or(style.fill)
@@ -141,11 +156,12 @@ fn write_shape(out: &mut String, shape: &crate::scene::Shape, style: &Style, das
     }
 
     out.push_str("<path d=\"M");
-    for (index, [x, y]) in shape.points.iter().enumerate() {
+    for (index, point) in shape.points.iter().enumerate() {
         if index > 0 {
             out.push('L');
         }
-        let _ = write!(out, "{} {}", number(*x), number(*y));
+        let [x, y] = view.project(*point);
+        let _ = write!(out, "{} {}", number(x), number(y));
         if index + 1 < shape.points.len() {
             out.push(' ');
         }
@@ -214,6 +230,7 @@ mod tests {
     use super::*;
     use crate::scene::{Scene, VizOptions};
     use crate::source::{LoadOptions, load_osm_str};
+    use crate::view::View;
 
     const MAP: &str = r#"<?xml version='1.0' encoding='UTF-8'?>
 <osm version='0.6'>
@@ -288,6 +305,72 @@ mod tests {
         assert!(!stamp.contains("data-layer=\"direction\""));
         // The road itself is still there — this is detail, not the map.
         assert!(stamp.contains("data-layer=\"lanelet_fill\""));
+    }
+
+    /// The same scene, drawn from the same place, with and without the elevation:
+    /// a plan view cannot tell a bridge from the road under it, and a tilted one
+    /// must. This is the whole of what "3D" buys.
+    #[test]
+    fn a_tilted_view_separates_what_a_plan_view_flattens() {
+        let raised = MAP.replace(
+            "<node id='3' lat='49.0001000' lon='8.4000000'/>",
+            "<node id='3' lat='49.0001000' lon='8.4000000'><tag k='ele' v='20'/></node>",
+        );
+        let raised = raised.replace(
+            "<node id='4' lat='49.0001000' lon='8.4010000'/>",
+            "<node id='4' lat='49.0001000' lon='8.4010000'><tag k='ele' v='20'/></node>",
+        );
+        let loaded = load_osm_str(&raised, &LoadOptions::default()).unwrap();
+        let scene = Scene::from_map(&loaded.map, &VizOptions::default());
+        assert!(
+            scene.bounds.max[2] - scene.bounds.min[2] > 19.0,
+            "no relief"
+        );
+
+        let page = |view: View| {
+            render_svg(
+                &scene,
+                &SvgOptions {
+                    view,
+                    ..SvgOptions::default()
+                },
+            )
+        };
+        let plan = page(View::plan());
+        let tilted = page(View::three_quarter());
+        assert!(tilted.starts_with("<svg"));
+        assert_ne!(plan, tilted, "the elevation changed nothing");
+
+        // Flattening the same tilted camera puts the raised bound back down with the
+        // other one, so the two documents differ only by what the elevation did.
+        let flattened = page(View::oblique(30.0, 55.0, 0.0));
+        assert_ne!(flattened, tilted);
+        // The page is always fitted to the map, so the drawing is the same size
+        // either way; what the relief changes is the shape it is fitted *from*.
+        let span = |view: View| {
+            let box2d = scene.view_bounds(&view);
+            box2d.max[1] - box2d.min[1]
+        };
+        assert!(
+            span(View::three_quarter()) > span(View::oblique(30.0, 55.0, 0.0)) + 10.0,
+            "the twenty metres of relief did not reach the page"
+        );
+    }
+
+    #[test]
+    fn a_plan_view_is_the_default_and_the_option_is_the_only_difference() {
+        let loaded = load_osm_str(MAP, &LoadOptions::default()).unwrap();
+        let scene = Scene::from_map(&loaded.map, &VizOptions::default());
+        assert_eq!(
+            render_svg(&scene, &SvgOptions::default()),
+            render_svg(
+                &scene,
+                &SvgOptions {
+                    view: View::plan(),
+                    ..SvgOptions::default()
+                }
+            )
+        );
     }
 
     #[test]

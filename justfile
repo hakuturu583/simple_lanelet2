@@ -97,6 +97,12 @@ web-serve:
 svg MAP OUT="map.svg":
     cargo run --release -p ll2-viz --example osm2svg -- {{MAP}} {{OUT}}
 
+# The same, drawn in relief from the elevation the map's nodes carry. EXAGGERATE
+# multiplies it, for a map that is kilometres wide and tens of metres tall.
+svg3d MAP OUT="map-3d.svg" YAW="30" PITCH="55" EXAGGERATE="1":
+    cargo run --release -p ll2-viz --example osm2svg -- {{MAP}} {{OUT}} \
+        --3d --yaw={{YAW}} --pitch={{PITCH}} --exaggerate={{EXAGGERATE}}
+
 # A map to a scene as JSON, for a renderer that is not in this repository.
 scene MAP OUT="scene.json" NAME="map":
     cargo run --release -p ll2-viz --example scene2json -- {{MAP}} {{OUT}} {{NAME}}

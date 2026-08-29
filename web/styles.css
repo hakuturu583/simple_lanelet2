@@ -254,6 +254,27 @@ body[data-theme='light'] .button.primary {
   accent-color: var(--accent-strong);
 }
 
+.row input[type='range'] {
+  flex: 1;
+  max-width: 62%;
+  accent-color: var(--accent-strong);
+}
+
+/* The relief a map actually has, beside the toggle that would show it. */
+.row .count {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* A map whose nodes carry no elevation has nothing to draw in 3D. */
+.row.checkbox:has(input:disabled) {
+  opacity: 0.45;
+}
+
+#three-d-controls {
+  margin: 0 0 8px 22px;
+}
+
 #export-button {
   margin-top: 4px;
 }

@@ -1,21 +1,20 @@
-//! The geometry a 3D viewer needs and a 2D one does not.
+//! The geometry a viewer of triangles needs and a viewer of paths does not.
 //!
-//! [`ll2_viz::Scene`] flattens everything to x and y, because an SVG page and a
-//! `<canvas>` have nowhere to put the third coordinate. A Spatial3D view does, and a
-//! Lanelet2 map carries it — `ele` on every node — so nothing here reads a `Scene`.
-//! It works from the map's own points and keeps their elevation.
+//! [`ll2_viz::Scene`] keeps every node's elevation, as this does, but what it holds
+//! are outlines: a page and a `<canvas>` fill a closed path, and a projection is all
+//! that stands between one and the other. A Spatial3D view has no such primitive, so
+//! nothing here reads a `Scene` — it works from the map's own points, and builds the
+//! one thing the flat renderers get for free from the rasteriser: a surface. Rings
+//! are ear-clipped and lanelets are stitched into ribbons.
 //!
-//! Two things then have to be built that the 2D side gets for free:
-//!
-//! * A surface. A browser fills a closed path; a renderer of triangles wants
-//!   triangles, so rings are ear-clipped and lanelets are stitched into ribbons.
-//! * Samples along a centerline in 3D, for the driving-direction arrows.
+//! Everything else about a polyline — where the direction arrows go, what a segment
+//! is worth in three dimensions — comes from [`ll2_viz::polyline`], because where an
+//! arrow goes is a decision about what a map looks like and this crate must not have
+//! its own opinion about that.
 
-use ll2_core::geometry::linestring::distance_3d;
+pub use ll2_viz::polyline::{Point3, sample_along};
 
-/// A point in map coordinates: metres, x east, y north, z up. The same alias
-/// `ll2-core`'s geometry uses, so its helpers apply unchanged.
-pub type Point3 = [f64; 3];
+use ll2_viz::polyline::{arc_lengths, lerp};
 
 /// Map coordinates as Rerun wants them.
 ///
@@ -212,73 +211,6 @@ fn resample(points: &[Point3], count: usize) -> Vec<Point3> {
     samples
 }
 
-/// Positions and unit headings at roughly `spacing` metres along a polyline.
-///
-/// The 3D counterpart of the sampler behind the SVG renderer's arrowheads, and it
-/// keeps that one's promise: a polyline with any length at all yields at least one
-/// sample, placed at its middle. A lanelet with no arrow reads as one with no
-/// direction, not as one that was too short to mark.
-pub fn sample_along(points: &[Point3], spacing: f64) -> Vec<(Point3, Point3)> {
-    let spacing = if spacing.is_finite() && spacing > 0.1 {
-        spacing
-    } else {
-        25.0
-    };
-    let Some((lengths, total)) = arc_lengths(points) else {
-        return Vec::new();
-    };
-
-    let count = (total / spacing).floor().max(1.0) as usize;
-    let step = total / (count as f64 + 1.0);
-    let mut samples = Vec::with_capacity(count);
-    let mut target = step;
-    let mut travelled = 0.0;
-
-    for (index, length) in lengths.iter().enumerate() {
-        if *length <= 0.0 {
-            continue;
-        }
-        let (start, end) = (points[index], points[index + 1]);
-        let heading = [
-            (end[0] - start[0]) / length,
-            (end[1] - start[1]) / length,
-            (end[2] - start[2]) / length,
-        ];
-        while target <= travelled + length && samples.len() < count {
-            let ratio = (target - travelled) / length;
-            samples.push((lerp(start, end, ratio), heading));
-            target += step;
-        }
-        travelled += length;
-    }
-    samples
-}
-
-/// Each segment's length and their total, or `None` for a polyline with no length.
-///
-/// Two identical points describe no direction, and every caller here would go on to
-/// build a degenerate shape from one — so the rule lives in one place rather than at
-/// the top of each sampler.
-fn arc_lengths(points: &[Point3]) -> Option<(Vec<f64>, f64)> {
-    if points.len() < 2 {
-        return None;
-    }
-    let lengths: Vec<f64> = points
-        .windows(2)
-        .map(|pair| distance_3d(pair[0], pair[1]))
-        .collect();
-    let total: f64 = lengths.iter().sum();
-    (total > 0.0 && total.is_finite()).then_some((lengths, total))
-}
-
-fn lerp(from: Point3, to: Point3, ratio: f64) -> Point3 {
-    [
-        from[0] + (to[0] - from[0]) * ratio,
-        from[1] + (to[1] - from[1]) * ratio,
-        from[2] + (to[2] - from[2]) * ratio,
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,25 +351,5 @@ mod tests {
         for (index, sample) in samples.iter().enumerate() {
             assert!((sample[0] - index as f64 * 2.25).abs() < 1e-9, "{sample:?}");
         }
-    }
-
-    #[test]
-    fn a_short_centerline_still_gets_one_arrow_at_its_middle() {
-        let samples = sample_along(&[[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], 25.0);
-        assert_eq!(samples.len(), 1);
-        assert!((samples[0].0[0] - 1.0).abs() < 1e-9);
-        assert_eq!(samples[0].1, [1.0, 0.0, 0.0]);
-    }
-
-    #[test]
-    fn arrow_headings_climb_with_the_road() {
-        let samples = sample_along(&[[0.0, 0.0, 0.0], [0.0, 0.0, 4.0]], 25.0);
-        assert_eq!(samples[0].1, [0.0, 0.0, 1.0]);
-    }
-
-    #[test]
-    fn sampling_a_line_with_no_length_yields_nothing() {
-        assert!(sample_along(&[[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]], 5.0).is_empty());
-        assert!(sample_along(&[[1.0, 1.0, 1.0]], 5.0).is_empty());
     }
 }

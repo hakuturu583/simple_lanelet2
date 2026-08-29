@@ -2,6 +2,21 @@
 //!
 //! Deliberately the same `Scene` the canvas and the SVG writer consume: the point
 //! of it being renderer-agnostic is that a third renderer costs a serialiser.
+//!
+//! Two things about the numbers. `coords` runs `x, y, z, x, y, z, …` in centimetres,
+//! three per vertex, because a Lanelet2 map has an elevation and a file that dropped
+//! it would decide for its reader that no renderer downstream is allowed to be
+//! three-dimensional; a flat renderer reads every third number and ignores it.
+//! `bounds` is `[minX, minY, minZ, maxX, maxY, maxZ]` in the same units, relative to
+//! `centre` in x and y and absolute in z.
+//!
+//! What is *not* here is the camera. A reader that wants the plan view has it — drop
+//! every third number — but one that wants relief has to project for itself, and
+//! `ll2_viz::view` is the statement of how: orthographic, screen x never
+//! foreshortened, y up in metres, elevation exaggerated before the tilt is applied.
+//! Handing over the map rather than a picture of it is the point of this file, so
+//! that is the right way round; it does mean a third renderer that wants 3D costs a
+//! serialiser plus a camera rather than a serialiser alone.
 use std::fmt::Write as _;
 
 fn main() {
@@ -41,6 +56,9 @@ fn main() {
     // size of the document against printed floats.
     let cm = |v: f64| (v * 100.0).round() as i64;
 
+    // Three per vertex, not two. A renderer that only wants the map view reads every
+    // third number and drops it; one that wants the relief has it, which it would
+    // not if this file had done the flattening on its behalf.
     let mut coords = String::from("[");
     let mut offsets = String::from("[");
     let mut style_of = String::from("[");
@@ -58,8 +76,14 @@ fn main() {
         // Every entry is followed by a comma; the closing one is the total, which
         // is what makes `offsets[i]..offsets[i + 1]` work for the last shape too.
         let _ = write!(offsets, "{vertices},");
-        for [x, y] in &shape.points {
-            let _ = write!(coords, "{},{},", cm(x - centre[0]), cm(y - centre[1]));
+        for [x, y, z] in &shape.points {
+            let _ = write!(
+                coords,
+                "{},{},{},",
+                cm(x - centre[0]),
+                cm(y - centre[1]),
+                cm(*z)
+            );
             vertices += 1;
         }
         let _ = write!(style_of, "{}", shape.style);
@@ -101,7 +125,7 @@ fn main() {
          \"origin\":[{:.5},{:.5}],\"problems\":{},\
          \"stats\":{{\"lanelets\":{},\"lineStrings\":{},\"polygons\":{},\"areas\":{},\
          \"regulatoryElements\":{},\"points\":{}}},\
-         \"bounds\":[{},{},{},{}],\"background\":\"{}\",\"highlight\":\"{}\",\
+         \"bounds\":[{},{},{},{},{},{}],\"background\":\"{}\",\"highlight\":\"{}\",\
          \"layers\":{layers},\"styles\":{styles},\"stylesLight\":{styles_light},\
          \"backgroundLight\":\"{}\",\"highlightLight\":\"{}\",\"centre\":[{},{}],\
          \"offsets\":{offsets},\"coords\":{coords},\"styleOf\":{style_of},\
@@ -120,8 +144,10 @@ fn main() {
         s.points,
         cm(b.min[0] - centre[0]),
         cm(b.min[1] - centre[1]),
+        cm(b.min[2]),
         cm(b.max[0] - centre[0]),
         cm(b.max[1] - centre[1]),
+        cm(b.max[2]),
         scene.theme.palette().background.to_hex(),
         scene.theme.palette().highlight.to_hex(),
         ll2_viz::Theme::Light.palette().background.to_hex(),

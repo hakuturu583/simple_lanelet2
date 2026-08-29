@@ -19,6 +19,12 @@
 // matter how large the map is. Stroke widths are divided by the scale so a lane
 // marking stays one pixel wide at every zoom.
 //
+// That holds for the 3D view too, and it is why there is no 3D renderer here. A
+// Lanelet2 map has an elevation on every node; `setView3d` asks Rust to project the
+// scene from a tilted camera instead of from straight above, and what arrives is
+// the same flat arrays with different numbers in them, already in painter's order.
+// So relief costs a rebuild when the camera moves and nothing at all per frame.
+//
 //   import { LaneletViewer } from './viewer.js';
 //   const viewer = new LaneletViewer(element, { theme: 'auto' });
 //   viewer.addEventListener('load', (event) => console.log(event.detail.stats));
@@ -29,13 +35,29 @@
 //   <script type="module" src="./viewer.js"></script>
 //   <lanelet2-viewer src="map.osm" theme="auto"></lanelet2-viewer>
 
-import init, { layers as layerTable, load_osm, SceneOptions, version } from './pkg/ll2_wasm.js';
+import init, {
+  camera as cameraTable,
+  layers as layerTable,
+  load_osm,
+  SceneOptions,
+  version,
+} from './pkg/ll2_wasm.js';
 
 /// The layer table, `[{key, label, default}]`, in the order the Rust side indexes
 /// layers by. Empty until [`initWasm`] resolves, because it *is* the Rust table —
 /// restating it here would be a cross-language ordering invariant with nothing to
 /// enforce it, and adding a layer would silently mislabel every shape.
 export const LAYERS = [];
+
+/// The 3D camera to start from, and the range Rust will clamp it to:
+/// `{yaw, pitch, exaggeration, pitchRange, exaggerationRange, minRelief}`. From
+/// Rust for the same reason `LAYERS` is — where a camera starts and how much relief
+/// is worth showing are decisions about what a map looks like, and this file having
+/// its own numbers is how the SVG export and the canvas come to disagree.
+///
+/// Populated by [`initWasm`]; the values here are only what a viewer constructed
+/// before the module is up has to work with.
+export const CAMERA = { yaw: 30, pitch: 55, exaggeration: 1, minRelief: 0.5 };
 
 /// The keys of the layers a viewer shows when nobody says otherwise. Also from
 /// Rust: it is `VizOptions::default()`.
@@ -63,6 +85,7 @@ export function initWasm(options = {}) {
     wasmPromise = init(options.wasmUrl ? { module_or_path: options.wasmUrl } : undefined)
       .then(() => {
         LAYERS.splice(0, LAYERS.length, ...JSON.parse(layerTable()));
+        Object.assign(CAMERA, JSON.parse(cameraTable()));
         return { version: version() };
       })
       .catch((error) => {
@@ -100,6 +123,9 @@ canvas.panning { cursor: grabbing; }
 }
 .controls button.small { font-size: 11px; }
 .controls button:hover { border-color: var(--ll2-accent, #4dd0e1); }
+/* A map whose nodes carry no elevation has nothing to draw in relief. */
+.controls button:disabled { opacity: 0.4; cursor: default; }
+.controls button:disabled:hover { border-color: var(--ll2-border, rgba(128,140,160,0.35)); }
 .scalebar {
   position: absolute; left: 10px; bottom: 10px; z-index: 2; pointer-events: none;
   color: var(--ll2-muted, #98a2b3);
@@ -139,11 +165,12 @@ const CHROME = {
  * | event | `detail` |
  * | --- | --- |
  * | `loadstart` | `{name}` |
- * | `load` | `{name, stats, errors, problems, coordinateSource, projection, origin, bounds}` |
+ * | `load` | `{name, stats, errors, problems, coordinateSource, projection, origin, bounds, relief}` |
  * | `error` | `{message}` |
  * | `hover` | `{id, label, layer} \| null` |
  * | `select` | `{id, label, layer} \| null` |
  * | `viewchange` | `{x, y, scale}` in map coordinates |
+ * | `view3dchange` | `{enabled, yaw, pitch, exaggeration}` |
  */
 export class LaneletViewer extends EventTarget {
   /**
@@ -162,6 +189,15 @@ export class LaneletViewer extends EventTarget {
       /// until the module is up.
       layers: null,
       drawPoints: false,
+      /// Draw the map in relief rather than from straight above. `false` is the
+      /// map view; the angles below are only read when it is on.
+      threeD: false,
+      /// Degrees the map is turned about the vertical, then degrees above the
+      /// horizon, then the multiplier on every elevation. `null` means the Rust
+      /// default in `CAMERA`, which is not known until the module is up.
+      yaw: null,
+      pitch: null,
+      exaggeration: null,
       controls: true,
       tooltip: true,
       scalebar: true,
@@ -198,9 +234,13 @@ export class LaneletViewer extends EventTarget {
 
     this.ready = initWasm({ wasmUrl: this.options.wasmUrl })
       .then((info) => {
-        // The default visible set lives in Rust with the layer table, so it can
-        // only be resolved once the module is up. Nothing draws before then.
+        // The default visible set and the default camera both live in Rust, so
+        // they can only be resolved once the module is up. Nothing draws before
+        // then, and anything the caller did pass is left alone.
         if (this.options.layers === null) this._visible = new Set(defaultLayers());
+        for (const key of ['yaw', 'pitch', 'exaggeration']) {
+          if (this.options[key] === null) this.options[key] = CAMERA[key];
+        }
         return info;
       })
       .catch((error) => {
@@ -243,10 +283,15 @@ export class LaneletViewer extends EventTarget {
 
     this._controls = document.createElement('div');
     this._controls.className = 'controls';
+    // Both the label and the title are decided by `_applyChromeVisibility`, which
+    // runs before any of this is on screen — stating them here as well would be two
+    // sources for one string.
+    this._view3dButton = this._controlButton('', '', () => this.setView3d(!this.options.threeD), 'small');
     this._controls.append(
       this._controlButton('+', 'Zoom in', () => this.zoomBy(1.4)),
       this._controlButton('−', 'Zoom out', () => this.zoomBy(1 / 1.4)),
       this._controlButton('Fit', 'Fit the map to the view', () => this.fit(), 'small'),
+      this._view3dButton,
     );
 
     this._root.append(this._canvas, this._scalebar, this._controls, this._tooltip);
@@ -271,6 +316,18 @@ export class LaneletViewer extends EventTarget {
     this._scalebar.hidden = !this.options.scalebar || !this._geometry;
     this._canvas.classList.toggle('interactive', this.options.interactive);
     if (!this.options.tooltip) this._tooltip.hidden = true;
+    // The button says what it will give you, and offering relief on a map that has
+    // none would give a tilted flat sheet and no way to tell why. It stays live
+    // while the 3D view is on, whatever the map: the way out must not be the thing
+    // that gets disabled.
+    this._view3dButton.textContent = this.options.threeD ? '2D' : '3D';
+    this._view3dButton.disabled =
+      Boolean(this._geometry) && !this.options.threeD && !this.hasRelief;
+    this._view3dButton.title = this._view3dButton.disabled
+      ? 'Every node in this map is at the same elevation'
+      : this.options.threeD
+        ? 'Back to the map view'
+        : 'Draw the map in relief, using the elevation of its nodes';
   }
 
   _observeSize() {
@@ -300,6 +357,7 @@ export class LaneletViewer extends EventTarget {
     if (this._destroyed) return;
     this._destroyed = true;
     if (this._frame) cancelAnimationFrame(this._frame);
+    if (this._cameraFrame) cancelAnimationFrame(this._cameraFrame);
     this._resizeObserver?.disconnect();
     if (this._media) {
       if (this._media.removeEventListener) this._media.removeEventListener('change', this._onMediaChange);
@@ -360,6 +418,18 @@ export class LaneletViewer extends EventTarget {
     }
     this._freeHandle();
     this._handle = handle;
+    // Both from the file rather than from a scene, so they are settled before
+    // anything is built and cannot change when something else is.
+    this._relief = handle.relief();
+    this._hasRelief = handle.has_relief();
+    // A tilted view of a map with no elevation is a flat sheet at an angle, which
+    // reads as a broken viewer. Dropping back to the map view is the viewer's rule
+    // rather than each host's, or an iframe asking for `3d=1` and a page with a
+    // checkbox would behave differently on the same file.
+    if (this.options.threeD && !this._hasRelief) {
+      this.options.threeD = false;
+      this._emit('view3dchange', this.getView3d());
+    }
     // Only kept when there is nothing else to re-read from: for a 50 MB map this
     // is 100 MB of UTF-16 held for the viewer's lifetime, on top of the copy
     // wasm already made.
@@ -376,6 +446,11 @@ export class LaneletViewer extends EventTarget {
       projection: handle.projection(),
       origin: { lat: handle.origin_lat(), lon: handle.origin_lon() },
       bounds: Array.from(this._scene.bounds()),
+      // Metres from the map's lowest point to its highest, and zero for the many
+      // files whose nodes carry no `ele`, with Rust's own verdict on whether that
+      // is enough to be worth a 3D view.
+      relief: this._relief,
+      hasRelief: this._hasRelief,
     };
     this.stats = detail.stats;
     this._emit('load', detail);
@@ -437,6 +512,8 @@ export class LaneletViewer extends EventTarget {
     this._geometry = null;
     this._index = null;
     this._source = null;
+    this._relief = 0;
+    this._hasRelief = false;
     this.stats = null;
     this.legend = [];
     this._hover = -1;
@@ -499,6 +576,87 @@ export class LaneletViewer extends EventTarget {
   setDrawPoints(enabled) {
     this.options.drawPoints = Boolean(enabled);
     if (this._handle) this._rebuild({ keepView: true });
+  }
+
+  /**
+   * Draws the map in relief, from the elevation its nodes carry, instead of from
+   * straight above.
+   *
+   * Rebuilds the scene, because the projection happens in Rust — so this is a knob
+   * to set, not one to animate. Pass a partial object to change one angle:
+   * `setView3d({yaw: 90})` turns the map without leaving 3D.
+   *
+   * @param {boolean|{enabled?: boolean, yaw?: number, pitch?: number,
+   *   exaggeration?: number}} view `true`/`false` is shorthand for `{enabled}`.
+   */
+  setView3d(view) {
+    const settings = typeof view === 'boolean' ? { enabled: view } : (view ?? {});
+    const before = this.getView3d();
+    if (settings.enabled !== undefined) this.options.threeD = Boolean(settings.enabled);
+    for (const key of ['yaw', 'pitch', 'exaggeration']) {
+      if (Number.isFinite(settings[key])) this.options[key] = settings[key];
+    }
+    const after = this.getView3d();
+    // An angle changed while the map view is on cannot alter a pixel — Rust ignores
+    // the angles unless 3D is on — and a host setting `yaw` then `pitch` through
+    // attributes arrives here twice for one camera move. Neither is worth a rebuild.
+    const moved = after.enabled
+      ? Object.keys(after).some((key) => after[key] !== before[key])
+      : after.enabled !== before.enabled;
+    if (!moved) return;
+
+    if (this._handle) this._scheduleRebuild();
+    this._applyChromeVisibility();
+    // The viewer has a 3D button of its own, so a host with a control for it needs
+    // to hear about the presses it did not make.
+    this._emit('view3dchange', after);
+  }
+
+  /// One rebuild per frame, however many camera changes arrive in it.
+  ///
+  /// Dragging a slider emits an `input` event per pixel, and a rebuild is a whole
+  /// scene: on a city map each one is most of a second, and running them back to
+  /// back would queue a minute of work behind a two-second drag. Superseded cameras
+  /// are simply never drawn.
+  _scheduleRebuild() {
+    if (this._cameraFrame) return;
+    this._cameraFrame = requestAnimationFrame(() => {
+      this._cameraFrame = 0;
+      // Turning the camera moves everything on the page, so a view kept from before
+      // would leave the map half out of frame; refitting is what a person expects.
+      if (!this._destroyed && this._handle) this._rebuild({ keepView: false });
+    });
+  }
+
+  /** `{enabled, yaw, pitch, exaggeration}` — the camera, as `setView3d` takes it. */
+  getView3d() {
+    const { threeD } = this.options;
+    return {
+      enabled: threeD,
+      // Before the module is up the angles are still `null`, meaning "whatever Rust
+      // says"; a caller asking now gets the answer it would get after.
+      yaw: this.options.yaw ?? CAMERA.yaw,
+      pitch: this.options.pitch ?? CAMERA.pitch,
+      exaggeration: this.options.exaggeration ?? CAMERA.exaggeration,
+    };
+  }
+
+  /**
+   * Metres between the loaded map's lowest and highest point, or `0` when its nodes
+   * carry no elevation at all. A fact about the file: known as soon as it is parsed,
+   * and the same whatever is drawn from it.
+   */
+  get relief() {
+    return this._relief ?? 0;
+  }
+
+  /**
+   * Whether the loaded map has enough relief to be worth drawing in 3D. Rust's
+   * answer, not this file's — see `CAMERA.minRelief`. `false` before a map is
+   * loaded, since there is nothing to tilt.
+   */
+  get hasRelief() {
+    return this._hasRelief === true;
   }
 
   /** `'auto'`, `'projected'` or `'local'`. Re-parses the file that is loaded. */
@@ -568,7 +726,13 @@ export class LaneletViewer extends EventTarget {
     this._emitViewChange();
   }
 
-  /** `{x, y, scale}` — the map coordinate at the centre, and pixels per metre. */
+  /**
+   * `{x, y, scale}` — the map coordinate at the centre, and pixels per metre.
+   *
+   * Under the 3D view these are the *drawing* coordinates rather than the map's: a
+   * tilted camera has no one map coordinate at the centre of the screen, since a
+   * point on a hill and one on the ground behind it are drawn in the same place.
+   */
   getView() {
     const centre = this._geometry?.centre ?? [0, 0];
     return {
@@ -661,6 +825,12 @@ export class LaneletViewer extends EventTarget {
   _sceneOptions({ forExport = false } = {}) {
     const options = new SceneOptions();
     options.theme = this.theme;
+    // The camera, so an SVG export is drawn from where the canvas is being looked
+    // at rather than always from above.
+    options.three_d = this.options.threeD;
+    options.yaw = this.options.yaw;
+    options.pitch = this.options.pitch;
+    options.exaggeration = this.options.exaggeration;
     for (const { key } of LAYERS) {
       // Points are the one layer that costs enough to build on demand; the rest
       // are always built and hidden, so a toggle is a repaint.
@@ -835,6 +1005,10 @@ export class LaneletViewer extends EventTarget {
     }
   }
 
+  /// The bar measures across the screen, and the projection never foreshortens that
+  /// axis — a tilt compresses the map along screen y and leaves screen x as it found
+  /// it. So the scale bar is telling the truth in the 3D view too, which is the one
+  /// place it would have been easy to leave quietly lying.
   _updateScalebar() {
     if (!this.options.scalebar || !this._geometry) {
       this._scalebar.hidden = true;
@@ -1288,10 +1462,11 @@ function basename(path) {
  * host that needs the full API is one property away.
  */
 export class Lanelet2ViewerElement extends HTMLElement {
-  static observedAttributes = ['src', 'theme', 'layers', 'coordinates', 'background', 'controls', 'tooltip', 'scalebar', 'interactive', 'points'];
+  static observedAttributes = ['src', 'theme', 'layers', 'coordinates', 'background', 'controls', 'tooltip', 'scalebar', 'interactive', 'points', 'three-d', 'yaw', 'pitch', 'exaggeration'];
 
   connectedCallback() {
     if (this.viewer) return;
+    const { enabled, ...angles } = this._camera();
     this.viewer = new LaneletViewer(this, {
       theme: this.getAttribute('theme') || 'dark',
       coordinates: this.getAttribute('coordinates') || 'auto',
@@ -1302,10 +1477,14 @@ export class Lanelet2ViewerElement extends HTMLElement {
       scalebar: flag(this, 'scalebar', true),
       interactive: flag(this, 'interactive', true),
       drawPoints: flag(this, 'points', false),
+      threeD: enabled,
+      // Only the angles actually given: an absent attribute must leave the
+      // viewer's own default alone rather than overwrite it with `undefined`.
+      ...angles,
       wasmUrl: this.getAttribute('wasm') || undefined,
     });
     // Re-dispatch on the element, so `addEventListener` on the tag works.
-    for (const type of ['loadstart', 'load', 'error', 'hover', 'select', 'viewchange']) {
+    for (const type of ['loadstart', 'load', 'error', 'hover', 'select', 'viewchange', 'view3dchange']) {
       this.viewer.addEventListener(type, (event) => {
         this.dispatchEvent(new CustomEvent(type, { detail: event.detail, bubbles: false }));
       });
@@ -1344,10 +1523,25 @@ export class Lanelet2ViewerElement extends HTMLElement {
       case 'interactive':
         viewer.setInteractive(flag(this, 'interactive', true));
         break;
+      case 'three-d':
+      case 'yaw':
+      case 'pitch':
+      case 'exaggeration':
+        viewer.setView3d(this._camera());
+        break;
       default:
         viewer.setChrome({ [name]: flag(this, name, true) });
         break;
     }
+  }
+
+  /// The camera attributes that are actually present, by the rule `readCamera`
+  /// states once for this and for the iframe's query parameters.
+  _camera() {
+    return {
+      enabled: flag(this, 'three-d', false),
+      ...readCamera((name) => this.getAttribute(name)),
+    };
   }
 
   /** Convenience passthrough, so `element.loadOsm(text)` reads naturally. */
@@ -1369,6 +1563,25 @@ export function splitList(value) {
 export function readFlag(value, fallback) {
   if (value === null || value === undefined) return fallback;
   return value !== 'false' && value !== '0' && value !== 'off';
+}
+
+/// The three camera angles out of whatever `lookup` reads them from — an attribute
+/// on an element, a query parameter, a form field.
+///
+/// A key that is absent, or present and not a number, is left *out* of the result
+/// rather than reported as `undefined`: both callers spread this over defaults, and
+/// an explicit `undefined` would overwrite one with nothing. Exported beside
+/// `readFlag` for the same reason that is — `?pitch=` and `pitch=""` have to mean
+/// the same thing, so the rule is written once.
+export function readCamera(lookup) {
+  const angles = {};
+  for (const key of ['yaw', 'pitch', 'exaggeration']) {
+    const raw = lookup(key);
+    if (raw === null || raw === undefined || raw === '') continue;
+    const value = Number(raw);
+    if (Number.isFinite(value)) angles[key] = value;
+  }
+  return angles;
 }
 
 function flag(element, name, fallback) {

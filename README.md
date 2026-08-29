@@ -93,11 +93,14 @@ them, and the diff harness does not touch them.
 
 Three crates carry it, and none of them needs a browser:
 
-- [`ll2-viz`](crates/ll2-viz) turns a `LaneletMap` into a `Scene` — a flat list of
-  styled polylines and polygons in map coordinates — and renders one to SVG. It
-  classifies primitives the way the Lanelet2 tagging document and Autoware's
+- [`ll2-viz`](crates/ll2-viz) turns a `LaneletMap` into a `Scene` — a list of styled
+  polylines and polygons in map coordinates — and renders one to SVG. It classifies
+  primitives the way the Lanelet2 tagging document and Autoware's
   `lanelet2_extension` describe them, so `line_thin`/`dashed` comes out as a dashed
-  hairline, `stop_line` as a red bar, a `crosswalk` lanelet in its own colour.
+  hairline, `stop_line` as a red bar, a `crosswalk` lanelet in its own colour. Those
+  coordinates keep each node's elevation, and a `View` decides where the map is seen
+  from: straight down by default, or tilted, which is what shows an overpass as an
+  overpass rather than as a road crossing another at the same height.
 - [`ll2-wasm`](crates/ll2-wasm) hands a scene across the WebAssembly boundary as
   typed arrays, which is what lets the demo's `<canvas>` draw a city-scale map from
   a few dozen calls per frame.
@@ -111,12 +114,20 @@ Three crates carry it, and none of them needs a browser:
 // a .osm to an .svg, no browser involved
 let svg = ll2_viz::svg_from_osm(&text, &ll2_viz::VizOptions::default())?;
 
+// the same map drawn in relief, from a camera 55 degrees above the horizon
+let scene = ll2_viz::Scene::from_map(&map, &ll2_viz::VizOptions::default());
+let svg = ll2_viz::render_svg(&scene, &ll2_viz::SvgOptions {
+    view: ll2_viz::View::three_quarter(),
+    ..Default::default()
+});
+
 // the same map in 3D, in a Rerun viewer it opens for you
 ll2_rerun::spawn_osm(&text, &ll2_rerun::MapOptions::default())?;
 ```
 
 ```bash
 just svg tests/data/mapping_example.osm map.svg   # the same thing from a shell
+just svg3d tests/data/mapping_example.osm 3d.svg  # or in relief, elevation and all
 just scene tests/data/mapping_example.osm s.json  # or the scene itself, to draw elsewhere
 just rrd tests/data/mapping_example.osm map.rrd   # or a Rerun recording, to open in 3D
 just web-serve                                    # the demo, on localhost:8000
@@ -129,12 +140,24 @@ serialiser — it writes the styled shapes, both palettes and the layer table as
 JSON, which is enough to draw the map somewhere this repository has never heard
 of.
 
-`ll2-rerun` is the one that does not read a `Scene`, and the reason is the only
-interesting thing about it: a `Scene` is flat. Rerun gets the map's own elevations
-instead, one entity per layer under `map/`, so the eight groups the SVG writer emits
-are eight checkboxes in the viewer's blueprint tree. Painter's order becomes two
-centimetres of real separation per layer, which is what stops a lane marking and the
-road it is painted on from fighting over the same depth value.
+The third dimension is in the `Scene`, not in the renderers: every vertex carries the
+elevation its node had, and flattening happens once, at the very end, through the
+`View` a renderer is given. So the SVG writer and the demo's `<canvas>` both draw the
+map in relief without either of them knowing how — what crosses to the browser is
+still two floats per vertex, already projected and already in painter's order, and
+the canvas needs no depth buffer to show a bridge over a road. Turning the camera
+rebuilds the scene rather than redrawing it, which is the right trade for a viewpoint
+that is chosen and then looked at. The JSON serialiser is the exception, and
+deliberately so: it hands over the unprojected three dimensions and leaves the camera
+to whatever is drawing them.
+
+`ll2-rerun` is the one that does not read a `Scene`, and the reason survives that: it
+builds surfaces rather than outlines — ear-clipped rings, lanelets stitched into
+ribbons — and hands Rerun the map in three dimensions rather than a projection of it,
+one entity per layer under `map/`, so the eight groups the SVG writer emits are eight
+checkboxes in the viewer's blueprint tree. Painter's order becomes two centimetres of
+real separation per layer, which is what stops a lane marking and the road it is
+painted on from fighting over the same depth value.
 
 The viewer differs from `lanelet2.io.load` in one deliberate way. It has no origin
 to be given, so it takes the median of the file's own latitudes and longitudes and
