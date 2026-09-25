@@ -82,6 +82,9 @@ await viewer.loadOsm(osmText);
 | `acceptDrops(target)` | load any `.osm` dropped on `target`; returns a teardown function |
 | `fit()` / `getView()` / `setView({x, y, scale})` | the view, in map coordinates |
 | `setHighlight(ids)` / `focusOn(id)` | outline or centre on primitives by id |
+| `find(id, {layers})` | `{id, label, layer}` for what the map draws with that id, or `null`; changes nothing |
+| `select(id, {layers, focus, fraction})` | select a primitive by id as a click would — outlines it, emits `select`, and frames it unless `focus: false`. `null` deselects; a miss returns `null` and leaves the selection alone |
+| `LANELET_LAYERS` | the layer keys a lanelet is drawn on — pass as `layers` to look an id up as a lanelet, since a way and a relation may share one |
 | `toSVG({width, height})` | a standalone SVG, from the same Rust renderer |
 | `viewer.stats`, `viewer.legend`, `viewer.backgroundColor` | after `load` |
 | `LAYERS`, `defaultLayers()` | the layer table and the default visible set, from Rust — populated once `ready` resolves |
@@ -221,6 +224,7 @@ frame.contentWindow.postMessage({ type: 'lanelet2.load', osm: text }, '*');
 | `lanelet2.fit` | |
 | `lanelet2.highlight` | `{ids: [123, 456]}` |
 | `lanelet2.focus` | `{id, fraction?}` |
+| `lanelet2.select` | `{id, layers?, focus?, fraction?, requestId?}` — answered with `lanelet2.found` |
 | `lanelet2.exportSvg` | `{width?, height?, requestId?}` |
 | `lanelet2.clear` | |
 
@@ -234,6 +238,7 @@ frame.contentWindow.postMessage({ type: 'lanelet2.load', osm: text }, '*');
 | `lanelet2.view` | `{x, y, scale}` |
 | `lanelet2.view3d` | `{enabled, yaw, pitch, exaggeration}` |
 | `lanelet2.svg` | `{svg, requestId}` |
+| `lanelet2.found` | `{shape, requestId}` — what `lanelet2.select` selected, or `null` for no match |
 
 A request that arrives with a `MessagePort` is answered on that port, so
 `MessageChannel` works if you would rather not filter on `window`'s message

@@ -69,6 +69,11 @@ export function defaultLayers() {
 /// city map has millions of points and a shape each is not free.
 const EXPENSIVE_LAYER = 'point';
 
+/// The layers whose shapes a lanelet draws — its fill, its centerline and its
+/// arrows all carry the lanelet's own id. What to pass as `layers` to `find` or
+/// `select` to look an id up as a lanelet rather than as whatever else shares it.
+export const LANELET_LAYERS = Object.freeze(['lanelet_fill', 'centerline', 'direction']);
+
 let wasmPromise = null;
 
 /**
@@ -435,7 +440,7 @@ export class LaneletViewer extends EventTarget {
     // wasm already made.
     this._source = options.source ?? { text };
 
-    this._rebuild({ keepView: options.keepView === true });
+    this._rebuild({ keepView: options.keepView === true, keepSelection: false });
 
     const detail = {
       name,
@@ -788,6 +793,53 @@ export class LaneletViewer extends EventTarget {
   focusOn(id, { fraction = 0.4 } = {}) {
     const shape = this._findShape(Number(id));
     if (shape < 0) return false;
+    this._focusShape(shape, fraction);
+    return true;
+  }
+
+  /**
+   * What the scene draws for a primitive id: `{id, label, layer}`, or `null` when
+   * nothing in it carries that id. Nothing on screen changes.
+   *
+   * `layers` narrows the search to some layer keys. It is there because an id is
+   * not unique across a file — OSM numbers ways and relations separately, so a
+   * lanelet and one of its own boundaries can share a number — and "lanelet 42" is
+   * a question about relations only.
+   *
+   * @param {number|string} id
+   * @param {{layers?: string[]}} [options]
+   */
+  find(id, { layers } = {}) {
+    return this._describeShape(this._findShapeIn(Number(id), layers));
+  }
+
+  /**
+   * Selects a primitive by id, as clicking it would: outlines it, emits `select`,
+   * and — unless `focus` is `false` — brings it into view. `null` clears the
+   * selection. Takes `layers` as [`find`] does.
+   *
+   * @returns {{id, label, layer}|null} the `select` detail, or `null` when nothing
+   *   matched — in which case the current selection is left as it was, since a
+   *   typo in a search box is not a request to deselect.
+   */
+  select(id, { layers, focus = true, fraction = 0.4 } = {}) {
+    if (id === null || id === undefined) {
+      this._pinned = null;
+      this._emit('select', null);
+      this._draw();
+      return null;
+    }
+    const shape = this._findShapeIn(Number(id), layers);
+    if (shape < 0) return null;
+    this._pinned = shape;
+    const detail = this._describeShape(shape);
+    this._emit('select', detail);
+    if (focus) this._focusShape(shape, fraction);
+    else this._draw();
+    return detail;
+  }
+
+  _focusShape(shape, fraction) {
     const box = shapeBounds(this._geometry, shape);
     const centre = this._geometry.centre;
     const spanX = Math.max(box[2] - box[0], 5);
@@ -798,7 +850,6 @@ export class LaneletViewer extends EventTarget {
       y: centre[1] + (box[1] + box[3]) / 2,
       scale,
     });
-    return true;
   }
 
   // --- export ----------------------------------------------------------------
@@ -869,7 +920,13 @@ export class LaneletViewer extends EventTarget {
     this._draw();
   }
 
-  _rebuild({ keepView }) {
+  _rebuild({ keepView, keepSelection = true }) {
+    // A selection is a primitive, not a shape index, and the same file rebuilt from
+    // another camera still has it — so turning on 3D after finding a lanelet keeps
+    // the lanelet found. A different file is another matter: its lanelet 42 is not
+    // the one that was selected.
+    const hadSelection = this._pinned !== null;
+    const selected = keepSelection ? this._describeShape(this._pinned) : null;
     const options = this._sceneOptions();
     const data = this._handle.build_scene(options);
     options.free();
@@ -900,6 +957,13 @@ export class LaneletViewer extends EventTarget {
     this.legend = buildLegend(geometry);
     this._hover = -1;
     this._pinned = null;
+    if (selected) {
+      const shape = this._findShapeIn(selected.id, [selected.layer]);
+      if (shape >= 0) this._pinned = shape;
+    }
+    // A host showing the selection has to hear that it went, or it goes on showing
+    // a lanelet the map no longer outlines.
+    if (hadSelection && this._pinned === null) this._emit('select', null);
 
     this._applyChromeVisibility();
     if (!keepView) this.fit();
@@ -1184,6 +1248,18 @@ export class LaneletViewer extends EventTarget {
 
   _findShape(id) {
     return this._byId?.get(id)?.[0] ?? -1;
+  }
+
+  /// The shape to stand for a primitive, among those in `layers` (every layer when
+  /// that is absent). A visible one if there is one — selecting a lanelet whose
+  /// fill is hidden should outline the centerline you can see — and otherwise the
+  /// first, which for a lanelet is its fill: the shape that is the lanelet's outline.
+  _findShapeIn(id, layers) {
+    const shapes = this._byId?.get(id);
+    if (!shapes) return -1;
+    const layerOf = (shape) => LAYERS[this._geometry.layerOf[shape]].key;
+    const candidates = layers ? shapes.filter((shape) => layers.includes(layerOf(shape))) : shapes;
+    return candidates.find((shape) => this._visible.has(layerOf(shape))) ?? candidates[0] ?? -1;
   }
 
   _pick(x, y, tolerance) {

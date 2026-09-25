@@ -181,6 +181,40 @@ try {
       'and turning it off hides them again',
     );
 
+    // Searching by id selects and frames the lanelet, reports it in the panel, and
+    // tells a miss apart from an id that belongs to something other than a lanelet.
+    const searchResult = () => page.$eval('#search-result', (n) => (n.hidden ? null : n.textContent));
+    const scaleBeforeSearch = await scaleWidth();
+    await page.fill('#search-input', '42440');
+    await page.press('#search-input', 'Enter');
+    await page.waitForTimeout(300);
+    check(
+      (await searchResult())?.includes('lanelet 42440'),
+      `searching a lanelet id selects it (${await searchResult()})`,
+    );
+    check(scaleBeforeSearch !== (await scaleWidth()), 'and zooms the view to it');
+    // Turning on 3D rebuilds the scene; the lanelet found is still the one selected.
+    await page.check('#three-d-toggle');
+    await page.waitForTimeout(600);
+    check(
+      (await searchResult())?.includes('lanelet 42440'),
+      'the selection survives a rebuild of the scene',
+    );
+    await page.uncheck('#three-d-toggle');
+    await page.waitForTimeout(400);
+    await page.fill('#search-input', '44574');
+    await page.press('#search-input', 'Enter');
+    check(
+      /44574 is not a lanelet/.test(await searchResult()),
+      `an id that is a boundary's says so (${await searchResult()})`,
+    );
+    await page.fill('#search-input', '999999999');
+    await page.press('#search-input', 'Enter');
+    check(/No lanelet with ID 999999999/.test(await searchResult()), 'an unknown id is reported as missing');
+    await page.fill('#search-input', 'abc');
+    await page.press('#search-input', 'Enter');
+    check(/not an ID/.test(await searchResult()), 'a non-numeric id is refused');
+
     const download = page.waitForEvent('download', { timeout: 30000 });
     await page.click('#export-button');
     check((await download).suggestedFilename() === 'mapping_example.svg', 'SVG export downloads');
@@ -242,6 +276,26 @@ try {
     check(true, 'setView3d round-trips through the iframe protocol');
     await page.click('#toggle-3d');
     await logged('view3d: off');
+
+    // `lanelet2.select` is answered on the port it came with, hit or miss.
+    const found = await page.evaluate(async () => {
+      const frame = document.getElementById('frame').contentWindow;
+      const ask = (message) =>
+        new Promise((resolve) => {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = (event) => resolve(event.data);
+          frame.postMessage(message, '*', [channel.port2]);
+        });
+      return {
+        hit: await ask({ type: 'lanelet2.select', id: 42440, layers: ['lanelet_fill'], requestId: 7 }),
+        miss: await ask({ type: 'lanelet2.select', id: 999999999 }),
+      };
+    });
+    check(
+      found.hit.type === 'lanelet2.found' && found.hit.requestId === 7 && found.hit.shape?.id === 42440,
+      'lanelet2.select finds a lanelet by id',
+    );
+    check(found.miss.shape === null, 'and answers null for an id the map lacks');
 
     check(
       /element: 371 lanelets/.test(await page.$eval('#log', (n) => n.textContent)),
