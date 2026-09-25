@@ -82,7 +82,7 @@ await viewer.loadOsm(osmText);
 | `acceptDrops(target)` | load any `.osm` dropped on `target`; returns a teardown function |
 | `fit()` / `getView()` / `setView({x, y, scale})` | the view, in map coordinates |
 | `setHighlight(ids)` / `focusOn(id)` | outline or centre on primitives by id |
-| `find(id, {layers})` | `{id, label, layer}` for what the map draws with that id, or `null`; changes nothing |
+| `find(id, {layers})` | `{id, label, layer}` for what the map draws with that id, or `null`; changes nothing. Ids are 64-bit: pass one past 2^53 as a decimal string or `BigInt` |
 | `select(id, {layers, focus, fraction})` | select a primitive by id as a click would — outlines it, emits `select`, and frames it unless `focus: false`. `null` deselects; a miss returns `null` and leaves the selection alone |
 | `LANELET_LAYERS` | the layer keys a lanelet is drawn on — pass as `layers` to look an id up as a lanelet, since a way and a relation may share one |
 | `toSVG({width, height})` | a standalone SVG, from the same Rust renderer |
@@ -92,7 +92,8 @@ await viewer.loadOsm(osmText);
 
 Events, as `CustomEvent`s: `loadstart`, `load`, `error`, `hover`, `select`,
 `viewchange`, `view3dchange`. `hover` and `select` carry `{id, label, layer}` or
-`null`; `load` carries `{name, stats, errors, problems, coordinateSource,
+`null`, where `id` is a `Number` — or, for an id past 2^53 that a `Number` cannot
+hold exactly, its decimal string; `load` carries `{name, stats, errors, problems, coordinateSource,
 projection, origin, bounds, relief, hasRelief}`, where `errors` is upstream's `loadRobust`
 shape — a header line then one line per problem — and `problems` is how many that
 is. `view3dchange` carries `{enabled, yaw, pitch, exaggeration}`, and fires for the

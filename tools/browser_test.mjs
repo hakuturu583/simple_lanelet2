@@ -227,6 +227,34 @@ try {
     });
     await page.waitForTimeout(2500);
     check(await page.$eval('#status', (n) => n.hidden), 'drag and drop loads a map');
+
+    // Lanelet2 ids are 64-bit. Two lanelets one apart past 2^53 collapse to one
+    // `Number`, so each has to be found as itself, not as its neighbour.
+    await page.evaluate(() => {
+      const node = (id, lat, lon) => `<node id='${id}' lat='${lat}' lon='${lon}' />`;
+      const way = (id, a, b) => `<way id='${id}'><nd ref='${a}' /><nd ref='${b}' /><tag k='type' v='line_thin' /><tag k='subtype' v='solid' /></way>`;
+      const lanelet = (id, left, right) =>
+        `<relation id='${id}'><member type='way' ref='${left}' role='left' /><member type='way' ref='${right}' role='right' /><tag k='type' v='lanelet' /><tag k='subtype' v='road' /></relation>`;
+      const osm = `<?xml version='1.0' encoding='UTF-8'?><osm version='0.6'>
+        ${node(1, 49.0, 8.4)}${node(2, 49.0001, 8.4)}${node(3, 49.0, 8.40005)}${node(4, 49.0001, 8.40005)}
+        ${node(5, 49.0, 8.4001)}${node(6, 49.0001, 8.4001)}
+        ${way(11, 1, 2)}${way(12, 3, 4)}${way(13, 5, 6)}
+        ${lanelet('9007199254740992', 11, 12)}${lanelet('9007199254740993', 12, 13)}
+      </osm>`;
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([osm], 'wide-ids.osm'));
+      window.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true }));
+    });
+    await page.waitForFunction(() => document.getElementById('status').hidden, { timeout: 30000 });
+    for (const id of ['9007199254740993', '9007199254740992']) {
+      await page.fill('#search-input', id);
+      await page.press('#search-input', 'Enter');
+      await page.waitForTimeout(200);
+      check(
+        (await searchResult()) === `Selected lanelet ${id} · road`,
+        `a 64-bit id is found exactly (${await searchResult()})`,
+      );
+    }
     check(problems.length === 0, `no page errors (${problems.join('; ')})`);
     await page.close();
   }
@@ -296,6 +324,18 @@ try {
       'lanelet2.select finds a lanelet by id',
     );
     check(found.miss.shape === null, 'and answers null for an id the map lacks');
+
+    // With fills hidden a lanelet still selects as its outline, not as whichever
+    // of its dozens of arrows happens to be visible.
+    const outline = await page.$eval('#element', (element) => {
+      const viewer = element.viewer;
+      viewer.setLayers({ lanelet_fill: false });
+      const detail = viewer.select(42440, { layers: ['lanelet_fill', 'centerline', 'direction'], focus: false });
+      viewer.setLayers({ lanelet_fill: true });
+      viewer.select(null);
+      return detail?.layer;
+    });
+    check(outline === 'lanelet_fill', `a hidden fill still stands for its lanelet (${outline})`);
 
     check(
       /element: 371 lanelets/.test(await page.$eval('#log', (n) => n.textContent)),

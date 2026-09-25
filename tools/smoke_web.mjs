@@ -69,7 +69,7 @@ check(count > 1000, 'the scene has shapes');
 check(coords instanceof Float32Array, 'coords cross as a Float32Array');
 check(offsets instanceof Uint32Array, 'offsets cross as a Uint32Array');
 check(closed instanceof Uint8Array, 'closed flags cross as a Uint8Array');
-check(ids instanceof Float64Array, 'ids cross as a Float64Array');
+check(ids instanceof BigInt64Array, 'ids cross as a BigInt64Array, exact to 64 bits');
 check(offsets.length === count + 1, 'offsets have one entry per shape plus an end');
 check(offsets[offsets.length - 1] * 2 === coords.length, 'offsets end where coords do');
 check(
