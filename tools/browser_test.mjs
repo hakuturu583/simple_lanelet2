@@ -490,10 +490,15 @@ try {
       await viewer.loadOsm(await (await fetch('./sample/mapping_example.osm')).text());
       const lanelets = viewer.stats.lanelets;
       viewer.destroy();
-      return { lanelets, leftBehind: box.children.length };
+      const retained = ['_byId', '_index', '_geometry', '_highlightPath', '_layerCounts'].filter(
+        (key) => viewer[key] != null,
+      );
+      return { lanelets, leftBehind: box.children.length, retained, selectAfter: viewer.select(42440) };
     });
     check(second.lanelets === 371, 'a second viewer on the same page loads independently');
     check(second.leftBehind === 0, 'destroy() removes everything it made');
+    check(second.retained.length === 0, `and lets go of the map's indices (${second.retained.join(', ')})`);
+    check(second.selectAfter === null, 'a destroyed viewer selects nothing');
     check(problems.length === 0, `no page errors (${problems.join('; ')})`);
     await page.close();
   }

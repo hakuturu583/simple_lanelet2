@@ -376,6 +376,12 @@ export class LaneletViewer extends EventTarget {
     this._groups = [];
     this._geometry = null;
     this._index = null;
+    // A host that keeps the object after unmounting it must not keep a city map's
+    // worth of index with it — the same set `clear()` lets go of.
+    this._byId = null;
+    this._highlightPath = null;
+    this._layerCounts = null;
+    this._pinned = null;
     this._source = null;
   }
 
