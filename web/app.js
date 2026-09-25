@@ -6,7 +6,7 @@
 // if this file needs nothing privileged, neither does a Foxglove panel or a wandb
 // HTML block. See EMBEDDING.md.
 
-import { CAMERA, LaneletViewer } from './viewer.js';
+import { CAMERA, LANELET_LAYERS, LaneletViewer } from './viewer.js';
 
 const elements = {
   stage: document.getElementById('stage'),
@@ -18,6 +18,10 @@ const elements = {
   facts: document.getElementById('facts'),
   layerToggles: document.getElementById('layer-toggles'),
   layersBlock: document.getElementById('layers-block'),
+  searchBlock: document.getElementById('search-block'),
+  searchForm: document.getElementById('search-form'),
+  searchInput: document.getElementById('search-input'),
+  searchResult: document.getElementById('search-result'),
   optionsBlock: document.getElementById('options-block'),
   legend: document.getElementById('legend'),
   legendBlock: document.getElementById('legend-block'),
@@ -54,11 +58,19 @@ viewer.addEventListener('load', (event) => {
   showLegend();
   showViewControls(event.detail);
   elements.dropzone.hidden = true;
+  elements.searchBlock.hidden = false;
+  showSearchResult(null);
   elements.layersBlock.hidden = false;
   elements.optionsBlock.hidden = false;
 });
 
 viewer.addEventListener('error', (event) => showError(event.detail.message));
+
+// Whatever is selected — found by id or clicked on — is what the search panel
+// reports, so the two ways of picking a lanelet cannot disagree about which one it is.
+viewer.addEventListener('select', (event) =>
+  showSearchResult(event.detail ? `Selected ${event.detail.label}` : null),
+);
 
 // The viewer has a 3D button on the canvas as well, and turns 3D off by itself for
 // a map with no elevation — so the sidebar follows the camera rather than being a
@@ -154,6 +166,11 @@ function wireUp() {
     input.addEventListener('input', () => viewer.setView3d({ [key]: Number(input.value) }));
   }
 
+  elements.searchForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    findLanelet(elements.searchInput.value);
+  });
+
   installDragAndDrop();
 
   window.addEventListener('keydown', (event) => {
@@ -187,6 +204,33 @@ function installDragAndDrop() {
 }
 
 // --- side panel --------------------------------------------------------------
+
+/// Selects and frames the lanelet with this id. A success is reported by the
+/// `select` event like any other selection; only a miss is this function's to say.
+function findLanelet(raw) {
+  const text = raw.trim();
+  if (!text) return;
+  // Lanelet2 ids are integers, and negative ones are normal in a map that JOSM
+  // has not uploaded yet.
+  if (!/^-?\d+$/.test(text)) {
+    showSearchResult(`"${text}" is not an ID — lanelet IDs are whole numbers`, true);
+    return;
+  }
+  if (viewer.select(text, { layers: LANELET_LAYERS })) return;
+  // An id that is not a lanelet's may still be something's: a boundary shares the
+  // numbering of the file's ways, not its relations. Saying which beats "not found".
+  const other = viewer.find(text);
+  showSearchResult(
+    other ? `${text} is not a lanelet — it is ${other.label}` : `No lanelet with ID ${text} in this map`,
+    true,
+  );
+}
+
+function showSearchResult(text, miss = false) {
+  elements.searchResult.textContent = text ?? '';
+  elements.searchResult.classList.toggle('miss', miss);
+  elements.searchResult.hidden = !text;
+}
 
 function showFacts(detail) {
   const { stats } = detail;

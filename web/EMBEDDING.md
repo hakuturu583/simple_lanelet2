@@ -82,6 +82,9 @@ await viewer.loadOsm(osmText);
 | `acceptDrops(target)` | load any `.osm` dropped on `target`; returns a teardown function |
 | `fit()` / `getView()` / `setView({x, y, scale})` | the view, in map coordinates |
 | `setHighlight(ids)` / `focusOn(id)` | outline or centre on primitives by id |
+| `find(id, {layers})` | `{id, label, layer}` for what the map draws with that id, or `null`; changes nothing. Ids are 64-bit: pass one past 2^53 as a decimal string or `BigInt` |
+| `select(id, {layers, focus, fraction})` | select a primitive by id as a click would — outlines it, emits `select`, and frames it unless `focus: false`. `null` deselects; a miss returns `null` and leaves the selection alone |
+| `LANELET_LAYERS` | the layer keys a lanelet is drawn on — pass as `layers` to look an id up as a lanelet, since a way and a relation may share one |
 | `toSVG({width, height})` | a standalone SVG, from the same Rust renderer |
 | `viewer.stats`, `viewer.legend`, `viewer.backgroundColor` | after `load` |
 | `LAYERS`, `defaultLayers()` | the layer table and the default visible set, from Rust — populated once `ready` resolves |
@@ -89,7 +92,8 @@ await viewer.loadOsm(osmText);
 
 Events, as `CustomEvent`s: `loadstart`, `load`, `error`, `hover`, `select`,
 `viewchange`, `view3dchange`. `hover` and `select` carry `{id, label, layer}` or
-`null`; `load` carries `{name, stats, errors, problems, coordinateSource,
+`null`, where `id` is a `Number` — or, for an id past 2^53 that a `Number` cannot
+hold exactly, its decimal string; `load` carries `{name, stats, errors, problems, coordinateSource,
 projection, origin, bounds, relief, hasRelief}`, where `errors` is upstream's `loadRobust`
 shape — a header line then one line per problem — and `problems` is how many that
 is. `view3dchange` carries `{enabled, yaw, pitch, exaggeration}`, and fires for the
@@ -221,6 +225,7 @@ frame.contentWindow.postMessage({ type: 'lanelet2.load', osm: text }, '*');
 | `lanelet2.fit` | |
 | `lanelet2.highlight` | `{ids: [123, 456]}` |
 | `lanelet2.focus` | `{id, fraction?}` |
+| `lanelet2.select` | `{id, layers?, focus?, fraction?, requestId?}` — answered with `lanelet2.found` |
 | `lanelet2.exportSvg` | `{width?, height?, requestId?}` |
 | `lanelet2.clear` | |
 
@@ -234,6 +239,7 @@ frame.contentWindow.postMessage({ type: 'lanelet2.load', osm: text }, '*');
 | `lanelet2.view` | `{x, y, scale}` |
 | `lanelet2.view3d` | `{enabled, yaw, pitch, exaggeration}` |
 | `lanelet2.svg` | `{svg, requestId}` |
+| `lanelet2.found` | `{shape, requestId}` — what `lanelet2.select` selected, or `null` for no match |
 
 A request that arrives with a `MessagePort` is answered on that port, so
 `MessageChannel` works if you would rather not filter on `window`'s message

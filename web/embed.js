@@ -39,6 +39,7 @@
 //   { type: 'lanelet2.fit' }
 //   { type: 'lanelet2.highlight',  ids: [123, 456] }
 //   { type: 'lanelet2.focus',      id: 123 }
+//   { type: 'lanelet2.select',     id: 123, layers?, focus?, fraction?, requestId? }
 //   { type: 'lanelet2.exportSvg',  width?, height?, requestId? }
 //   { type: 'lanelet2.clear' }
 //
@@ -53,6 +54,7 @@
 //   { type: 'lanelet2.view',    x, y, scale }
 //   { type: 'lanelet2.view3d',  enabled, yaw, pitch, exaggeration }
 //   { type: 'lanelet2.svg',     svg, requestId }
+//   { type: 'lanelet2.found',   shape: {id, label, layer} | null, requestId }
 //
 // Every inbound message is answered on the `MessageChannel` port it arrived with,
 // when it came with one; otherwise replies and events go to the opener. Nothing is
@@ -188,6 +190,19 @@ function handle(data, reply) {
       break;
     case 'lanelet2.focus':
       viewer.focusOn(data.id, { fraction: data.fraction });
+      break;
+    case 'lanelet2.select':
+      // Answered either way: a successful select also fires the `select` event,
+      // but a miss changes nothing, and a host with a search box needs to hear it.
+      reply({
+        type: 'lanelet2.found',
+        requestId: data.requestId ?? null,
+        shape: viewer.select(data.id ?? null, {
+          layers: Array.isArray(data.layers) ? data.layers : undefined,
+          focus: data.focus !== false,
+          fraction: Number.isFinite(data.fraction) ? data.fraction : undefined,
+        }),
+      });
       break;
     case 'lanelet2.exportSvg':
       reply({

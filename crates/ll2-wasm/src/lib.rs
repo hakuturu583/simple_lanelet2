@@ -13,7 +13,7 @@
 //! styles    Uint32Array    one index into the style table per shape
 //! layers    Uint32Array    one layer index per shape
 //! closed    Uint8Array     whether each shape is a polygon
-//! ids       Float64Array   the source primitive's id per shape
+//! ids       BigInt64Array  the source primitive's id per shape
 //! ```
 //!
 //! which is four copies and no allocation per shape, and lets the canvas renderer
@@ -341,7 +341,7 @@ pub struct SceneData {
     styles: Vec<u32>,
     layers: Vec<u32>,
     closed: Vec<u8>,
-    ids: Vec<f64>,
+    ids: Vec<i64>,
     labels: Vec<String>,
     centre: [f64; 2],
     min: [f64; 2],
@@ -399,7 +399,7 @@ impl SceneData {
             styles.push(shape.style as u32);
             layers.push(shape.layer.index());
             closed.push(u8::from(shape.closed));
-            ids.push(shape.id as f64);
+            ids.push(shape.id);
             labels.push(std::mem::take(&mut shape.label));
         }
         offsets.push((coords.len() / 2) as u32);
@@ -451,7 +451,11 @@ impl SceneData {
     }
 
     /// The id of the primitive each shape came from.
-    pub fn ids(&self) -> Vec<f64> {
+    ///
+    /// As `i64`, which crosses as a `BigInt64Array`: a Lanelet2 id is 64 bits, and
+    /// an `f64` rounds anything past 2^53 — so two primitives could share a number
+    /// on the JavaScript side, and a search for one would find the other.
+    pub fn ids(&self) -> Vec<i64> {
         self.ids.clone()
     }
 

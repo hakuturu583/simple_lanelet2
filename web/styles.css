@@ -279,6 +279,46 @@ body[data-theme='light'] .button.primary {
   margin-top: 4px;
 }
 
+/* --- lanelet search ------------------------------------------------------ */
+
+.search {
+  display: flex;
+  gap: 8px;
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.search input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.search .button {
+  width: auto;
+}
+
+.search-result {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.search-result.miss {
+  color: var(--danger);
+}
+
 .toggles {
   display: grid;
   gap: 2px;
