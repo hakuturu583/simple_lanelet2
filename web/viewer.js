@@ -518,13 +518,20 @@ export class LaneletViewer extends EventTarget {
     this._groups = [];
     this._geometry = null;
     this._index = null;
+    // Everything indexed by the old scene goes with it: a lookup that still found
+    // the last map's lanelets would hand back shape indices into nothing.
+    this._byId = null;
+    this._highlightPath = null;
+    this._layerCounts = null;
     this._source = null;
     this._relief = 0;
     this._hasRelief = false;
     this.stats = null;
     this.legend = [];
     this._hover = -1;
+    const hadSelection = this._pinned !== null;
     this._pinned = null;
+    if (hadSelection) this._emit('select', null);
     this._scalebar.hidden = true;
     this._tooltip.hidden = true;
     this._draw();
@@ -1264,7 +1271,8 @@ export class LaneletViewer extends EventTarget {
   /// layer is shown. Preferring a visible shape would, with fills hidden, pick one
   /// arrow out of dozens, and not necessarily the same one after a rebuild.
   _findShapeIn(id, layers) {
-    const shapes = id === null ? undefined : this._byId?.get(id);
+    if (id === null || !this._geometry) return -1;
+    const shapes = this._byId?.get(id);
     if (!shapes) return -1;
     if (!layers) return shapes[0];
     const layerOf = (shape) => LAYERS[this._geometry.layerOf[shape]].key;

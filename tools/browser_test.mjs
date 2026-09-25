@@ -337,6 +337,27 @@ try {
     });
     check(outline === 'lanelet_fill', `a hidden fill still stands for its lanelet (${outline})`);
 
+    // After `clear()` nothing of the old map may be found — least of all through
+    // the iframe, where a throw would swallow the `lanelet2.found` reply.
+    const afterClear = await page.evaluate(async () => {
+      const frame = document.getElementById('frame').contentWindow;
+      const ask = (message) =>
+        new Promise((resolve) => {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = (event) => resolve(event.data);
+          frame.postMessage(message, '*', [channel.port2]);
+        });
+      frame.postMessage({ type: 'lanelet2.clear' }, '*');
+      const reply = await Promise.race([
+        ask({ type: 'lanelet2.select', id: 42440 }),
+        new Promise((resolve) => setTimeout(() => resolve('no reply'), 3000)),
+      ]);
+      // Put the map back for the checks that follow.
+      document.getElementById('send-map').click();
+      return reply;
+    });
+    check(afterClear?.type === 'lanelet2.found' && afterClear.shape === null, 'a cleared map finds nothing, and says so');
+
     check(
       /element: 371 lanelets/.test(await page.$eval('#log', (n) => n.textContent)),
       '<lanelet2-viewer src=…> loads on its own',
