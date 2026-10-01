@@ -77,6 +77,11 @@ impl BoundingBox2d {
         }
     }
 
+    /// Whether the box can go into a spatial index: non-empty with finite corners.
+    pub fn is_indexable(&self) -> bool {
+        !self.is_empty() && self.min.iter().chain(&self.max).all(|v| v.is_finite())
+    }
+
     pub fn intersects(&self, other: &BoundingBox2d) -> bool {
         !self.is_empty()
             && !other.is_empty()

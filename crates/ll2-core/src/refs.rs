@@ -14,6 +14,7 @@
 //! write visible to the owner with no back-pointer bookkeeping.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::RwLock;
 
@@ -26,6 +27,25 @@ use crate::attribute::AttributeMap;
 /// `to2D(p).basicPoint().x = 5` write the first component and leave `z` untouched,
 /// matching upstream's Eigen `Map` over the first two of three doubles.
 pub type Coords = Arc<RwLock<[f64; 3]>>;
+
+/// Bumped on every write that can move a primitive's geometry.
+///
+/// Spatial indices cache bounding boxes, but a primitive can change shape without
+/// its layer hearing about it: a point is shared by every linestring through it,
+/// and Python can write through `basicPoint()`. Rather than tracking ownership, any
+/// geometric write anywhere invalidates every index; maps are queried far more
+/// often than edited, so the rebuild is rare.
+static GEOMETRY_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// Records that some primitive's geometry may have changed.
+pub fn geometry_changed() {
+    GEOMETRY_EPOCH.fetch_add(1, Ordering::Release);
+}
+
+/// The current geometry epoch; unchanged means no geometry has moved since.
+pub fn geometry_epoch() -> u64 {
+    GEOMETRY_EPOCH.load(Ordering::Acquire)
+}
 
 /// A shared attribute map.
 pub type Attrs = Arc<RwLock<AttributeMap>>;
@@ -52,11 +72,29 @@ pub fn empty_attrs() -> Attrs {
 pub struct CoordView {
     cell: Coords,
     mutable: bool,
+    /// Whether the cell is a point's coordinates, so that writing it moves map
+    /// geometry. A free `BasicPoint` or a box corner is not, and writing one must
+    /// not invalidate every spatial index in the process.
+    of_point: bool,
 }
 
 impl CoordView {
+    /// A view over a cell no primitive owns.
     pub fn new(cell: Coords, mutable: bool) -> Self {
-        CoordView { cell, mutable }
+        CoordView {
+            cell,
+            mutable,
+            of_point: false,
+        }
+    }
+
+    /// A view over a point's own coordinates.
+    pub fn of_point(cell: Coords, mutable: bool) -> Self {
+        CoordView {
+            cell,
+            mutable,
+            of_point: true,
+        }
     }
 
     pub fn is_mutable(&self) -> bool {
@@ -74,6 +112,9 @@ impl CoordView {
             return false;
         }
         self.cell.write()[index] = value;
+        if self.of_point {
+            geometry_changed();
+        }
         true
     }
 

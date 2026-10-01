@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use crate::attribute::AttributeMap;
 use crate::fmt::{make_repr, ostream_double};
 use crate::id::{INVAL_ID, Id};
-use crate::refs::{Attrs, CoordView, Coords, attrs, coords};
+use crate::refs::{Attrs, CoordView, Coords, attrs, coords, geometry_changed};
 
 /// The storage behind every handle to one point.
 ///
@@ -80,14 +80,17 @@ impl Point {
 
     pub fn set_x(&self, value: f64) {
         self.data.coords.write()[0] = value;
+        geometry_changed();
     }
 
     pub fn set_y(&self, value: f64) {
         self.data.coords.write()[1] = value;
+        geometry_changed();
     }
 
     pub fn set_z(&self, value: f64) {
         self.data.coords.write()[2] = value;
+        geometry_changed();
     }
 
     /// The shared coordinate cell, for building a `basicPoint()` view.
@@ -98,7 +101,7 @@ impl Point {
     /// A live view of the coordinates. `mutable` is false for `Const*` handles
     /// unless bug-compatibility mode reopens upstream's const hole.
     pub fn basic_point(&self, mutable: bool) -> CoordView {
-        CoordView::new(self.data.coords.clone(), mutable)
+        CoordView::of_point(self.data.coords.clone(), mutable)
     }
 
     /// The shared attribute map, for building a live `AttributeMap` proxy.

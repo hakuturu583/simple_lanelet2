@@ -21,6 +21,7 @@ pub mod route;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use ll2_core::geometry::bbox;
 use ll2_core::geometry::lanelet as llgeom;
 use ll2_core::id::Id;
 use ll2_core::lanelet::Lanelet;
@@ -95,6 +96,78 @@ pub struct RoutingGraph {
     passable: Arc<LaneletMap>,
 }
 
+/// Which vertices could pass the builder's identity-based tests.
+///
+/// `follows` and `left_of` compare bounds and points by identity, so the vertices
+/// a lanelet can relate to are found by hashing those identities. Every method
+/// returns vertex indices in ascending order, so a sweep over them visits pairs in
+/// the same order as a sweep over all vertices.
+struct PairIndex {
+    /// Vertices by the identity of their left and right bounds' first points.
+    by_front: HashMap<(usize, usize), Vec<usize>>,
+    /// Vertices by the identity (view, so orientation included) of each bound.
+    by_left_bound: HashMap<usize, Vec<usize>>,
+    by_right_bound: HashMap<usize, Vec<usize>>,
+}
+
+impl PairIndex {
+    fn new(lanelets: &[Lanelet]) -> Self {
+        let mut by_front: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+        let mut by_left_bound: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut by_right_bound: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (position, lanelet) in lanelets.iter().enumerate() {
+            let (left, right) = (lanelet.left_bound(), lanelet.right_bound());
+            if let (Some(l), Some(r)) = (left.front(), right.front()) {
+                by_front
+                    .entry((l.identity(), r.identity()))
+                    .or_default()
+                    .push(position);
+            }
+            by_left_bound
+                .entry(left.identity())
+                .or_default()
+                .push(position);
+            by_right_bound
+                .entry(right.identity())
+                .or_default()
+                .push(position);
+        }
+        PairIndex {
+            by_front,
+            by_left_bound,
+            by_right_bound,
+        }
+    }
+
+    /// Candidates for `follows(lanelet, candidate)`: both bounds must continue
+    /// from the very points `lanelet` ends on.
+    fn followers(&self, lanelet: &Lanelet) -> &[usize] {
+        let (left, right) = (lanelet.left_bound(), lanelet.right_bound());
+        match (left.back(), right.back()) {
+            (Some(l), Some(r)) => self
+                .by_front
+                .get(&(l.identity(), r.identity()))
+                .map_or(&[], Vec::as_slice),
+            _ => &[],
+        }
+    }
+
+    /// Candidates for `left_of(candidate, lanelet)` or `right_of(candidate, lanelet)`:
+    /// a neighbour shares the bound between them as the very same view.
+    fn beside(&self, lanelet: &Lanelet) -> Vec<usize> {
+        let mut positions = Vec::new();
+        if let Some(found) = self.by_right_bound.get(&lanelet.left_bound().identity()) {
+            positions.extend(found);
+        }
+        if let Some(found) = self.by_left_bound.get(&lanelet.right_bound().identity()) {
+            positions.extend(found);
+        }
+        positions.sort_unstable();
+        positions.dedup();
+        positions
+    }
+}
+
 impl RoutingGraph {
     /// Builds the graph.
     ///
@@ -143,9 +216,19 @@ impl RoutingGraph {
                 .copied()
         };
 
+        // Every pairwise test below is still made, and in the original (from, to)
+        // order, so the edges come out exactly as an all-pairs sweep would add
+        // them. The indices only skip pairs the test is certain to reject:
+        // `follows` and `left_of` compare by identity, and an overlap needs the
+        // boxes to meet (found through `passable`'s spatial index). On a city map
+        // that is the difference between ~40M pair tests per sweep and a few per
+        // lanelet.
+        let candidates = PairIndex::new(&lanelets);
+
         // --- successors ----------------------------------------------------
         for (from, lanelet) in lanelets.iter().enumerate() {
-            for (to, candidate) in lanelets.iter().enumerate() {
+            for &to in candidates.followers(lanelet) {
+                let candidate = &lanelets[to];
                 if from == to || !llgeom::follows(lanelet, candidate) {
                     continue;
                 }
@@ -161,7 +244,8 @@ impl RoutingGraph {
 
         // --- sideways ------------------------------------------------------
         for (from, lanelet) in lanelets.iter().enumerate() {
-            for (to, candidate) in lanelets.iter().enumerate() {
+            for to in candidates.beside(lanelet) {
+                let candidate = &lanelets[to];
                 if from == to {
                     continue;
                 }
@@ -218,7 +302,24 @@ impl RoutingGraph {
 
         // --- conflicts -----------------------------------------------------
         for (from, lanelet) in lanelets.iter().enumerate() {
-            for (to, candidate) in lanelets.iter().enumerate() {
+            // A conflict needs the boxes to meet, unless the two are one
+            // lanelet's two directions, which conflict whatever their shape.
+            let mut overlapping: Vec<usize> = passable
+                .lanelets
+                .search(&bbox::of_lanelet_2d(lanelet))
+                .into_iter()
+                .filter_map(|primitive| match primitive {
+                    Primitive::Lanelet(hit) => Some(hit),
+                    _ => None,
+                })
+                .chain([lanelet.invert()])
+                .flat_map(|hit| [find(&hit), find(&hit.invert())])
+                .flatten()
+                .collect();
+            overlapping.sort_unstable();
+            overlapping.dedup();
+            for to in overlapping {
+                let candidate = &lanelets[to];
                 if from >= to {
                     continue;
                 }
@@ -239,7 +340,6 @@ impl RoutingGraph {
             }
         }
 
-        let _ = find;
         RoutingGraph {
             graph,
             rules,

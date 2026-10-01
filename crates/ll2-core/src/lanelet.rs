@@ -21,7 +21,7 @@ use crate::compound::CompoundLineString;
 use crate::fmt::make_repr;
 use crate::id::{INVAL_ID, Id};
 use crate::linestring::LineString;
-use crate::refs::{Attrs, attrs};
+use crate::refs::{Attrs, attrs, geometry_changed};
 use crate::regelem::RegulatoryElement;
 
 pub struct LaneletData {
@@ -124,6 +124,7 @@ impl Lanelet {
         if *slot != bound {
             self.reset_cache();
             *slot = bound;
+            geometry_changed();
         }
     }
 
@@ -132,6 +133,7 @@ impl Lanelet {
         if *slot != bound {
             self.reset_cache();
             *slot = bound;
+            geometry_changed();
         }
     }
 
