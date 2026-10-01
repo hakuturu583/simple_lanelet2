@@ -8,9 +8,9 @@
 //!
 //! Upstream: `lanelet2_core/src/LaneletMap.cpp:110-130, 340-380, 545-700`
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::{Mutex, RwLock};
 use rstar::primitives::{GeomWithData, Rectangle};
@@ -139,8 +139,7 @@ pub struct NoSuchPrimitive(pub String);
 pub struct Layer {
     kind: LayerKind,
     items: RwLock<BTreeMap<Id, Primitive>>,
-    /// Bumped by every insert, so a cached index knows the membership changed.
-    generation: AtomicU64,
+    /// Cleared by every insert; otherwise valid while the geometry epoch holds.
     index: Mutex<Option<Arc<SpatialIndex>>>,
 }
 
@@ -150,7 +149,6 @@ pub struct Layer {
 /// accelerator: every answer is still decided by exact distances, so results are
 /// identical to a full scan.
 struct SpatialIndex {
-    generation: u64,
     epoch: u64,
     /// Id-ordered, as `Layer::all` returns them; the tree stores positions in here.
     items: Vec<Primitive>,
@@ -161,21 +159,19 @@ struct SpatialIndex {
 }
 
 impl SpatialIndex {
-    fn build(items: Vec<Primitive>, generation: u64, epoch: u64) -> Self {
+    fn build(items: Vec<Primitive>, epoch: u64) -> Self {
         let mut boxed = Vec::with_capacity(items.len());
         let mut unboxed = Vec::new();
         for (position, primitive) in items.iter().enumerate() {
             let bbox = primitive.bounding_box_2d();
-            let finite = bbox.min.iter().chain(&bbox.max).all(|v| v.is_finite());
-            if bbox.is_empty() || !finite {
-                unboxed.push(position);
-            } else {
+            if bbox.is_indexable() {
                 let rect = Rectangle::from_corners(bbox.min, bbox.max);
                 boxed.push(GeomWithData::new(rect, position));
+            } else {
+                unboxed.push(position);
             }
         }
         SpatialIndex {
-            generation,
             epoch,
             items,
             tree: RTree::bulk_load(boxed),
@@ -189,7 +185,6 @@ impl Layer {
         Layer {
             kind,
             items: RwLock::new(BTreeMap::new()),
-            generation: AtomicU64::new(0),
             index: Mutex::new(None),
         }
     }
@@ -197,16 +192,15 @@ impl Layer {
     /// The spatial index, rebuilt if the layer or any geometry changed since.
     fn spatial_index(&self) -> Arc<SpatialIndex> {
         let mut slot = self.index.lock();
-        // Read the stamps before the contents: a write racing the build then
+        // Read the epoch before the contents: a write racing the build then
         // leaves the index looking stale rather than looking current.
-        let generation = self.generation.load(Ordering::Acquire);
         let epoch = geometry_epoch();
         if let Some(index) = slot.as_ref() {
-            if index.generation == generation && index.epoch == epoch {
+            if index.epoch == epoch {
                 return Arc::clone(index);
             }
         }
-        let index = Arc::new(SpatialIndex::build(self.all(), generation, epoch));
+        let index = Arc::new(SpatialIndex::build(self.all(), epoch));
         *slot = Some(Arc::clone(&index));
         index
     }
@@ -257,7 +251,9 @@ impl Layer {
             .write()
             .entry(primitive.id())
             .or_insert(primitive);
-        self.generation.fetch_add(1, Ordering::Release);
+        // Taken after the insert is visible, so a build racing it either saw the
+        // new primitive or is discarded here.
+        *self.index.lock() = None;
     }
 
     /// A fresh id. Upstream simply draws from the global counter.
@@ -267,8 +263,10 @@ impl Layer {
 
     /// Everything whose bounding box meets `area`, ordered by id.
     pub fn search(&self, area: &BoundingBox2d) -> Vec<Primitive> {
-        let finite = area.min.iter().chain(&area.max).all(|v| v.is_finite());
-        if area.is_empty() || !finite {
+        if area.is_empty() {
+            return Vec::new();
+        }
+        if !area.is_indexable() {
             return self
                 .all()
                 .into_iter()
@@ -277,13 +275,19 @@ impl Layer {
         }
         let index = self.spatial_index();
         let envelope = AABB::from_corners(area.min, area.max);
-        let mut positions: Vec<usize> = index
-            .tree
-            .locate_in_envelope_intersecting(envelope)
-            .map(|entry| entry.data)
-            .chain(index.unboxed.iter().copied())
-            .filter(|&position| index.items[position].bounding_box_2d().intersects(area))
-            .collect();
+        // Tree entries are the primitives' own boxes, and rstar's intersection is
+        // inclusive like `BoundingBox2d::intersects`, so its hits need no recheck.
+        let mut positions: Vec<usize> =
+            index
+                .tree
+                .locate_in_envelope_intersecting(envelope)
+                .map(|entry| entry.data)
+                .chain(
+                    index.unboxed.iter().copied().filter(|&position| {
+                        index.items[position].bounding_box_2d().intersects(area)
+                    }),
+                )
+                .collect();
         // Positions follow id order, which is the order a full scan returns.
         positions.sort_unstable();
         positions
@@ -301,7 +305,11 @@ impl Layer {
     /// exceeds the exact distance, so once a box is farther than the `count`-th best
     /// exact distance nothing later can enter the result.
     pub fn nearest(&self, point: [f64; 2], count: usize) -> Vec<Primitive> {
-        if count == 0 || !point.iter().all(|v| v.is_finite()) {
+        if count == 0 {
+            return Vec::new();
+        }
+        if count >= self.len() || !point.iter().all(|v| v.is_finite()) {
+            // Everything is wanted, or the point cannot be placed: a scan is cheaper.
             return self.nearest_by_scan(point, count);
         }
         let index = self.spatial_index();
@@ -310,12 +318,7 @@ impl Layer {
         let offer = |best: &mut Vec<(f64, Id, usize)>, position: usize| {
             let primitive = &index.items[position];
             let candidate = (primitive.distance_2d(point), primitive.id(), position);
-            let at = best.partition_point(|held| {
-                held.0
-                    .total_cmp(&candidate.0)
-                    .then(held.1.cmp(&candidate.1))
-                    .is_lt()
-            });
+            let at = best.partition_point(|held| closer(held, &candidate).is_lt());
             if at < count {
                 best.insert(at, candidate);
                 best.truncate(count);
@@ -348,7 +351,7 @@ impl Layer {
             .into_iter()
             .map(|primitive| (primitive.distance_2d(point), primitive.id(), primitive))
             .collect();
-        scored.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        scored.sort_by(closer);
         scored
             .into_iter()
             .take(count)
@@ -363,6 +366,11 @@ impl Layer {
             .filter(|primitive| references(primitive, id))
             .collect()
     }
+}
+
+/// The order `nearest` reports in: by distance, ties broken by id.
+fn closer<A, B>(a: &(f64, Id, A), b: &(f64, Id, B)) -> Ordering {
+    a.0.total_cmp(&b.0).then(a.1.cmp(&b.1))
 }
 
 /// Whether `primitive` directly references something with the given id.

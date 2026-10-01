@@ -72,11 +72,29 @@ pub fn empty_attrs() -> Attrs {
 pub struct CoordView {
     cell: Coords,
     mutable: bool,
+    /// Whether the cell is a point's coordinates, so that writing it moves map
+    /// geometry. A free `BasicPoint` or a box corner is not, and writing one must
+    /// not invalidate every spatial index in the process.
+    of_point: bool,
 }
 
 impl CoordView {
+    /// A view over a cell no primitive owns.
     pub fn new(cell: Coords, mutable: bool) -> Self {
-        CoordView { cell, mutable }
+        CoordView {
+            cell,
+            mutable,
+            of_point: false,
+        }
+    }
+
+    /// A view over a point's own coordinates.
+    pub fn of_point(cell: Coords, mutable: bool) -> Self {
+        CoordView {
+            cell,
+            mutable,
+            of_point: true,
+        }
     }
 
     pub fn is_mutable(&self) -> bool {
@@ -94,7 +112,9 @@ impl CoordView {
             return false;
         }
         self.cell.write()[index] = value;
-        geometry_changed();
+        if self.of_point {
+            geometry_changed();
+        }
         true
     }
 

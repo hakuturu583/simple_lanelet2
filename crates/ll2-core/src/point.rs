@@ -101,7 +101,7 @@ impl Point {
     /// A live view of the coordinates. `mutable` is false for `Const*` handles
     /// unless bug-compatibility mode reopens upstream's const hole.
     pub fn basic_point(&self, mutable: bool) -> CoordView {
-        CoordView::new(self.data.coords.clone(), mutable)
+        CoordView::of_point(self.data.coords.clone(), mutable)
     }
 
     /// The shared attribute map, for building a live `AttributeMap` proxy.

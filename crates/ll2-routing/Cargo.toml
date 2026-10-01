@@ -11,4 +11,3 @@ description = "Routing graph for a Lanelet2-compatible library"
 [dependencies]
 ll2-core.workspace = true
 ll2-traffic-rules.workspace = true
-rstar.workspace = true
