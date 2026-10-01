@@ -21,7 +21,7 @@ use crate::attribute::AttributeMap;
 use crate::fmt::make_repr;
 use crate::id::{INVAL_ID, Id};
 use crate::point::Point;
-use crate::refs::{Attrs, attrs};
+use crate::refs::{Attrs, attrs, geometry_changed};
 
 /// The storage behind every handle to one linestring or polygon.
 pub struct LineStringData {
@@ -120,6 +120,7 @@ impl LineString {
         }
         let target = self.storage_index(index, len);
         points[target] = point;
+        geometry_changed();
         true
     }
 
@@ -131,6 +132,7 @@ impl LineString {
         }
         let target = self.storage_index(index, len);
         points.remove(target);
+        geometry_changed();
         true
     }
 
@@ -143,6 +145,7 @@ impl LineString {
         } else {
             points.push(point);
         }
+        geometry_changed();
     }
 
     /// All points, in view order.

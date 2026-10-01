@@ -19,7 +19,7 @@ use crate::attribute::AttributeMap;
 use crate::compound::CompoundLineString;
 use crate::id::Id;
 use crate::linestring::LineString;
-use crate::refs::{Attrs, attrs};
+use crate::refs::{Attrs, attrs, geometry_changed};
 use crate::regelem::RegulatoryElement;
 
 /// A hole: one closed ring, assembled from consecutive linestrings.
@@ -90,6 +90,7 @@ impl Area {
     pub fn set_outer_bound(&self, outer: Vec<LineString>) {
         *self.data.outer_polygon.write() = CompoundLineString::new(outer.clone());
         *self.data.outer.write() = outer;
+        geometry_changed();
     }
 
     pub fn inner_bounds(&self) -> Vec<InnerBound> {
@@ -102,6 +103,7 @@ impl Area {
             .map(|hole| CompoundLineString::new(hole.clone()))
             .collect();
         *self.data.inner.write() = inner;
+        geometry_changed();
     }
 
     pub fn outer_bound_polygon(&self) -> CompoundLineString {
