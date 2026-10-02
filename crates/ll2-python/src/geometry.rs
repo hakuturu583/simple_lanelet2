@@ -227,6 +227,12 @@ fn to_3d<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
 #[pyfunction]
 fn distance(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<f64> {
     require_binary(a, b, accept::DISTANCE, "distance")?;
+    distance_unchecked(a, b)
+}
+
+/// `distance` without the overload check: the C++ templates behind other functions
+/// (`findWithin3d`) compute distances between pairs the Python `distance` rejects.
+fn distance_unchecked(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<f64> {
     // Both points: pick 3D only when both sides really are 3D.
     if let (Some(pa), Some(pb)) = (coords_3d(a), coords_3d(b)) {
         return Ok(if is_3d(a) && is_3d(b) {
@@ -863,8 +869,184 @@ fn find_nearest<'py>(
     PyList::new(py, pairs)
 }
 
+/// A geometry flattened to 2D: a point, or a polyline with its shape.
+enum Flat2d {
+    Point(Point2),
+    Shape(Vec<Point2>, Shape),
+}
+
+impl Flat2d {
+    /// Reads any point, bounding box, linestring, polygon, compound, lanelet or area.
+    fn of(obj: &Bound<'_, PyAny>) -> Option<Flat2d> {
+        if let Some(point) = coords_2d(obj) {
+            return Some(Flat2d::Point(point));
+        }
+        let corners = if let Ok(b) = obj.cast::<PyBoundingBox2d>() {
+            Some((b.borrow().min_values(), b.borrow().max_values()))
+        } else if let Ok(b) = obj.cast::<PyBoundingBox3d>() {
+            Some((b.borrow().min_values(), b.borrow().max_values()))
+        } else {
+            None
+        };
+        if let Some((min, max)) = corners {
+            let ring = vec![
+                [min[0], min[1]],
+                [max[0], min[1]],
+                [max[0], max[1]],
+                [min[0], max[1]],
+            ];
+            return Some(Flat2d::Shape(ring, Shape::Ring));
+        }
+        any_line_2d(obj).map(|(line, shape)| Flat2d::Shape(line, shape))
+    }
+
+    /// `(min, max)` of the 2D bounding box.
+    fn bounds(&self) -> (Point2, Point2) {
+        let points: &[Point2] = match self {
+            Flat2d::Point(point) => std::slice::from_ref(point),
+            Flat2d::Shape(line, _) => line,
+        };
+        let mut min = [f64::INFINITY; 2];
+        let mut max = [f64::NEG_INFINITY; 2];
+        for point in points {
+            for i in 0..2 {
+                min[i] = min[i].min(point[i]);
+                max[i] = max[i].max(point[i]);
+            }
+        }
+        (min, max)
+    }
+
+    /// `distance2d`: zero when one touches or contains the other.
+    fn distance(&self, other: &Flat2d) -> f64 {
+        match (self, other) {
+            (Flat2d::Point(a), Flat2d::Point(b)) => dist::distance_2d_point_point(*a, *b),
+            (Flat2d::Point(point), Flat2d::Shape(line, shape))
+            | (Flat2d::Shape(line, shape), Flat2d::Point(point)) => {
+                point_to_shape_2d(*point, line, *shape)
+            }
+            (Flat2d::Shape(la, sa), Flat2d::Shape(lb, sb)) => shape_distance_2d(la, *sa, lb, *sb),
+        }
+    }
+}
+
+/// 3D distance from a point to an axis-aligned box: zero inside it.
+fn point_to_box_3d(point: Point3, min: [f64; 3], max: [f64; 3]) -> f64 {
+    let mut sum = 0.0;
+    for i in 0..3 {
+        let d = (min[i] - point[i]).max(0.0).max(point[i] - max[i]);
+        sum += d * d;
+    }
+    sum.sqrt()
+}
+
+/// The closed 3D outline of a polygon, lanelet or area; `None` for anything open.
+fn ring_3d(obj: &Bound<'_, PyAny>) -> Option<Vec<Point3>> {
+    if let Some((lanelet, _)) = lanelet_of(obj) {
+        return Some(llgeom::outline_3d(&lanelet));
+    }
+    if let Some(area) = area_of(obj) {
+        return Some(
+            area.outer_bound_polygon()
+                .points()
+                .iter()
+                .map(ll2_core::point::Point::xyz)
+                .collect(),
+        );
+    }
+    match polyline_3d(obj) {
+        Some((ring, Shape::Ring)) => Some(ring),
+        _ => None,
+    }
+}
+
+/// `distance3d` from a point to a closed shape, as boost computes it: zero when the
+/// point lies inside the shape's 2D footprint, at any height; otherwise the 3D
+/// distance to the nearest edge of the outline.
+fn point_to_ring_3d(point: Point3, ring: &[Point3]) -> f64 {
+    let flat: Vec<Point2> = ring.iter().map(|&[x, y, _]| [x, y]).collect();
+    if dist::covered_by_ring([point[0], point[1]], &flat) {
+        return 0.0;
+    }
+    let mut closed = ring.to_vec();
+    if let Some(&first) = ring.first() {
+        closed.push(first);
+    }
+    distance_point_polyline_3d(point, &closed)
+}
+
+/// Shared body of `findWithin2d` / `findWithin3d`, after upstream's
+/// `geometry/impl/LaneletMap.h`: search the layer with the geometry's 2D bounding
+/// box widened by `maxDist`, keep what lies within `maxDist` (`distance2d` or
+/// `distance3d`), closest first.
+fn find_within<'py>(
+    py: Python<'py>,
+    layer: &Bound<'py, PyAny>,
+    geometry: &Bound<'py, PyAny>,
+    max_dist: f64,
+    three_d: bool,
+    method: &str,
+) -> PyResult<Bound<'py, PyList>> {
+    let allowed = match (three_d, class_name(layer).as_str()) {
+        (false, _) => accept::FIND_WITHIN_2D,
+        (true, "PointLayer") => accept::FIND_WITHIN_3D_POINT_LAYER,
+        (true, _) => accept::FIND_WITHIN_3D,
+    };
+    require_unary(geometry, allowed, method)?;
+    let query = Flat2d::of(geometry).ok_or_else(|| argument_error("geometry", method))?;
+    let (mut min, mut max) = query.bounds();
+    if max_dist > 0.0 {
+        for i in 0..2 {
+            min[i] -= max_dist;
+            max[i] += max_dist;
+        }
+    }
+    let area = Py::new(
+        py,
+        PyBoundingBox2d::from_corners([min[0], min[1], 0.0], [max[0], max[1], 0.0]),
+    )?;
+    let box3d = geometry
+        .cast::<PyBoundingBox3d>()
+        .ok()
+        .map(|b| (b.borrow().min_values(), b.borrow().max_values()));
+    let ring3d = if three_d { ring_3d(geometry) } else { None };
+    let mut scored: Vec<(f64, Py<PyAny>)> = Vec::new();
+    for item in layer.call_method1("search", (area,))?.try_iter()? {
+        let item = item?;
+        let distance = if !three_d {
+            let element = Flat2d::of(&item).ok_or_else(|| argument_error("geometry", method))?;
+            query.distance(&element)
+        } else if let Some((bmin, bmax)) = box3d {
+            let point = coords_3d(&item).ok_or_else(|| argument_error("geometry", method))?;
+            point_to_box_3d(point, bmin, bmax)
+        } else if let Some(ring) = &ring3d {
+            let point = coords_3d(&item).ok_or_else(|| argument_error("geometry", method))?;
+            point_to_ring_3d(point, ring)
+        } else {
+            distance_unchecked(geometry, &item)?
+        };
+        if distance <= max_dist {
+            scored.push((distance, item.unbind()));
+        }
+    }
+    scored.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let pairs: Vec<Bound<'py, PyTuple>> = scored
+        .into_iter()
+        .map(|(distance, object)| {
+            PyTuple::new(
+                py,
+                [
+                    distance.into_pyobject(py).unwrap().into_any().unbind(),
+                    object,
+                ],
+            )
+        })
+        .collect::<PyResult<_>>()?;
+    PyList::new(py, pairs)
+}
+
 macro_rules! find_within {
-    ($py_name:literal, $rust:ident, $three_d:tt) => {
+    ($py_name:literal, $rust:ident, $three_d:expr) => {
         /// Everything in the layer within `maxDist` of the geometry, closest first.
         ///
         /// The bound is inclusive, so a `maxDist` of zero returns only what actually
@@ -878,28 +1060,7 @@ macro_rules! find_within {
             geometry: &Bound<'py, PyAny>,
             maxDist: f64,
         ) -> PyResult<Bound<'py, PyList>> {
-            let mut scored: Vec<(f64, Py<PyAny>)> = Vec::new();
-            for item in layer.try_iter()? {
-                let item = item?;
-                let distance = distance(&item, geometry)?;
-                if distance <= maxDist {
-                    scored.push((distance, item.unbind()));
-                }
-            }
-            scored.sort_by(|a, b| a.0.total_cmp(&b.0));
-            let pairs: Vec<Bound<'py, PyTuple>> = scored
-                .into_iter()
-                .map(|(distance, object)| {
-                    PyTuple::new(
-                        py,
-                        [
-                            distance.into_pyobject(py).unwrap().into_any().unbind(),
-                            object,
-                        ],
-                    )
-                })
-                .collect::<PyResult<_>>()?;
-            PyList::new(py, pairs)
+            find_within(py, layer, geometry, maxDist, $three_d, $py_name)
         }
     };
 }

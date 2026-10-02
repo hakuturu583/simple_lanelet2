@@ -238,3 +238,30 @@ pub const PROJECTED_POINT_3D: &[(&str, &str)] = &[
     ("HybridLineString3d", "HybridLineString3d"),
     ("LineString3d", "LineString3d"),
 ];
+
+/// Query geometries `findWithin2d` is registered for, on every layer.
+pub const FIND_WITHIN_2D: &[&str] = &[
+    "Area",
+    "BasicPoint2d",
+    "BoundingBox2d",
+    "CompoundLineString2d",
+    "Lanelet",
+    "LineString2d",
+    "Point2d",
+    "Polygon2d",
+];
+
+/// Query geometries `findWithin3d` is registered for on the point layer.
+pub const FIND_WITHIN_3D_POINT_LAYER: &[&str] = &[
+    "Area",
+    "BasicPoint3d",
+    "BoundingBox3d",
+    "CompoundLineString3d",
+    "Lanelet",
+    "LineString3d",
+    "Point3d",
+    "Polygon3d",
+];
+
+/// Query geometries `findWithin3d` is registered for on every other layer.
+pub const FIND_WITHIN_3D: &[&str] = &["BasicPoint3d", "Point3d"];
