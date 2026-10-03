@@ -945,6 +945,12 @@ export class LaneletViewer extends EventTarget {
     // the one that was selected.
     const hadSelection = this._pinned !== null;
     const selected = keepSelection ? this._describeShape(this._pinned) : null;
+    // Which of the shapes sharing its id and layer it was: a lanelet's arrows, or
+    // the links of a regulatory element that names several lights. `_byId` lists
+    // them in scene order, which no camera changes, so the same rank names the
+    // same shape after. A rank rather than the scene index itself, because turning
+    // points on or off shifts every index after them.
+    const rank = selected ? this._rankOf(this._pinned) : 0;
     const options = this._sceneOptions();
     const data = this._handle.build_scene(options);
     options.free();
@@ -959,6 +965,7 @@ export class LaneletViewer extends EventTarget {
       layerOf: data.layers(),
       closed: data.closed(),
       ids: data.ids(),
+      sceneOrder: data.scene_order(),
       bounds: Array.from(data.bounds()),
       centre: [data.centre_x(), data.centre_y()],
       count: data.shape_count(),
@@ -976,7 +983,7 @@ export class LaneletViewer extends EventTarget {
     this._hover = -1;
     this._pinned = null;
     if (selected) {
-      const shape = this._findShapeIn(idKey(selected.id), [selected.layer]);
+      const shape = this._findShapeIn(idKey(selected.id), [selected.layer], rank);
       if (shape >= 0) this._pinned = shape;
     }
     // A host showing the selection has to hear that it went, or it goes on showing
@@ -1269,24 +1276,37 @@ export class LaneletViewer extends EventTarget {
   }
 
   /// The shape to stand for a primitive: the first drawn from it in the first of
-  /// `layers` that has one (in scene order when `layers` is absent).
+  /// `layers` that has one (in scene order when `layers` is absent) — or, given a
+  /// `rank`, the shape that many after it in that layer, where there is one.
   ///
   /// Visibility is deliberately no part of it. A lanelet is a fill, a centerline and
   /// an arrow every 25 metres, and the fill is its outline — the thing to frame and
   /// to draw the selection round, which the emphasis pass does whether or not the
   /// layer is shown. Preferring a visible shape would, with fills hidden, pick one
   /// arrow out of dozens, and not necessarily the same one after a rebuild.
-  _findShapeIn(id, layers) {
+  _findShapeIn(id, layers, rank = 0) {
     if (id === null || !this._geometry) return -1;
     const shapes = this._byId?.get(id);
     if (!shapes) return -1;
     if (!layers) return shapes[0];
-    const layerOf = (shape) => LAYERS[this._geometry.layerOf[shape]].key;
-    for (const layer of layers) {
-      const shape = shapes.find((candidate) => layerOf(candidate) === layer);
-      if (shape !== undefined) return shape;
+    for (const key of layers) {
+      const layer = LAYERS.findIndex((candidate) => candidate.key === key);
+      const matching = this._shapesInLayer(id, layer);
+      if (matching.length) return matching[rank] ?? matching[0];
     }
     return -1;
+  }
+
+  /// The shapes drawn from primitive `id` in layer index `layer`, in scene order.
+  _shapesInLayer(id, layer) {
+    const { layerOf } = this._geometry;
+    return (this._byId?.get(id) ?? []).filter((shape) => layerOf[shape] === layer);
+  }
+
+  /// How many shapes with the same id and layer come before `shape` in the scene.
+  _rankOf(shape) {
+    const { ids, layerOf } = this._geometry;
+    return this._shapesInLayer(ids[shape], layerOf[shape]).indexOf(shape);
   }
 
   _pick(x, y, tolerance) {
@@ -1399,8 +1419,15 @@ function shapeBounds(geometry, shape) {
 /// Keyed by `BigInt`, as the ids arrive: a Lanelet2 id is 64 bits and a `Number`
 /// is exact only to 53, so keying by `Number` would let two primitives collide.
 function buildIdIndex(geometry) {
+  // Filled in scene order rather than draw order, which a tilted camera sorts by
+  // depth: "the third arrow of this lanelet" has to name the same arrow from any
+  // angle.
+  const byScene = new Uint32Array(geometry.count);
+  geometry.sceneOrder.forEach((position, shape) => {
+    byScene[position] = shape;
+  });
   const byId = new Map();
-  for (let shape = 0; shape < geometry.count; shape += 1) {
+  for (const shape of byScene) {
     const id = geometry.ids[shape];
     const shapes = byId.get(id);
     if (shapes) shapes.push(shape);

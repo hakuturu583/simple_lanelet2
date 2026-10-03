@@ -337,6 +337,43 @@ try {
     });
     check(outline === 'lanelet_fill', `a hidden fill still stands for its lanelet (${outline})`);
 
+    // A rebuild keeps the very shape that was selected, not the first sharing its
+    // id: the second link of an element that names two lights, the third arrow of a
+    // lanelet.
+    const kept = await page.$eval('#element', async (element) => {
+      const viewer = element.viewer;
+      const layer = (key) => viewer.getLayers().findIndex((candidate) => candidate.key === key);
+      // Where a shape sits in the scene before the camera sorts it: the same shape
+      // has the same one from any angle.
+      const sceneIndex = (shape) => (shape === null ? -1 : viewer._geometry.sceneOrder[shape]);
+      // Selects the `rank`th shape, tilts the camera and levels it again, and says
+      // where the selection was at each step.
+      const survives = async (id, key, rank) => {
+        viewer._pinned = viewer._findShapeIn(BigInt(id), [key], rank);
+        const seen = [sceneIndex(viewer._pinned)];
+        for (let turn = 0; turn < 2; turn += 1) {
+          viewer.setView3d({ enabled: !viewer.getView3d().enabled });
+          await new Promise((resolve) => setTimeout(resolve, 600));
+          seen.push(sceneIndex(viewer._pinned));
+        }
+        return seen;
+      };
+      // Each of the element's links in turn: a rule that settles on one of them
+      // cannot keep both.
+      const links = [await survives(45224, 'traffic_light_link', 0), await survives(45224, 'traffic_light_link', 1)];
+      const [lanelet] = [...viewer._byId].find(([id]) => viewer._shapesInLayer(id, layer('direction')).length >= 3);
+      const arrow = await survives(lanelet, 'direction', 2);
+      viewer.select(null);
+      return { links, arrow, enabled: viewer.getView3d().enabled };
+    });
+    const steady = (seen) => seen.every((index) => index === seen[0] && index >= 0);
+    check(
+      kept.links[0][0] !== kept.links[1][0] && kept.links.every(steady),
+      `a rebuild keeps the selected link of a shared element (${JSON.stringify(kept.links)})`,
+    );
+    check(steady(kept.arrow), `and the selected arrow of a lanelet (${JSON.stringify(kept.arrow)})`);
+    check(!kept.enabled, 'and the camera ends where it started');
+
     // After `clear()` nothing of the old map may be found — least of all through
     // the iframe, where a throw would swallow the `lanelet2.found` reply.
     const afterClear = await page.evaluate(async () => {
