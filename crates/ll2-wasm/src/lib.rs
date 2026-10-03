@@ -116,6 +116,7 @@ pub struct SceneOptions {
     pub direction_arrows: bool,
     pub points: bool,
     pub traffic_light_facing: bool,
+    pub traffic_light_links: bool,
     /// Metres between driving-direction arrowheads.
     pub arrow_spacing: f64,
 
@@ -146,6 +147,7 @@ impl Default for SceneOptions {
             direction_arrows: defaults.direction_arrows,
             points: defaults.points,
             traffic_light_facing: defaults.traffic_light_facing,
+            traffic_light_links: defaults.traffic_light_links,
             arrow_spacing: defaults.arrow_spacing,
             // Off, but with the angles a "3D" button would want already in place, so
             // turning it on is one assignment rather than four.
@@ -180,6 +182,7 @@ impl SceneOptions {
             "direction" => self.direction_arrows = on,
             "point" => self.points = on,
             "traffic_light_facing" => self.traffic_light_facing = on,
+            "traffic_light_link" => self.traffic_light_links = on,
             _ => {}
         }
     }
@@ -208,6 +211,7 @@ impl SceneOptions {
             direction_arrows: self.direction_arrows,
             points: self.points,
             traffic_light_facing: self.traffic_light_facing,
+            traffic_light_links: self.traffic_light_links,
             arrow_spacing: self.arrow_spacing,
         }
     }
@@ -702,6 +706,14 @@ mod tests {
         assert!(!options.to_viz().traffic_light_facing);
         options.set_layer("traffic_light_facing", true);
         assert!(options.to_viz().traffic_light_facing);
+    }
+
+    #[test]
+    fn traffic_light_links_are_off_by_default_and_on_by_key() {
+        let mut options = SceneOptions::new();
+        assert!(!options.to_viz().traffic_light_links);
+        options.set_layer("traffic_light_link", true);
+        assert!(options.to_viz().traffic_light_links);
     }
 
     #[test]

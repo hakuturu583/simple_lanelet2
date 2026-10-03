@@ -41,10 +41,11 @@ pub enum VizLayer {
     Direction,
     Point,
     TrafficLightFacing,
+    TrafficLightLink,
 }
 
 impl VizLayer {
-    pub const ALL: [VizLayer; 9] = [
+    pub const ALL: [VizLayer; 10] = [
         VizLayer::LaneletFill,
         VizLayer::Area,
         VizLayer::Polygon,
@@ -54,6 +55,7 @@ impl VizLayer {
         VizLayer::Direction,
         VizLayer::Point,
         VizLayer::TrafficLightFacing,
+        VizLayer::TrafficLightLink,
     ];
 
     pub fn index(self) -> u32 {
@@ -72,6 +74,7 @@ impl VizLayer {
             VizLayer::Direction => "direction",
             VizLayer::Point => "point",
             VizLayer::TrafficLightFacing => "traffic_light_facing",
+            VizLayer::TrafficLightLink => "traffic_light_link",
         }
     }
 
@@ -86,6 +89,7 @@ impl VizLayer {
             VizLayer::Direction => "Driving direction",
             VizLayer::Point => "Points",
             VizLayer::TrafficLightFacing => "Traffic light facing",
+            VizLayer::TrafficLightLink => "Traffic light ↔ stop line",
         }
     }
 }
@@ -371,6 +375,7 @@ const Z_CENTERLINE: i32 = 70;
 const Z_DIRECTION: i32 = 80;
 const Z_POINT: i32 = 90;
 const Z_TRAFFIC_LIGHT_FACING: i32 = 95;
+const Z_TRAFFIC_LIGHT_LINK: i32 = 97;
 
 /// The fill for a lanelet, chosen by its `subtype`.
 pub fn lanelet_style(subtype: &str, palette: &Palette) -> Style {
@@ -581,6 +586,19 @@ pub fn traffic_light_facing_style(palette: &Palette) -> Style {
     .hidden_below(4.0)
 }
 
+/// The line from a traffic light to the stop line it governs: thin and dashed, so
+/// it reads as a relation between two things rather than as a thing on the road.
+pub fn traffic_light_link_style(palette: &Palette) -> Style {
+    Style::new(
+        "traffic_light_link",
+        "Traffic light ↔ stop line",
+        Z_TRAFFIC_LIGHT_LINK,
+    )
+    .stroke(palette.traffic_light, 1.2)
+    .stroke_opacity(0.85)
+    .dashed(4.0, 3.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -657,6 +675,7 @@ mod tests {
             VizLayer::Direction => direction_style(&palette).z,
             VizLayer::Point => point_style(&palette).z,
             VizLayer::TrafficLightFacing => traffic_light_facing_style(&palette).z,
+            VizLayer::TrafficLightLink => traffic_light_link_style(&palette).z,
         };
         for pair in VizLayer::ALL.windows(2) {
             assert!(
