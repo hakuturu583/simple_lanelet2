@@ -744,6 +744,21 @@ mod tests {
         assert_eq!(data.label(usize::MAX), "");
     }
 
+    /// The viewer inverts this to list a primitive's shapes in an order no camera
+    /// changes, so it has to name every shape exactly once.
+    #[test]
+    fn scene_order_is_a_permutation_and_the_identity_from_above() {
+        let handle = LaneletMapHandle::parse(MAP, "auto").unwrap();
+        let mut options = SceneOptions::new();
+        let plan = handle.build_scene(&options).scene_order();
+        assert_eq!(plan, (0..plan.len() as u32).collect::<Vec<_>>());
+
+        options.three_d = true;
+        let mut tilted = handle.build_scene(&options).scene_order();
+        tilted.sort_unstable();
+        assert_eq!(tilted, plan);
+    }
+
     #[test]
     fn turning_a_layer_off_removes_its_shapes() {
         let handle = LaneletMapHandle::parse(MAP, "auto").unwrap();
