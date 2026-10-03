@@ -1,4 +1,4 @@
-//! Turning a `LaneletMap` into the eight batches a Spatial3D view draws.
+//! Turning a `LaneletMap` into the batches, one per layer, a Spatial3D view draws.
 //!
 //! One entity per layer, not one per primitive. A city map has hundreds of thousands
 //! of linestrings; logged individually that is hundreds of thousands of entities for
@@ -18,7 +18,10 @@ use ll2_core::map::{LaneletMap, as_area, as_lanelet, as_linestring, as_point};
 use ll2_viz::polyline::sample_along;
 use ll2_viz::scene::{area_outline, points_of};
 use ll2_viz::style::{self, Color, Palette, Style};
-use ll2_viz::{MapStats, VizLayer, VizOptions, attribute, describe, describe_lanelet};
+use ll2_viz::{
+    MapStats, VizLayer, VizOptions, attribute, describe, describe_lanelet, traffic_light_facing,
+    traffic_light_links,
+};
 use rerun::{
     Arrows3D, AsComponents, LineStrips3D, Mesh3D, Points3D, Radius, RecordingStream,
     RecordingStreamResult,
@@ -96,6 +99,8 @@ pub struct MapLayers {
     pub centerlines: Option<LineStrips3D>,
     pub direction: Option<Arrows3D>,
     pub points: Option<Points3D>,
+    pub traffic_light_facing: Option<Arrows3D>,
+    pub traffic_light_links: Option<LineStrips3D>,
     /// What the source map held.
     pub stats: MapStats,
     /// What was built from it.
@@ -111,6 +116,7 @@ impl MapLayers {
         builder.add_polygons(map);
         builder.add_linestrings(map);
         builder.add_points(map);
+        builder.add_traffic_light_links(map);
         builder.finish(MapStats::of(map))
     }
 
@@ -132,11 +138,23 @@ impl MapLayers {
         log_layer(rec, root, VizLayer::Centerline, self.centerlines.as_ref())?;
         log_layer(rec, root, VizLayer::Direction, self.direction.as_ref())?;
         log_layer(rec, root, VizLayer::Point, self.points.as_ref())?;
+        log_layer(
+            rec,
+            root,
+            VizLayer::TrafficLightFacing,
+            self.traffic_light_facing.as_ref(),
+        )?;
+        log_layer(
+            rec,
+            root,
+            VizLayer::TrafficLightLink,
+            self.traffic_light_links.as_ref(),
+        )?;
         Ok(())
     }
 
     /// [`log_to`](Self::log_to), plus the blueprint that makes a viewer open this as
-    /// a map rather than as eight unrelated entities.
+    /// a map rather than as one unrelated entity per layer.
     pub fn log_with_blueprint(
         &self,
         rec: &RecordingStream,
@@ -191,6 +209,8 @@ struct Builder<'a> {
     centerlines: StripParts,
     direction: ArrowParts,
     points: PointParts,
+    traffic_light_facing: ArrowParts,
+    traffic_light_links: StripParts,
 }
 
 impl<'a> Builder<'a> {
@@ -206,6 +226,8 @@ impl<'a> Builder<'a> {
             centerlines: StripParts::default(),
             direction: ArrowParts::default(),
             points: PointParts::default(),
+            traffic_light_facing: ArrowParts::default(),
+            traffic_light_links: StripParts::default(),
         }
     }
 
@@ -222,6 +244,13 @@ impl<'a> Builder<'a> {
             style.stroke.unwrap_or(self.palette.text),
             style.stroke_opacity,
         )
+    }
+
+    /// An arrow's colour: its fill, keeping its opacity. Not [`Self::fill_color`]:
+    /// an arrow is drawn over the road rather than being part of it, so it is not
+    /// blended away into the background.
+    fn arrow_color(&self, style: &Style) -> rerun::Color {
+        rgba(style.fill.unwrap_or(self.palette.text), style.fill_opacity)
     }
 
     /// A fill's colour, with its opacity already resolved against the theme
@@ -364,11 +393,15 @@ impl<'a> Builder<'a> {
     fn add_linestrings(&mut self, map: &LaneletMap) {
         let wants_bounds = self.options.viz.wants_layer(VizLayer::Bound);
         let wants_regulatory = self.options.viz.wants_layer(VizLayer::Regulatory);
-        if !(wants_bounds || wants_regulatory) {
+        let wants_facing = self.options.viz.wants_layer(VizLayer::TrafficLightFacing);
+        if !(wants_bounds || wants_regulatory || wants_facing) {
             return;
         }
-        let (bound_lift, regulatory_lift) =
-            (self.lift(VizLayer::Bound), self.lift(VizLayer::Regulatory));
+        let (bound_lift, regulatory_lift, facing_lift) = (
+            self.lift(VizLayer::Bound),
+            self.lift(VizLayer::Regulatory),
+            self.lift(VizLayer::TrafficLightFacing),
+        );
         // Nearly every linestring in a map is a boundary; the regulatory ones are a
         // handful, so only the bulk is worth reserving for.
         if wants_bounds {
@@ -383,15 +416,28 @@ impl<'a> Builder<'a> {
             let kind = attribute(attributes, "type");
             let subtype = attribute(attributes, "subtype");
             let layer = style::linestring_layer(&kind);
-            if !self.options.viz.wants_layer(layer) {
+            let wants_line = self.options.viz.wants_layer(layer);
+            let wants_arrow = wants_facing && style::shows_facing(&kind);
+            if !wants_line && !wants_arrow {
                 continue;
             }
             let points = points_of(line);
             if points.len() < 2 {
                 continue;
             }
-            let style = style::linestring_style(&kind, &subtype, &self.palette);
             let label = describe(line.id(), "linestring", &kind, &subtype);
+            if wants_arrow && let Some(light) = traffic_light_facing(&points) {
+                self.traffic_light_facing.push_from(
+                    light.middle,
+                    light.facing.map(|axis| axis * light.size),
+                    format!("{label} · facing"),
+                    facing_lift,
+                );
+            }
+            if !wants_line {
+                continue;
+            }
+            let style = style::linestring_style(&kind, &subtype, &self.palette);
             let (color, radius) = (self.stroke_color(&style), self.radius(&style));
             let (strips, lift) = if layer == VizLayer::Regulatory {
                 (&mut self.regulatory, regulatory_lift)
@@ -417,20 +463,31 @@ impl<'a> Builder<'a> {
         }
     }
 
+    fn add_traffic_light_links(&mut self, map: &LaneletMap) {
+        if !self.options.viz.wants_layer(VizLayer::TrafficLightLink) {
+            return;
+        }
+        let lift = self.lift(VizLayer::TrafficLightLink);
+        let style = style::traffic_light_link_style(&self.palette);
+        let (color, radius) = (self.stroke_color(&style), self.radius(&style));
+        for link in traffic_light_links(map) {
+            self.traffic_light_links
+                .push(&[link.from, link.to], color, radius, link.label(), lift);
+        }
+    }
+
     fn finish(self, stats: MapStats) -> MapLayers {
         // Every arrow in the map is one colour and one thickness, and so is every
         // point; the look is decided here, once, rather than copied onto each of the
         // hundreds of thousands of them.
         let arrows = style::direction_style(&self.palette);
-        let direction_color = rgba(
-            arrows.fill.unwrap_or(self.palette.direction),
-            // Not `fill_color`: an arrow is drawn over the road rather than being
-            // part of it, so it keeps its opacity instead of being blended away.
-            arrows.fill_opacity,
-        );
+        let direction_color = self.arrow_color(&arrows);
         let direction_radius = self.radius(&arrows);
         let dots = style::point_style(&self.palette);
         let (point_color, point_radius) = (self.stroke_color(&dots), self.radius(&dots));
+        let facing = style::traffic_light_facing_style(&self.palette);
+        let facing_color = self.arrow_color(&facing);
+        let facing_radius = self.radius(&facing);
 
         let counts = LayerCounts {
             triangles: self.lanelet_fill.triangles.len()
@@ -438,8 +495,9 @@ impl<'a> Builder<'a> {
                 + self.polygons.triangles.len(),
             strips: self.bounds.strips.len()
                 + self.regulatory.strips.len()
-                + self.centerlines.strips.len(),
-            arrows: self.direction.vectors.len(),
+                + self.centerlines.strips.len()
+                + self.traffic_light_links.strips.len(),
+            arrows: self.direction.vectors.len() + self.traffic_light_facing.vectors.len(),
             points: self.points.positions.len(),
         };
         MapLayers {
@@ -451,6 +509,10 @@ impl<'a> Builder<'a> {
             centerlines: self.centerlines.finish(),
             direction: self.direction.finish(direction_color, direction_radius),
             points: self.points.finish(point_color, point_radius),
+            traffic_light_facing: self
+                .traffic_light_facing
+                .finish(facing_color, facing_radius),
+            traffic_light_links: self.traffic_light_links.finish(),
             stats,
             counts,
         }
@@ -574,25 +636,20 @@ impl ArrowParts {
     fn push(&mut self, position: Point3, heading: Point3, size: f64, label: String, lift: f64) {
         // The arrow is centred on the sample, so a chevron sits across the point the
         // sampler chose rather than starting at it.
-        let half = [
-            heading[0] * size * 0.5,
-            heading[1] * size * 0.5,
-            heading[2] * size * 0.5,
+        let vector = heading.map(|axis| axis * size);
+        let tail = [
+            position[0] - vector[0] * 0.5,
+            position[1] - vector[1] * 0.5,
+            position[2] - vector[2] * 0.5,
         ];
-        self.origins.push(geometry::lifted(
-            [
-                position[0] - half[0],
-                position[1] - half[1],
-                position[2] - half[2],
-            ],
-            lift,
-        ));
+        self.push_from(tail, vector, label, lift);
+    }
+
+    /// An arrow starting at `tail` rather than centred on a point.
+    fn push_from(&mut self, tail: Point3, vector: Point3, label: String, lift: f64) {
+        self.origins.push(geometry::lifted(tail, lift));
         // A vector is a displacement, not a position: it does not get the lift.
-        self.vectors.push(geometry::to_f32([
-            half[0] * 2.0,
-            half[1] * 2.0,
-            half[2] * 2.0,
-        ]));
+        self.vectors.push(geometry::to_f32(vector));
         self.labels.push(label);
     }
 
@@ -753,6 +810,38 @@ mod tests {
         assert_eq!(layers.counts.arrows, 1);
         assert!(layers.counts.triangles > 0);
         assert!(!layers.is_empty());
+    }
+
+    /// The traffic-light layers are drawn here too, not only on the canvas: asking
+    /// for them alone on a map with lights must not come back empty.
+    #[test]
+    fn the_traffic_light_layers_are_built_when_asked_for() {
+        let text = std::fs::read_to_string("../../tests/data/mapping_example.osm").unwrap();
+        let loaded = ll2_viz::load_osm_str(&text, &ll2_viz::LoadOptions::default()).unwrap();
+        let options = MapOptions {
+            viz: VizOptions {
+                lanelet_fill: false,
+                areas: false,
+                polygons: false,
+                bounds: false,
+                regulatory: false,
+                direction_arrows: false,
+                traffic_light_facing: true,
+                traffic_light_links: true,
+                ..VizOptions::default()
+            },
+            ..MapOptions::default()
+        };
+        let layers = MapLayers::from_map(&loaded.map, &options);
+        assert!(layers.traffic_light_facing.is_some());
+        assert!(layers.traffic_light_links.is_some());
+        assert!(layers.regulatory.is_none());
+        assert_eq!(layers.counts.arrows, 10, "one per light");
+        assert_eq!(layers.counts.strips, 10, "one per light and stop line");
+        // Off by default.
+        let defaults = MapLayers::from_map(&loaded.map, &MapOptions::default());
+        assert!(defaults.traffic_light_facing.is_none());
+        assert!(defaults.traffic_light_links.is_none());
     }
 
     #[test]

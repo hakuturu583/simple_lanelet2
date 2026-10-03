@@ -567,70 +567,131 @@ impl Builder<'_> {
         let style = self
             .styles
             .intern(style::traffic_light_link_style(&self.palette));
-        for primitive in map.regulatory_elements.all() {
-            let Some(regelem) = as_regulatory_element(&primitive) else {
-                continue;
-            };
-            // The kind rather than the tag: it is what the rest of the library
-            // calls a traffic light, Autoware's derived kind included.
-            if !regelem.kind().is_a(RegElemKind::TrafficLight) {
-                continue;
-            }
-            let middles = |role: &str| -> Vec<(Id, Point3)> {
-                regelem
-                    .parameters_for(role)
-                    .iter()
-                    .filter_map(|parameter| match parameter {
-                        RuleParameter::LineString(line) | RuleParameter::Polygon(line) => {
-                            Some((line.id(), midpoint(&points_of(line))?.0))
-                        }
-                        _ => None,
-                    })
-                    .collect()
-            };
-            let stop_lines = middles(roles::REF_LINE);
-            for (light_id, light) in middles(roles::REFERS) {
-                for (stop_id, stop) in &stop_lines {
-                    let label = format!(
-                        "regulatory_element {} · traffic_light {light_id} → stop_line {stop_id}",
-                        regelem.id()
-                    );
-                    self.push_interned(
-                        VizLayer::TrafficLightLink,
-                        style,
-                        regelem.id(),
-                        label,
-                        vec![light, *stop],
-                        false,
-                    );
-                }
-            }
+        for link in traffic_light_links(map) {
+            self.push_interned(
+                VizLayer::TrafficLightLink,
+                style,
+                link.regulatory_element,
+                link.label(),
+                vec![link.from, link.to],
+                false,
+            );
         }
     }
 }
 
-/// A small triangle off the middle of a traffic light, pointing the way it faces.
+/// One traffic light joined to one stop line by the regulatory element that names
+/// them both.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrafficLightLink {
+    pub regulatory_element: Id,
+    pub light: Id,
+    pub stop_line: Id,
+    /// The light's midpoint.
+    pub from: Point3,
+    /// The stop line's midpoint.
+    pub to: Point3,
+}
+
+impl TrafficLightLink {
+    pub fn label(&self) -> String {
+        format!(
+            "regulatory_element {} · traffic_light {} → stop_line {}",
+            self.regulatory_element, self.light, self.stop_line
+        )
+    }
+}
+
+/// Every traffic light in the map joined to every stop line its regulatory element
+/// names — each `refers` to each `ref_line`, midpoint to midpoint.
+///
+/// The element is what says which light governs which stop line, and nothing on the
+/// road does: two lights side by side over two stop lines look the same whichever
+/// way round they are wired. Public so every renderer draws the same links.
+pub fn traffic_light_links(map: &LaneletMap) -> Vec<TrafficLightLink> {
+    let mut links = Vec::new();
+    for primitive in map.regulatory_elements.all() {
+        let Some(regelem) = as_regulatory_element(&primitive) else {
+            continue;
+        };
+        // The kind rather than the tag: it is what the rest of the library calls a
+        // traffic light, Autoware's derived kind included.
+        if !regelem.kind().is_a(RegElemKind::TrafficLight) {
+            continue;
+        }
+        let middles = |role: &str| -> Vec<(Id, Point3)> {
+            regelem
+                .parameters_for(role)
+                .iter()
+                .filter_map(|parameter| match parameter {
+                    RuleParameter::LineString(line) | RuleParameter::Polygon(line) => {
+                        Some((line.id(), midpoint(&points_of(line))?.0))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let stop_lines = middles(roles::REF_LINE);
+        for (light, from) in middles(roles::REFERS) {
+            for (stop_line, to) in &stop_lines {
+                links.push(TrafficLightLink {
+                    regulatory_element: regelem.id(),
+                    light,
+                    stop_line: *stop_line,
+                    from,
+                    to: *to,
+                });
+            }
+        }
+    }
+    links
+}
+
+/// Where a traffic light is and which way it faces.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrafficLightFacing {
+    /// The light's midpoint, where an arrow showing it starts.
+    pub middle: Point3,
+    /// A level unit vector, the way the light faces.
+    pub facing: Point3,
+    /// How long an arrow showing it should be, in metres.
+    pub size: f64,
+}
+
+/// Where a traffic light is and which way it faces, from its points.
 ///
 /// Lanelet2 draws a traffic light's linestring from left to right as seen by the
 /// driver it signals to, so the light faces the right-hand side of its own
 /// direction. That is exactly the convention a map gets wrong without anyone
-/// noticing, since a light drawn backwards looks the same from above — the arrow is
-/// there to make it visible. Level rather than up a slope, since a light faces along
-/// the ground; its base sits on the light. `None` for a light with no horizontal
-/// extent to take a direction from.
-fn facing_arrow(points: &[Point3]) -> Option<Vec<Point3>> {
+/// noticing, since a light drawn backwards looks the same from above. Level rather
+/// than up a slope, since a light faces along the ground. `None` for a light with no
+/// horizontal extent to take a direction from. Public so every renderer agrees.
+pub fn traffic_light_facing(points: &[Point3]) -> Option<TrafficLightFacing> {
     let (middle, heading, length) = midpoint(points)?;
     let flat = f64::hypot(heading[0], heading[1]);
     if flat < 1e-9 {
         return None;
     }
-    let (ax, ay) = (heading[0] / flat, heading[1] / flat);
-    let size = length.clamp(0.8, 2.0);
+    Some(TrafficLightFacing {
+        middle,
+        facing: [heading[1] / flat, -heading[0] / flat, 0.0],
+        size: length.clamp(0.8, 2.0),
+    })
+}
+
+/// The triangle [`traffic_light_facing`] describes, its base on the light.
+fn facing_arrow(points: &[Point3]) -> Option<Vec<Point3>> {
+    let TrafficLightFacing {
+        middle,
+        facing: [fx, fy, _],
+        size,
+    } = traffic_light_facing(points)?;
     let half = size * 0.45;
+    // Across the light is the facing turned back a quarter turn.
     let at = |forward: f64, across: f64| {
         [
-            middle[0] + ay * forward + ax * across,
-            middle[1] - ax * forward + ay * across,
+            middle[0] + fx * forward - fy * across,
+            middle[1] + fy * forward + fx * across,
             middle[2],
         ]
     };

@@ -583,6 +583,8 @@ pub fn traffic_light_facing_style(palette: &Palette) -> Style {
         Z_TRAFFIC_LIGHT_FACING,
     )
     .fill(palette.traffic_light, 0.95)
+    // The shaft, where a renderer draws a real arrow.
+    .stroke_width(2.0)
     .hidden_below(4.0)
 }
 
