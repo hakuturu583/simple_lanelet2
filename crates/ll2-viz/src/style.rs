@@ -40,10 +40,11 @@ pub enum VizLayer {
     Centerline,
     Direction,
     Point,
+    TrafficLightFacing,
 }
 
 impl VizLayer {
-    pub const ALL: [VizLayer; 8] = [
+    pub const ALL: [VizLayer; 9] = [
         VizLayer::LaneletFill,
         VizLayer::Area,
         VizLayer::Polygon,
@@ -52,6 +53,7 @@ impl VizLayer {
         VizLayer::Centerline,
         VizLayer::Direction,
         VizLayer::Point,
+        VizLayer::TrafficLightFacing,
     ];
 
     pub fn index(self) -> u32 {
@@ -69,6 +71,7 @@ impl VizLayer {
             VizLayer::Centerline => "centerline",
             VizLayer::Direction => "direction",
             VizLayer::Point => "point",
+            VizLayer::TrafficLightFacing => "traffic_light_facing",
         }
     }
 
@@ -82,6 +85,7 @@ impl VizLayer {
             VizLayer::Centerline => "Centerlines",
             VizLayer::Direction => "Driving direction",
             VizLayer::Point => "Points",
+            VizLayer::TrafficLightFacing => "Traffic light facing",
         }
     }
 }
@@ -366,6 +370,7 @@ const Z_REGULATORY: i32 = 60;
 const Z_CENTERLINE: i32 = 70;
 const Z_DIRECTION: i32 = 80;
 const Z_POINT: i32 = 90;
+const Z_TRAFFIC_LIGHT_FACING: i32 = 95;
 
 /// The fill for a lanelet, chosen by its `subtype`.
 pub fn lanelet_style(subtype: &str, palette: &Palette) -> Style {
@@ -450,6 +455,14 @@ pub fn linestring_layer(kind: &str) -> VizLayer {
     } else {
         VizLayer::Bound
     }
+}
+
+/// Whether a linestring of this `type` gets an arrow showing which way it faces.
+///
+/// Only `traffic_light`: its direction is a convention about which side it shows
+/// to the driver. `light_bulbs` shares its colour but not that convention.
+pub fn shows_facing(kind: &str) -> bool {
+    kind == "traffic_light"
 }
 
 /// The stroke for a linestring, chosen by `type` and refined by `subtype`.
@@ -555,6 +568,19 @@ pub fn point_style(palette: &Palette) -> Style {
         .hidden_from_legend()
 }
 
+/// The arrow that says which way a traffic light faces: small, in the light's own
+/// colour, and drawn over everything so a light's back is never mistaken for its
+/// face however busy the junction is.
+pub fn traffic_light_facing_style(palette: &Palette) -> Style {
+    Style::new(
+        "traffic_light_facing",
+        "Traffic light facing",
+        Z_TRAFFIC_LIGHT_FACING,
+    )
+    .fill(palette.traffic_light, 0.95)
+    .hidden_below(4.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,6 +656,7 @@ mod tests {
             VizLayer::Centerline => centerline_style(&palette).z,
             VizLayer::Direction => direction_style(&palette).z,
             VizLayer::Point => point_style(&palette).z,
+            VizLayer::TrafficLightFacing => traffic_light_facing_style(&palette).z,
         };
         for pair in VizLayer::ALL.windows(2) {
             assert!(

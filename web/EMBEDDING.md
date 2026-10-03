@@ -130,7 +130,7 @@ already in 3D that is handed a flat map drops back to the plan view by itself an
 says so on `view3dchange`.
 
 Layer keys: `lanelet_fill`, `area`, `polygon`, `bound`, `regulatory`,
-`centerline`, `direction`, `point`. The list is not written down here twice: it
+`centerline`, `direction`, `point`, `traffic_light_facing`. The list is not written down here twice: it
 comes from Rust through `LAYERS`, so adding a layer cannot desynchronise the two
 sides.
 

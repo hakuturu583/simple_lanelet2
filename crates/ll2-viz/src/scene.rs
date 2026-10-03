@@ -19,7 +19,7 @@ use ll2_core::lanelet::Lanelet;
 use ll2_core::linestring::LineString;
 use ll2_core::map::{LaneletMap, as_area, as_lanelet, as_linestring, as_point};
 
-use crate::polyline::{Point3, sample_along};
+use crate::polyline::{Point3, midpoint, sample_along};
 use crate::style::{self, Palette, Style, StyleTable, Theme, VizLayer};
 use crate::view::View;
 
@@ -35,6 +35,8 @@ pub struct VizOptions {
     pub centerlines: bool,
     pub direction_arrows: bool,
     pub points: bool,
+    /// A small arrow off each traffic light, pointing the way it faces.
+    pub traffic_light_facing: bool,
     /// Metres between driving-direction arrowheads along a centerline.
     pub arrow_spacing: f64,
 }
@@ -51,6 +53,7 @@ impl Default for VizOptions {
             centerlines: false,
             direction_arrows: true,
             points: false,
+            traffic_light_facing: false,
             arrow_spacing: 25.0,
         }
     }
@@ -69,6 +72,7 @@ impl VizOptions {
             VizLayer::Centerline => self.centerlines,
             VizLayer::Direction => self.direction_arrows,
             VizLayer::Point => self.points,
+            VizLayer::TrafficLightFacing => self.traffic_light_facing,
         }
     }
 }
@@ -476,23 +480,46 @@ impl Builder<'_> {
     fn add_linestrings(&mut self, map: &LaneletMap) {
         let wants_bounds = self.options.wants_layer(VizLayer::Bound);
         let wants_regulatory = self.options.wants_layer(VizLayer::Regulatory);
-        if !(wants_bounds || wants_regulatory) {
+        let wants_facing = self.options.wants_layer(VizLayer::TrafficLightFacing);
+        if !(wants_bounds || wants_regulatory || wants_facing) {
             return;
         }
+        let facing_style = wants_facing.then(|| {
+            self.styles
+                .intern(style::traffic_light_facing_style(&self.palette))
+        });
         for primitive in map.line_strings.all() {
             let Some(line) = as_linestring(&primitive) else {
                 continue;
             };
             let attributes = line.attributes();
             let kind = attribute(attributes, "type");
-            let subtype = attribute(attributes, "subtype");
             let layer = style::linestring_layer(&kind);
-            if !self.options.wants_layer(layer) {
+            let wants_line = self.options.wants_layer(layer);
+            let facing_style = facing_style.filter(|_| style::shows_facing(&kind));
+            if !wants_line && facing_style.is_none() {
                 continue;
             }
-            let style = style::linestring_style(&kind, &subtype, &self.palette);
+            let subtype = attribute(attributes, "subtype");
             let label = describe(line.id(), "linestring", &kind, &subtype);
-            self.push(layer, style, line.id(), label, points_of(line), false);
+            let points = points_of(line);
+            if let Some(style) = facing_style
+                && let Some(arrow) = facing_arrow(&points)
+            {
+                let label = format!("{label} · facing");
+                self.push_interned(
+                    VizLayer::TrafficLightFacing,
+                    style,
+                    line.id(),
+                    label,
+                    arrow,
+                    true,
+                );
+            }
+            if wants_line {
+                let style = style::linestring_style(&kind, &subtype, &self.palette);
+                self.push(layer, style, line.id(), label, points, false);
+            }
         }
     }
 
@@ -517,6 +544,34 @@ impl Builder<'_> {
             );
         }
     }
+}
+
+/// A small triangle off the middle of a traffic light, pointing the way it faces.
+///
+/// Lanelet2 draws a traffic light's linestring from left to right as seen by the
+/// driver it signals to, so the light faces the right-hand side of its own
+/// direction. That is exactly the convention a map gets wrong without anyone
+/// noticing, since a light drawn backwards looks the same from above — the arrow is
+/// there to make it visible. Level rather than up a slope, since a light faces along
+/// the ground; its base sits on the light. `None` for a light with no horizontal
+/// extent to take a direction from.
+fn facing_arrow(points: &[Point3]) -> Option<Vec<Point3>> {
+    let (middle, heading, length) = midpoint(points)?;
+    let flat = f64::hypot(heading[0], heading[1]);
+    if flat < 1e-9 {
+        return None;
+    }
+    let (ax, ay) = (heading[0] / flat, heading[1] / flat);
+    let size = length.clamp(0.8, 2.0);
+    let half = size * 0.45;
+    let at = |forward: f64, across: f64| {
+        [
+            middle[0] + ay * forward + ax * across,
+            middle[1] - ax * forward + ay * across,
+            middle[2],
+        ]
+    };
+    Some(vec![at(size, 0.0), at(0.0, half), at(0.0, -half)])
 }
 
 /// One attribute's value, or the empty string when it is absent.
@@ -787,6 +842,60 @@ mod tests {
         assert_eq!(triangle[1][2], triangle[2][2], "the base is level across");
         // The base spreads horizontally: a Lanelet2 map says nothing about camber.
         assert!((triangle[1][1] - triangle[2][1]).abs() > 1.0);
+    }
+
+    /// A light drawn west to east signals to traffic coming from the south, so it
+    /// faces south: the right-hand side of its own direction.
+    #[test]
+    fn a_traffic_lights_arrow_points_to_the_right_of_its_linestring() {
+        let map = LaneletMap::new_map();
+        map.add(Primitive::LineString(line(
+            7,
+            &[[0.0, 10.0, 5.0], [2.0, 10.0, 5.0]],
+            &[("type", "traffic_light")],
+        )));
+        let facing = |options: &VizOptions| -> Vec<Shape> {
+            Scene::from_map(&map, options)
+                .shapes
+                .into_iter()
+                .filter(|s| s.layer == VizLayer::TrafficLightFacing)
+                .collect()
+        };
+        assert!(facing(&VizOptions::default()).is_empty(), "off by default");
+
+        let arrows = facing(&VizOptions {
+            traffic_light_facing: true,
+            ..VizOptions::default()
+        });
+        assert_eq!(arrows.len(), 1);
+        let arrow = &arrows[0];
+        assert_eq!(arrow.id, 7);
+        assert!(arrow.closed);
+        let [tip, back_left, back_right] = [arrow.points[0], arrow.points[1], arrow.points[2]];
+        assert!(
+            tip[1] < 10.0 - 1.0,
+            "tip at {tip:?} should be south of the light"
+        );
+        // The base sits on the light's midpoint, level with it.
+        assert!((back_left[1] - 10.0).abs() < 1e-9 && (back_right[1] - 10.0).abs() < 1e-9);
+        assert!(((back_left[0] + back_right[0]) / 2.0 - 1.0).abs() < 1e-9);
+        assert!(arrow.points.iter().all(|p| p[2] == 5.0));
+    }
+
+    #[test]
+    fn only_traffic_lights_get_a_facing_arrow() {
+        let map = one_lanelet_map();
+        let options = VizOptions {
+            traffic_light_facing: true,
+            ..VizOptions::default()
+        };
+        let scene = Scene::from_map(&map, &options);
+        assert!(
+            !scene
+                .shapes
+                .iter()
+                .any(|s| s.layer == VizLayer::TrafficLightFacing)
+        );
     }
 
     #[test]
