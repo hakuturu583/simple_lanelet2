@@ -17,7 +17,10 @@ use ll2_core::geometry::lanelet::{centerline_3d, mean_width_2d, outline_3d};
 use ll2_core::id::Id;
 use ll2_core::lanelet::Lanelet;
 use ll2_core::linestring::LineString;
-use ll2_core::map::{LaneletMap, as_area, as_lanelet, as_linestring, as_point};
+use ll2_core::map::{
+    LaneletMap, as_area, as_lanelet, as_linestring, as_point, as_regulatory_element,
+};
+use ll2_core::regelem::{RegElemKind, RuleParameter, roles};
 
 use crate::polyline::{Point3, midpoint, sample_along};
 use crate::style::{self, Palette, Style, StyleTable, Theme, VizLayer};
@@ -37,6 +40,9 @@ pub struct VizOptions {
     pub points: bool,
     /// A small arrow off each traffic light, pointing the way it faces.
     pub traffic_light_facing: bool,
+    /// A line from each traffic light to the stop line its regulatory element
+    /// names.
+    pub traffic_light_links: bool,
     /// Metres between driving-direction arrowheads along a centerline.
     pub arrow_spacing: f64,
 }
@@ -54,6 +60,7 @@ impl Default for VizOptions {
             direction_arrows: true,
             points: false,
             traffic_light_facing: false,
+            traffic_light_links: false,
             arrow_spacing: 25.0,
         }
     }
@@ -73,6 +80,7 @@ impl VizOptions {
             VizLayer::Direction => self.direction_arrows,
             VizLayer::Point => self.points,
             VizLayer::TrafficLightFacing => self.traffic_light_facing,
+            VizLayer::TrafficLightLink => self.traffic_light_links,
         }
     }
 }
@@ -173,6 +181,7 @@ impl Scene {
         builder.add_polygons(map);
         builder.add_linestrings(map);
         builder.add_points(map);
+        builder.add_traffic_light_links(map);
 
         let Builder {
             mut shapes, styles, ..
@@ -544,30 +553,145 @@ impl Builder<'_> {
             );
         }
     }
+
+    /// A line from each traffic light to each stop line of the regulatory element
+    /// that names it, midpoint to midpoint.
+    ///
+    /// The element is what says which light governs which stop line, and nothing
+    /// on the road does: two lights side by side over two stop lines look the same
+    /// whichever way round they are wired.
+    fn add_traffic_light_links(&mut self, map: &LaneletMap) {
+        if !self.options.wants_layer(VizLayer::TrafficLightLink) {
+            return;
+        }
+        let style = self
+            .styles
+            .intern(style::traffic_light_link_style(&self.palette));
+        for link in traffic_light_links(map) {
+            self.push_interned(
+                VizLayer::TrafficLightLink,
+                style,
+                link.regulatory_element,
+                link.label(),
+                vec![link.from, link.to],
+                false,
+            );
+        }
+    }
 }
 
-/// A small triangle off the middle of a traffic light, pointing the way it faces.
+/// One traffic light joined to one stop line by the regulatory element that names
+/// them both.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrafficLightLink {
+    pub regulatory_element: Id,
+    pub light: Id,
+    pub stop_line: Id,
+    /// The light's midpoint.
+    pub from: Point3,
+    /// The stop line's midpoint.
+    pub to: Point3,
+}
+
+impl TrafficLightLink {
+    pub fn label(&self) -> String {
+        format!(
+            "regulatory_element {} · traffic_light {} → stop_line {}",
+            self.regulatory_element, self.light, self.stop_line
+        )
+    }
+}
+
+/// Every traffic light in the map joined to every stop line its regulatory element
+/// names — each `refers` to each `ref_line`, midpoint to midpoint.
+///
+/// The element is what says which light governs which stop line, and nothing on the
+/// road does: two lights side by side over two stop lines look the same whichever
+/// way round they are wired. Public so every renderer draws the same links.
+pub fn traffic_light_links(map: &LaneletMap) -> Vec<TrafficLightLink> {
+    let mut links = Vec::new();
+    for primitive in map.regulatory_elements.all() {
+        let Some(regelem) = as_regulatory_element(&primitive) else {
+            continue;
+        };
+        // The kind rather than the tag: it is what the rest of the library calls a
+        // traffic light, Autoware's derived kind included.
+        if !regelem.kind().is_a(RegElemKind::TrafficLight) {
+            continue;
+        }
+        let middles = |role: &str| -> Vec<(Id, Point3)> {
+            regelem
+                .parameters_for(role)
+                .iter()
+                .filter_map(|parameter| match parameter {
+                    RuleParameter::LineString(line) | RuleParameter::Polygon(line) => {
+                        Some((line.id(), midpoint(&points_of(line))?.0))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let stop_lines = middles(roles::REF_LINE);
+        for (light, from) in middles(roles::REFERS) {
+            for (stop_line, to) in &stop_lines {
+                links.push(TrafficLightLink {
+                    regulatory_element: regelem.id(),
+                    light,
+                    stop_line: *stop_line,
+                    from,
+                    to: *to,
+                });
+            }
+        }
+    }
+    links
+}
+
+/// Where a traffic light is and which way it faces.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrafficLightFacing {
+    /// The light's midpoint, where an arrow showing it starts.
+    pub middle: Point3,
+    /// A level unit vector, the way the light faces.
+    pub facing: Point3,
+    /// How long an arrow showing it should be, in metres.
+    pub size: f64,
+}
+
+/// Where a traffic light is and which way it faces, from its points.
 ///
 /// Lanelet2 draws a traffic light's linestring from left to right as seen by the
 /// driver it signals to, so the light faces the right-hand side of its own
 /// direction. That is exactly the convention a map gets wrong without anyone
-/// noticing, since a light drawn backwards looks the same from above — the arrow is
-/// there to make it visible. Level rather than up a slope, since a light faces along
-/// the ground; its base sits on the light. `None` for a light with no horizontal
-/// extent to take a direction from.
-fn facing_arrow(points: &[Point3]) -> Option<Vec<Point3>> {
+/// noticing, since a light drawn backwards looks the same from above. Level rather
+/// than up a slope, since a light faces along the ground. `None` for a light with no
+/// horizontal extent to take a direction from. Public so every renderer agrees.
+pub fn traffic_light_facing(points: &[Point3]) -> Option<TrafficLightFacing> {
     let (middle, heading, length) = midpoint(points)?;
     let flat = f64::hypot(heading[0], heading[1]);
     if flat < 1e-9 {
         return None;
     }
-    let (ax, ay) = (heading[0] / flat, heading[1] / flat);
-    let size = length.clamp(0.8, 2.0);
+    Some(TrafficLightFacing {
+        middle,
+        facing: [heading[1] / flat, -heading[0] / flat, 0.0],
+        size: length.clamp(0.8, 2.0),
+    })
+}
+
+/// The triangle [`traffic_light_facing`] describes, its base on the light.
+fn facing_arrow(points: &[Point3]) -> Option<Vec<Point3>> {
+    let TrafficLightFacing {
+        middle,
+        facing: [fx, fy, _],
+        size,
+    } = traffic_light_facing(points)?;
     let half = size * 0.45;
+    // Across the light is the facing turned back a quarter turn.
     let at = |forward: f64, across: f64| {
         [
-            middle[0] + ay * forward + ax * across,
-            middle[1] - ax * forward + ay * across,
+            middle[0] + fx * forward - fy * across,
+            middle[1] + fy * forward + fx * across,
             middle[2],
         ]
     };
@@ -880,6 +1004,79 @@ mod tests {
         assert!((back_left[1] - 10.0).abs() < 1e-9 && (back_right[1] - 10.0).abs() < 1e-9);
         assert!(((back_left[0] + back_right[0]) / 2.0 - 1.0).abs() < 1e-9);
         assert!(arrow.points.iter().all(|p| p[2] == 5.0));
+    }
+
+    /// Two lights over one stop line, named by one regulatory element: two links,
+    /// each from a light's midpoint to the stop line's.
+    #[test]
+    fn a_traffic_light_is_linked_to_the_stop_line_its_element_names() {
+        use ll2_core::regelem::RegulatoryElement;
+        let map = LaneletMap::new_map();
+        let lights = [
+            line(
+                7,
+                &[[0.0, 20.0, 5.0], [2.0, 20.0, 5.0]],
+                &[("type", "traffic_light")],
+            ),
+            line(
+                8,
+                &[[4.0, 20.0, 5.0], [6.0, 20.0, 5.0]],
+                &[("type", "traffic_light")],
+            ),
+        ];
+        let stop = line(
+            9,
+            &[[0.0, 0.0, 0.0], [6.0, 0.0, 0.0]],
+            &[("type", "stop_line")],
+        );
+        let parameters = [
+            (
+                roles::REFERS.to_owned(),
+                lights
+                    .iter()
+                    .cloned()
+                    .map(RuleParameter::LineString)
+                    .collect(),
+            ),
+            (
+                roles::REF_LINE.to_owned(),
+                vec![RuleParameter::LineString(stop)],
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let attributes: AttributeMap = [
+            ("type".to_owned(), Attribute::new("regulatory_element")),
+            ("subtype".to_owned(), Attribute::new("traffic_light")),
+        ]
+        .into_iter()
+        .collect();
+        map.add(Primitive::RegulatoryElement(RegulatoryElement::new(
+            RegElemKind::TrafficLight,
+            10,
+            attributes,
+            parameters,
+        )));
+
+        let links = |options: &VizOptions| -> Vec<Shape> {
+            Scene::from_map(&map, options)
+                .shapes
+                .into_iter()
+                .filter(|s| s.layer == VizLayer::TrafficLightLink)
+                .collect()
+        };
+        assert!(links(&VizOptions::default()).is_empty(), "off by default");
+
+        let links = links(&VizOptions {
+            traffic_light_links: true,
+            ..VizOptions::default()
+        });
+        assert_eq!(links.len(), 2);
+        assert!(links.iter().all(|s| s.id == 10 && !s.closed));
+        // In the order the element lists its lights.
+        assert_eq!(links[0].points, vec![[1.0, 20.0, 5.0], [3.0, 0.0, 0.0]]);
+        assert_eq!(links[1].points, vec![[5.0, 20.0, 5.0], [3.0, 0.0, 0.0]]);
+        assert!(links[0].label.contains("stop_line 9"));
     }
 
     #[test]

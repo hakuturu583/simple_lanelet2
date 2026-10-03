@@ -1,8 +1,8 @@
 //! Renders a Lanelet2 `.osm` map into a Rerun recording.
 //!
 //! ```text
-//! cargo run -p ll2-rerun --example osm2rrd -- map.osm map.rrd [--light] [--centerlines] [--points]
-//! cargo run -p ll2-rerun --example osm2rrd -- map.osm --spawn
+//! cargo run -p ll2-rerun --example osm2rrd -- map.osm map.rrd [--light] [--centerlines] [--points] [--traffic-light-facing] [--traffic-light-link]
+//! cargo run -p ll2-rerun --example osm2rrd -- map.osm --spawn [same flags]
 //! ```
 
 use std::process::ExitCode;
@@ -25,7 +25,8 @@ fn main() -> ExitCode {
     if positional.len() != if spawn { 1 } else { 2 } {
         eprintln!(
             "usage: osm2rrd <map.osm> <out.rrd> [--light] [--centerlines] [--points]\n\
-             \x20      osm2rrd <map.osm> --spawn [--light] [--centerlines] [--points]"
+             \x20              [--traffic-light-facing] [--traffic-light-link]\n\
+             \x20      osm2rrd <map.osm> --spawn [same flags]"
         );
         return ExitCode::FAILURE;
     }
@@ -39,6 +40,8 @@ fn main() -> ExitCode {
             },
             centerlines: has("--centerlines"),
             points: has("--points"),
+            traffic_light_facing: has("--traffic-light-facing"),
+            traffic_light_links: has("--traffic-light-link"),
             ..VizOptions::default()
         },
         ..MapOptions::default()

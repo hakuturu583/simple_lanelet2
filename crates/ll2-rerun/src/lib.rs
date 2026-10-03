@@ -51,7 +51,7 @@
 //!
 //! # What the map looks like
 //!
-//! Eight entities under one root, named by [`VizLayer`] — the same eight layers, in
+//! One entity per layer under one root, named by [`VizLayer`] — the same layers, in
 //! the same painter's order, as the SVG writer's groups and the web demo's toggles.
 //! Colours come from the same tag-to-style table, so a `line_thin`/`dashed` boundary
 //! is the same hairline here as it is there, and a `stop_line` is the same red bar.

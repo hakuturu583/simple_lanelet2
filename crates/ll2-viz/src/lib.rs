@@ -70,7 +70,10 @@ pub mod svg;
 pub mod view;
 
 pub use polyline::{Point3, sample_along};
-pub use scene::{MapStats, Scene, Shape, VizOptions, attribute, describe, describe_lanelet};
+pub use scene::{
+    MapStats, Scene, Shape, TrafficLightFacing, TrafficLightLink, VizOptions, attribute, describe,
+    describe_lanelet, traffic_light_facing, traffic_light_links,
+};
 pub use source::{CoordinateSource, LoadOptions, LoadedMap, load_osm_str};
 pub use style::{Color, Palette, Style, StyleTable, Theme, VizLayer};
 pub use svg::{SvgOptions, render_svg};

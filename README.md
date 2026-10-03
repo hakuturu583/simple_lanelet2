@@ -154,7 +154,7 @@ to whatever is drawing them.
 `ll2-rerun` is the one that does not read a `Scene`, and the reason survives that: it
 builds surfaces rather than outlines — ear-clipped rings, lanelets stitched into
 ribbons — and hands Rerun the map in three dimensions rather than a projection of it,
-one entity per layer under `map/`, so the eight groups the SVG writer emits are eight
+one entity per layer under `map/`, so the groups the SVG writer emits are the
 checkboxes in the viewer's blueprint tree. Painter's order becomes two centimetres of
 real separation per layer, which is what stops a lane marking and the road it is
 painted on from fighting over the same depth value.

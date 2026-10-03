@@ -1,7 +1,7 @@
 //! The viewer layout: one Spatial3D view, looking at the map.
 //!
-//! Without a blueprint the viewer guesses, and its guess for a store holding eight
-//! sibling entities is eight views. A blueprint is what makes opening an `.rrd`
+//! Without a blueprint the viewer guesses, and its guess for a store holding a dozen
+//! sibling entities is a dozen views. A blueprint is what makes opening an `.rrd`
 //! written by this crate show a map rather than a contact sheet of one.
 
 use rerun::blueprint::{Blueprint, Spatial3DView};
