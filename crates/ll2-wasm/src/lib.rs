@@ -350,6 +350,7 @@ pub struct SceneData {
     layers: Vec<u32>,
     closed: Vec<u8>,
     ids: Vec<i64>,
+    scene_order: Vec<u32>,
     labels: Vec<String>,
     centre: [f64; 2],
     min: [f64; 2],
@@ -386,6 +387,7 @@ impl SceneData {
         let mut layers = Vec::with_capacity(shapes.len());
         let mut closed = Vec::with_capacity(shapes.len());
         let mut ids = Vec::with_capacity(shapes.len());
+        let mut scene_order = Vec::with_capacity(shapes.len());
         let mut labels = Vec::with_capacity(shapes.len());
 
         // Painter's order, so a renderer that walks these arrays start to end draws
@@ -408,6 +410,7 @@ impl SceneData {
             layers.push(shape.layer.index());
             closed.push(u8::from(shape.closed));
             ids.push(shape.id);
+            scene_order.push(index as u32);
             labels.push(std::mem::take(&mut shape.label));
         }
         offsets.push((coords.len() / 2) as u32);
@@ -419,6 +422,7 @@ impl SceneData {
             layers,
             closed,
             ids,
+            scene_order,
             labels,
             centre,
             min: bounds.min,
@@ -465,6 +469,15 @@ impl SceneData {
     /// on the JavaScript side, and a search for one would find the other.
     pub fn ids(&self) -> Vec<i64> {
         self.ids.clone()
+    }
+
+    /// Each shape's position in the scene before the camera sorted it by depth.
+    ///
+    /// Unlike its position in these arrays, this does not move when the camera
+    /// does, so it is what tells apart shapes that share an id and a layer — a
+    /// lanelet's arrows — across a rebuild from another viewpoint.
+    pub fn scene_order(&self) -> Vec<u32> {
+        self.scene_order.clone()
     }
 
     pub fn shape_count(&self) -> usize {
@@ -729,6 +742,21 @@ mod tests {
         assert!(data.label(0).contains(' '));
         assert_eq!(data.label(data.shape_count()), "");
         assert_eq!(data.label(usize::MAX), "");
+    }
+
+    /// The viewer inverts this to list a primitive's shapes in an order no camera
+    /// changes, so it has to name every shape exactly once.
+    #[test]
+    fn scene_order_is_a_permutation_and_the_identity_from_above() {
+        let handle = LaneletMapHandle::parse(MAP, "auto").unwrap();
+        let mut options = SceneOptions::new();
+        let plan = handle.build_scene(&options).scene_order();
+        assert_eq!(plan, (0..plan.len() as u32).collect::<Vec<_>>());
+
+        options.three_d = true;
+        let mut tilted = handle.build_scene(&options).scene_order();
+        tilted.sort_unstable();
+        assert_eq!(tilted, plan);
     }
 
     #[test]
