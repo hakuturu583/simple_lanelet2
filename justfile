@@ -108,12 +108,14 @@ scene MAP OUT="scene.json" NAME="map":
     cargo run --release -p ll2-viz --example scene2json -- {{MAP}} {{OUT}} {{NAME}}
 
 # A map to a Rerun recording, keeping the elevations. Open it with `rerun map.rrd`.
-rrd MAP OUT="map.rrd":
-    cargo run --release -p ll2-rerun --example osm2rrd -- {{MAP}} {{OUT}}
+# FLAGS turn on the optional layers: --centerlines, --points,
+# --traffic-light-facing, --traffic-light-link. OUT must be given when FLAGS are.
+rrd MAP OUT="map.rrd" *FLAGS:
+    cargo run --release -p ll2-rerun --example osm2rrd -- {{MAP}} {{OUT}} {{FLAGS}}
 
 # The same map, straight into a viewer. Needs `rerun` on PATH.
-rrd-view MAP:
-    cargo run --release -p ll2-rerun --example osm2rrd -- {{MAP}} --spawn
+rrd-view MAP *FLAGS:
+    cargo run --release -p ll2-rerun --example osm2rrd -- {{MAP}} --spawn {{FLAGS}}
 
 fmt:
     cargo fmt --all
