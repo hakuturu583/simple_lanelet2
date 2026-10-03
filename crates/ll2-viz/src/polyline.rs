@@ -71,6 +71,33 @@ pub fn arc_lengths(points: &[Point3]) -> Option<(Vec<f64>, f64)> {
     (total > 0.0 && total.is_finite()).then_some((lengths, total))
 }
 
+/// The point halfway along a polyline, the unit heading of the segment it lies on,
+/// and the polyline's whole length — or `None` for one with no length.
+pub fn midpoint(points: &[Point3]) -> Option<(Point3, Point3, f64)> {
+    let (lengths, total) = arc_lengths(points)?;
+    let mut remaining = total / 2.0;
+    for (index, length) in lengths.iter().enumerate() {
+        if *length <= 0.0 {
+            continue;
+        }
+        if remaining <= *length || index + 1 == lengths.len() {
+            let (start, end) = (points[index], points[index + 1]);
+            let heading = [
+                (end[0] - start[0]) / length,
+                (end[1] - start[1]) / length,
+                (end[2] - start[2]) / length,
+            ];
+            return Some((
+                lerp(start, end, (remaining / length).min(1.0)),
+                heading,
+                total,
+            ));
+        }
+        remaining -= length;
+    }
+    None
+}
+
 pub fn lerp(from: Point3, to: Point3, ratio: f64) -> Point3 {
     [
         from[0] + (to[0] - from[0]) * ratio,
@@ -115,6 +142,16 @@ mod tests {
         assert!(sample_along(&[[1.0, 1.0, 1.0]], 5.0).is_empty());
         assert!(arc_lengths(&[[0.0; 3]]).is_none());
         assert!(arc_lengths(&[[0.0; 3], [0.0; 3]]).is_none());
+    }
+
+    #[test]
+    fn the_midpoint_is_halfway_along_and_carries_its_segments_heading() {
+        let (middle, heading, length) =
+            midpoint(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 3.0, 0.0]]).unwrap();
+        assert_eq!(middle, [1.0, 1.0, 0.0]);
+        assert_eq!(heading, [0.0, 1.0, 0.0]);
+        assert_eq!(length, 4.0);
+        assert!(midpoint(&[[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]]).is_none());
     }
 
     #[test]

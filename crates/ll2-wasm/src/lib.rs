@@ -115,6 +115,7 @@ pub struct SceneOptions {
     pub centerlines: bool,
     pub direction_arrows: bool,
     pub points: bool,
+    pub traffic_light_facing: bool,
     /// Metres between driving-direction arrowheads.
     pub arrow_spacing: f64,
 
@@ -144,6 +145,7 @@ impl Default for SceneOptions {
             centerlines: defaults.centerlines,
             direction_arrows: defaults.direction_arrows,
             points: defaults.points,
+            traffic_light_facing: defaults.traffic_light_facing,
             arrow_spacing: defaults.arrow_spacing,
             // Off, but with the angles a "3D" button would want already in place, so
             // turning it on is one assignment rather than four.
@@ -177,6 +179,7 @@ impl SceneOptions {
             "centerline" => self.centerlines = on,
             "direction" => self.direction_arrows = on,
             "point" => self.points = on,
+            "traffic_light_facing" => self.traffic_light_facing = on,
             _ => {}
         }
     }
@@ -204,6 +207,7 @@ impl SceneOptions {
             centerlines: self.centerlines,
             direction_arrows: self.direction_arrows,
             points: self.points,
+            traffic_light_facing: self.traffic_light_facing,
             arrow_spacing: self.arrow_spacing,
         }
     }
@@ -690,6 +694,14 @@ mod tests {
         let hidden = [VizLayer::Bound.index(), VizLayer::Direction.index()];
         assert!(!data.layers().iter().any(|l| hidden.contains(l)));
         assert!(data.shape_count() > 0);
+    }
+
+    #[test]
+    fn traffic_light_facing_is_off_by_default_and_on_by_key() {
+        let mut options = SceneOptions::new();
+        assert!(!options.to_viz().traffic_light_facing);
+        options.set_layer("traffic_light_facing", true);
+        assert!(options.to_viz().traffic_light_facing);
     }
 
     #[test]
