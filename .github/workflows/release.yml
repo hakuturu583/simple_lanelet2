@@ -175,7 +175,9 @@ jobs:
   verify:
     name: test the tagged commit
     needs: [resolve]
-    if: needs.resolve.outputs.proceed == 'true'
+    # `release` is skipped on a tag push or a dispatch, and a skipped ancestor skips
+    # every job downstream unless its condition says otherwise -- hence `!cancelled()`.
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.resolve.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -214,7 +216,9 @@ jobs:
   verify-windows:
     name: test the tagged commit (windows)
     needs: [resolve]
-    if: needs.resolve.outputs.proceed == 'true'
+    # `release` is skipped on a tag push or a dispatch, and a skipped ancestor skips
+    # every job downstream unless its condition says otherwise -- hence `!cancelled()`.
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.resolve.outputs.proceed == 'true' }}
     runs-on: windows-latest
     defaults:
       run:
@@ -237,6 +241,7 @@ jobs:
   wheels:
     name: wheel (${{ matrix.os }} ${{ matrix.target }})
     needs: [resolve, verify, verify-windows]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.verify-windows.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -263,6 +268,7 @@ jobs:
   sdist:
     name: sdist
     needs: [resolve, verify]
+    if: ${{ !cancelled() && needs.verify.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -282,7 +288,7 @@ jobs:
   publish:
     name: publish to PyPI
     needs: [resolve, wheels, sdist]
-    if: needs.resolve.outputs.publish == 'true'
+    if: ${{ !cancelled() && needs.wheels.result == 'success' && needs.sdist.result == 'success' && needs.resolve.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -330,7 +336,7 @@ jobs:
   docker:
     name: publish the runtime image
     needs: [resolve, verify]
-    if: needs.resolve.outputs.publish == 'true'
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.resolve.outputs.publish == 'true' }}
     permissions:
       contents: read
       packages: write
