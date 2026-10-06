@@ -209,18 +209,47 @@ jobs:
           ./.venv/bin/python -m pytest tests/upstream tests/upstream-awext -q
           LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream tests/upstream-awext -q
 
+  # There is no Windows reference to diff against, so the Windows check is the one
+  # that holds there: the workspace's own tests and upstream's tests, unmodified.
+  verify-windows:
+    name: test the tagged commit (windows)
+    needs: [resolve]
+    if: needs.resolve.outputs.proceed == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v5
+      - run: cargo test --workspace
+      - name: upstream's tests, both modes
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv maturin pytest
+          uv run --no-sync --python .venv maturin develop --uv
+          ./.venv/Scripts/python -m pytest tests/upstream tests/upstream-awext -q
+          LANELET2_BUG_COMPAT=1 ./.venv/Scripts/python -m pytest tests/upstream tests/upstream-awext -q
+
   wheels:
-    name: wheel (${{ matrix.target }})
-    needs: [resolve, verify]
-    runs-on: ubuntu-latest
+    name: wheel (${{ matrix.os }} ${{ matrix.target }})
+    needs: [resolve, verify, verify-windows]
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        target: [x86_64, aarch64]
+        include:
+          - { os: linux, runner: ubuntu-latest, target: x86_64 }
+          - { os: linux, runner: ubuntu-latest, target: aarch64 }
+          - { os: windows, runner: windows-latest, target: x64 }
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.ref }}
       # abi3-py39, so one wheel per architecture serves 3.9 through 3.13.
+      # `manylinux` is ignored on Windows.
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
@@ -228,7 +257,7 @@ jobs:
           manylinux: auto
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ matrix.target }}
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}
           path: dist
 
   sdist:
@@ -239,9 +268,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.ref }}
-      # Only Linux wheels are built, because Linux is where this has been verified
-      # against the reference. The sdist is what lets anyone else build it -- it needs
-      # a Rust toolchain, which maturin bootstraps.
+      # Wheels are built for Linux and Windows. The sdist is what lets anyone else
+      # build it -- it needs a Rust toolchain, which maturin bootstraps.
       - uses: PyO3/maturin-action@v1
         with:
           command: sdist

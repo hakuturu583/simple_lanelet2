@@ -19,6 +19,20 @@ lanelet = Lanelet(getId(), left, right)
 the reference's public API** — 633 names across every module and class — and
 upstream's own test suite passes against it **unmodified**, in both modes.
 
+## Installation
+
+Wheels are published to PyPI for Linux (`x86_64`, `aarch64`) and Windows (`x64`),
+one abi3 wheel per platform covering CPython 3.9 through 3.13:
+
+```bash
+pip install simple-lanelet2      # or: uv pip install simple-lanelet2
+```
+
+On Windows the library is checked by building the wheel, installing it clean and
+running upstream's own tests against it in both modes. The three-way diff against
+the reference runs on Linux only, because the reference `lanelet2` wheel exists only
+for Linux.
+
 ## Bug-compatibility mode
 
 Upstream has a number of outright defects — a `__hash__` that contradicts `__eq__`, a
