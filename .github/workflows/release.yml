@@ -238,16 +238,43 @@ jobs:
           ./.venv/Scripts/python -m pytest tests/upstream tests/upstream-awext -q
           LANELET2_BUG_COMPAT=1 ./.venv/Scripts/python -m pytest tests/upstream tests/upstream-awext -q
 
+  # Likewise for linux aarch64: the reference wheel is x86_64-only, so this is the
+  # workspace's tests and upstream's tests, on a native arm64 runner.
+  verify-arm:
+    name: test the tagged commit (linux aarch64)
+    needs: [resolve]
+    # `release` is skipped on a tag push or a dispatch, and a skipped ancestor skips
+    # every job downstream unless its condition says otherwise -- hence `!cancelled()`.
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.resolve.outputs.proceed == 'true' }}
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v5
+      - run: cargo test --workspace
+      - name: upstream's tests, both modes
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv maturin pytest
+          uv run --no-sync --python .venv maturin develop --uv
+          ./.venv/bin/python -m pytest tests/upstream tests/upstream-awext -q
+          LANELET2_BUG_COMPAT=1 ./.venv/bin/python -m pytest tests/upstream tests/upstream-awext -q
+
   wheels:
     name: wheel (${{ matrix.os }} ${{ matrix.target }})
-    needs: [resolve, verify, verify-windows]
-    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.verify-windows.result == 'success' }}
+    needs: [resolve, verify, verify-windows, verify-arm]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.verify-windows.result == 'success' && needs.verify-arm.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
+        # Every target on a runner of its own architecture, so the wheel that is
+        # uploaded is also the wheel that is tested below. aarch64 used to be
+        # cross-compiled from x86_64 and published without ever being imported.
         include:
           - { os: linux, runner: ubuntu-latest, target: x86_64 }
-          - { os: linux, runner: ubuntu-latest, target: aarch64 }
+          - { os: linux, runner: ubuntu-24.04-arm, target: aarch64 }
           - { os: windows, runner: windows-latest, target: x64 }
     steps:
       - uses: actions/checkout@v4
@@ -260,6 +287,18 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: auto
+      # The artifact itself, installed clean and run against upstream's tests --
+      # not a rebuild of the same sources.
+      - uses: astral-sh/setup-uv@v5
+      - name: test the wheel that is about to be published
+        shell: bash
+        run: |
+          uv venv --python 3.11 "$RUNNER_TEMP/fresh"
+          uv pip install --python "$RUNNER_TEMP/fresh" dist/*.whl pytest
+          PY="$RUNNER_TEMP/fresh/bin/python"
+          [ -x "$PY" ] || PY="$RUNNER_TEMP/fresh/Scripts/python"
+          "$PY" -m pytest tests/upstream tests/upstream-awext -q
+          LANELET2_BUG_COMPAT=1 "$PY" -m pytest tests/upstream tests/upstream-awext -q
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.os }}-${{ matrix.target }}
