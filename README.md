@@ -28,10 +28,11 @@ one abi3 wheel per platform covering CPython 3.9 through 3.13:
 pip install simple-lanelet2      # or: uv pip install simple-lanelet2
 ```
 
-On Windows the library is checked by building the wheel, installing it clean and
-running upstream's own tests against it in both modes. The three-way diff against
-the reference runs on Linux only, because the reference `lanelet2` wheel exists only
-for Linux.
+Every wheel is built on a runner of its own architecture, and the exact file that
+goes to PyPI is installed clean and run against upstream's own tests in both modes
+first. On Windows and linux `aarch64` that is the whole check; the three-way diff
+against the reference runs on linux `x86_64` only, because that is the only platform
+the reference `lanelet2` wheel exists for.
 
 ## Bug-compatibility mode
 

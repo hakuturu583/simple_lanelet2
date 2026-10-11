@@ -2,6 +2,7 @@
 # three directions rather than to run a test suite.
 #
 #   check     the parts that need nothing but this repository
+#             (and the same build plus upstream's tests on Windows and linux aarch64)
 #   diff      the harness against the PyPI reference -- 20 cases, no ROS anywhere
 #   upstream  upstream's *own* tests, fetched fresh, run unmodified against us
 #   oracle    the remaining 12 cases, which need the Autoware reference, via pixi
@@ -129,6 +130,54 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-windows
+          path: target/wheels/*.whl
+
+  # The aarch64 wheel on PyPI used to be cross-compiled and never run. This builds it
+  # on a native arm64 runner and checks it the same way as Windows: the reference
+  # lanelet2 wheel is x86_64-only, so there is nothing to diff against here either.
+  linux-arm:
+    name: linux aarch64 (rust + wheel + upstream tests)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: build the wheel
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv maturin
+          uv run --no-sync --python .venv maturin build --release --out target/wheels
+
+      - name: install it clean and import everything
+        run: |
+          uv venv --python 3.11 "$RUNNER_TEMP/fresh"
+          uv pip install --python "$RUNNER_TEMP/fresh" target/wheels/*.whl pytest
+          "$RUNNER_TEMP/fresh/bin/python" - <<'PY'
+          import platform
+          assert platform.machine() == "aarch64", platform.machine()
+          import lanelet2, lanelet2.core, lanelet2.geometry, lanelet2.io
+          import lanelet2.matching, lanelet2.projection, lanelet2.routing, lanelet2.traffic_rules
+          import autoware_lanelet2_extension_python.regulatory_elements as r
+          import autoware_lanelet2_extension_python.utility.query as q
+          import autoware_lanelet2_extension_python.utility.utilities as u
+          from autoware_lanelet2_extension_python.projection import MGRSProjector, TransverseMercatorProjector
+          assert len([n for n in dir(r) if n[0].isupper()]) == 8
+          print("clean install ok:", len(q.__all__), "queries,", len(u.__all__), "utilities")
+          PY
+
+      - name: upstream's tests, vendored copies, both modes
+        run: |
+          "$RUNNER_TEMP/fresh/bin/python" -m pytest tests/upstream tests/upstream-awext -q
+          LANELET2_BUG_COMPAT=1 "$RUNNER_TEMP/fresh/bin/python" -m pytest tests/upstream tests/upstream-awext -q
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-aarch64
           path: target/wheels/*.whl
 
   diff:
