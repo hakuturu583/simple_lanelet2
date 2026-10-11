@@ -151,3 +151,11 @@ reason = """\
 getConflictingLanelets' binding wants a graph type Python cannot produce, so it \
 cannot be called in the reference. Repaired by default, ArgumentError under \
 bug-compat."""
+
+[[entry]]
+case = "1400_aw_utilities"
+key = "fine_duplicate"
+reason = """\
+generateFineCenterline interpolates along a zero-length bound segment (two points \
+on one spot) upstream, dividing zero by zero, so the centerline comes out NaN. \
+Repaired by default (the segment is a point), NaN under bug-compat."""

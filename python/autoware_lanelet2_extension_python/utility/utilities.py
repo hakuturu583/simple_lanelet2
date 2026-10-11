@@ -58,7 +58,13 @@ def _nearest_index_pair(accumulated, target):
 
 
 def _resample_points(linestring, num_segments):
-    """`num_segments + 1` points spaced evenly by arc length along a linestring."""
+    """`num_segments + 1` points spaced evenly by arc length along a linestring.
+
+    A linestring may step from one point to another on the very same spot. Upstream
+    interpolates along that zero-length segment too, dividing zero by zero, and the
+    resampled point -- so the lanelet's whole fine centerline, and its length -- comes
+    out NaN. Repaired by default: such a segment is a point. Bug-compat keeps the NaN.
+    """
     line_length = _length(linestring)
     accumulated = _accumulated_lengths(linestring)
     if len(accumulated) < 2:
@@ -71,7 +77,12 @@ def _resample_points(linestring, num_segments):
         back_point = linestring[back]
         front_point = linestring[front]
         segment = accumulated[front] - accumulated[back]
-        ratio = (target - accumulated[back]) / segment
+        if segment > 0.0:
+            ratio = (target - accumulated[back]) / segment
+        elif lanelet2.BUG_COMPAT:
+            ratio = float("nan")  # upstream's 0 / 0
+        else:
+            ratio = 0.0
         points.append(
             (
                 back_point.x + (front_point.x - back_point.x) * ratio,

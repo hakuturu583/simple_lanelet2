@@ -129,6 +129,10 @@ upstream, where registration happens when its shared library loads. See
   and `insert` does not overwrite, so only the first of several survives.
 - `Crosswalk.addCrosswalkArea` writes to role `crosswalk` while `crosswalkAreas()`
   reads `crosswalk_polygon`, so an added area is invisible to its own getter.
+- `generateFineCenterline` (and so `overwriteLaneletsCenterline`) interpolates along
+  a bound segment of length zero -- two points on one spot -- dividing zero by zero,
+  so the lanelet's fine centerline and its length come out NaN. Repaired: such a
+  segment is a point.
 
 ### Not reproducible
 
