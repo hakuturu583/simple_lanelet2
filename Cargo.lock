@@ -1917,7 +1917,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "ll2-core"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "parking_lot",
  "rstar",
@@ -1925,7 +1925,7 @@ dependencies = [
 
 [[package]]
 name = "ll2-io"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "ll2-core",
  "ll2-projection",
@@ -1934,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "ll2-matching"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "ll2-core",
  "ll2-traffic-rules",
@@ -1942,11 +1942,11 @@ dependencies = [
 
 [[package]]
 name = "ll2-projection"
-version = "1.2.0"
+version = "1.2.1"
 
 [[package]]
 name = "ll2-python"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "ll2-core",
  "ll2-io",
@@ -1959,7 +1959,7 @@ dependencies = [
 
 [[package]]
 name = "ll2-rerun"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "ll2-core",
  "ll2-viz",
@@ -1968,7 +1968,7 @@ dependencies = [
 
 [[package]]
 name = "ll2-routing"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "ll2-core",
  "ll2-traffic-rules",
@@ -1976,14 +1976,14 @@ dependencies = [
 
 [[package]]
 name = "ll2-traffic-rules"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "ll2-core",
 ]
 
 [[package]]
 name = "ll2-viz"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "ll2-core",
  "ll2-io",
@@ -1992,7 +1992,7 @@ dependencies = [
 
 [[package]]
 name = "ll2-wasm"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "console_error_panic_hook",
  "ll2-core",
