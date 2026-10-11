@@ -35,6 +35,25 @@ def coordinates(primitives):
     return [[p.x, p.y, p.z] for p in primitives]
 
 
+def _lanelet_with_duplicate_point():
+    """A 10 m lanelet whose left bound starts with the same point drawn twice."""
+    from lanelet2.core import Lanelet, LineString3d, Point3d, getId
+
+    left = LineString3d(
+        getId(),
+        [
+            Point3d(getId(), 0.0, 1.0, 0.0),
+            Point3d(getId(), 0.0, 1.0, 0.0),
+            Point3d(getId(), 5.0, 1.0, 0.0),
+            Point3d(getId(), 10.0, 1.0, 0.0),
+        ],
+    )
+    right = LineString3d(
+        getId(), [Point3d(getId(), 0.0, -1.0, 0.0), Point3d(getId(), 10.0, -1.0, 0.0)]
+    )
+    return Lanelet(getId(), left, right)
+
+
 def main():
     map_ = load(
         __import__("canon").data_path("mapping_example.osm"),
@@ -44,6 +63,10 @@ def main():
     probe = lanelets[:3]
 
     # --- resampling ---------------------------------------------------------------
+    # A bound that steps from one point to another on the very same spot: upstream
+    # divides zero by zero there and the fine centerline comes out NaN.
+    duplicate = _lanelet_with_duplicate_point()
+    emit("fine_duplicate", coordinates(utilities.generateFineCenterline(duplicate, 1.0)))
     for lanelet in probe:
         key = lanelet.id
         emit("fine_%d" % key, coordinates(utilities.generateFineCenterline(lanelet)))
