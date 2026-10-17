@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use crate::attribute::AttributeMap;
 use crate::fmt::{make_repr, ostream_double};
 use crate::id::{INVAL_ID, Id};
-use crate::refs::{Attrs, CoordView, Coords, attrs, coords, geometry_changed};
+use crate::refs::{Attrs, CoordView, Coords, attrs, coords, geometry_changed, references_changed};
 
 /// The storage behind every handle to one point.
 ///
@@ -60,6 +60,7 @@ impl Point {
 
     pub fn set_id(&self, id: Id) {
         self.data.id.store(id, Ordering::Relaxed);
+        references_changed();
     }
 
     pub fn x(&self) -> f64 {

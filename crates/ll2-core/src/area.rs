@@ -19,7 +19,7 @@ use crate::attribute::AttributeMap;
 use crate::compound::CompoundLineString;
 use crate::id::Id;
 use crate::linestring::LineString;
-use crate::refs::{Attrs, attrs, geometry_changed};
+use crate::refs::{Attrs, attrs, geometry_changed, references_changed};
 use crate::regelem::RegulatoryElement;
 
 /// A hole: one closed ring, assembled from consecutive linestrings.
@@ -72,6 +72,7 @@ impl Area {
 
     pub fn set_id(&self, id: Id) {
         self.data.id.store(id, Ordering::Relaxed);
+        references_changed();
     }
 
     pub fn attributes(&self) -> &Attrs {
@@ -91,6 +92,7 @@ impl Area {
         *self.data.outer_polygon.write() = CompoundLineString::new(outer.clone());
         *self.data.outer.write() = outer;
         geometry_changed();
+        references_changed();
     }
 
     pub fn inner_bounds(&self) -> Vec<InnerBound> {
@@ -104,6 +106,7 @@ impl Area {
             .collect();
         *self.data.inner.write() = inner;
         geometry_changed();
+        references_changed();
     }
 
     pub fn outer_bound_polygon(&self) -> CompoundLineString {
@@ -120,6 +123,7 @@ impl Area {
 
     pub fn add_regulatory_element(&self, regelem: RegulatoryElement) {
         self.data.regelems.write().push(regelem);
+        references_changed();
     }
 
     pub fn remove_regulatory_element(&self, regelem: &RegulatoryElement) -> bool {
@@ -127,6 +131,7 @@ impl Area {
         match regelems.iter().position(|held| held.is_same_data(regelem)) {
             Some(index) => {
                 regelems.remove(index);
+                references_changed();
                 true
             }
             None => false,
