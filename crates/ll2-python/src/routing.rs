@@ -345,8 +345,14 @@ impl PyRoutingGraph {
         } else {
             return Err(argument_error("RoutingGraph", "__init__"));
         };
+        // The build reads only Rust-owned data (the map, the rules and the cost
+        // models are all shared Rust values), so other Python threads may run
+        // while it does. On a city map it takes seconds.
+        let graph = laneletMap
+            .py()
+            .detach(|| RoutingGraph::build(&map, rules, &costs));
         Ok(PyRoutingGraph {
-            graph: Arc::new(RoutingGraph::build(&map, rules, &costs)),
+            graph: Arc::new(graph),
         })
     }
 
