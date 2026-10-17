@@ -13,5 +13,4 @@ ll2-core.workspace = true
 ll2-traffic-rules.workspace = true
 
 [dev-dependencies]
-ll2-io.workspace = true
-ll2-projection.workspace = true
+ll2-viz.workspace = true

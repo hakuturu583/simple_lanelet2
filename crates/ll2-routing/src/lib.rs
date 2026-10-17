@@ -96,22 +96,46 @@ pub struct RoutingGraph {
     passable: Arc<LaneletMap>,
 }
 
-/// Which vertices could pass the builder's identity-based tests.
+/// Which vertices could pass the builder's pairwise tests.
 ///
 /// `follows` and `left_of` compare bounds and points by identity, so the vertices
-/// a lanelet can relate to are found by hashing those identities. Every method
-/// returns vertex indices in ascending order, so a sweep over them visits pairs in
-/// the same order as a sweep over all vertices.
+/// a lanelet can relate to are found by hashing those identities; an overlap
+/// needs the boxes to meet, found through the passable submap's spatial index.
+/// Every method returns vertex indices in ascending order, so a sweep over them
+/// visits pairs in the same order as a sweep over all vertices.
 struct PairIndex {
+    /// Vertex by lanelet identity and direction.
+    by_identity: HashMap<(usize, bool), usize>,
     /// Vertices by the identity of their left and right bounds' first points.
     by_front: HashMap<(usize, usize), Vec<usize>>,
     /// Vertices by the identity (view, so orientation included) of each bound.
     by_left_bound: HashMap<usize, Vec<usize>>,
     by_right_bound: HashMap<usize, Vec<usize>>,
+    /// Every vertex, when the index stands in for an all-pairs sweep.
+    #[cfg(test)]
+    every: Option<Vec<usize>>,
+}
+
+/// Which pairs of vertices the builder tests.
+enum Sweep {
+    /// Only pairs the index says could pass.
+    Indexed,
+    /// Every pair: the original construction, kept to check the indexed one
+    /// against.
+    #[cfg(test)]
+    AllPairs,
 }
 
 impl PairIndex {
-    fn new(lanelets: &[Lanelet]) -> Self {
+    fn new(lanelets: &[Lanelet], sweep: Sweep) -> Self {
+        // Outside tests there is no other sweep.
+        #[cfg(not(test))]
+        let Sweep::Indexed = sweep;
+        let by_identity = lanelets
+            .iter()
+            .enumerate()
+            .map(|(index, lanelet)| ((lanelet.identity(), lanelet.is_inverted()), index))
+            .collect();
         let mut by_front: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
         let mut by_left_bound: HashMap<usize, Vec<usize>> = HashMap::new();
         let mut by_right_bound: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -133,15 +157,31 @@ impl PairIndex {
                 .push(position);
         }
         PairIndex {
+            by_identity,
             by_front,
             by_left_bound,
             by_right_bound,
+            #[cfg(test)]
+            every: match sweep {
+                Sweep::Indexed => None,
+                Sweep::AllPairs => Some((0..lanelets.len()).collect()),
+            },
         }
+    }
+
+    fn find(&self, lanelet: &Lanelet) -> Option<usize> {
+        self.by_identity
+            .get(&(lanelet.identity(), lanelet.is_inverted()))
+            .copied()
     }
 
     /// Candidates for `follows(lanelet, candidate)`: both bounds must continue
     /// from the very points `lanelet` ends on.
     fn followers(&self, lanelet: &Lanelet) -> &[usize] {
+        #[cfg(test)]
+        if let Some(every) = &self.every {
+            return every;
+        }
         let (left, right) = (lanelet.left_bound(), lanelet.right_bound());
         match (left.back(), right.back()) {
             (Some(l), Some(r)) => self
@@ -155,6 +195,10 @@ impl PairIndex {
     /// Candidates for `left_of(candidate, lanelet)` or `right_of(candidate, lanelet)`:
     /// a neighbour shares the bound between them as the very same view.
     fn beside(&self, lanelet: &Lanelet) -> Vec<usize> {
+        #[cfg(test)]
+        if let Some(every) = &self.every {
+            return every.clone();
+        }
         let mut positions = Vec::new();
         if let Some(found) = self.by_right_bound.get(&lanelet.left_bound().identity()) {
             positions.extend(found);
@@ -166,17 +210,31 @@ impl PairIndex {
         positions.dedup();
         positions
     }
-}
 
-/// Which pairs of vertices the builder tests.
-#[derive(Clone, Copy)]
-enum Sweep {
-    /// Only pairs the indices say could pass.
-    Indexed,
-    /// Every pair: the original construction, kept to check the indexed one
-    /// against.
-    #[cfg(test)]
-    AllPairs,
+    /// Candidates for a conflict with `lanelet`: their boxes meet its box in
+    /// `passable`, or they are its other direction, which conflicts whatever its
+    /// shape.
+    fn overlapping(&self, lanelet: &Lanelet, passable: &LaneletMap) -> Vec<usize> {
+        #[cfg(test)]
+        if let Some(every) = &self.every {
+            return every.clone();
+        }
+        let mut positions: Vec<usize> = passable
+            .lanelets
+            .search(&bbox::of_lanelet_2d(lanelet))
+            .into_iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Lanelet(hit) => Some(hit),
+                _ => None,
+            })
+            .chain([lanelet.invert()])
+            .flat_map(|hit| [self.find(&hit), self.find(&hit.invert())])
+            .flatten()
+            .collect();
+        positions.sort_unstable();
+        positions.dedup();
+        positions
+    }
 }
 
 impl RoutingGraph {
@@ -225,17 +283,6 @@ impl RoutingGraph {
         }
 
         let mut graph = Graph::new(lanelets.len(), costs.len());
-        let index_of: HashMap<(usize, bool), usize> = lanelets
-            .iter()
-            .enumerate()
-            .map(|(index, lanelet)| ((lanelet.identity(), lanelet.is_inverted()), index))
-            .collect();
-        let find = |lanelet: &Lanelet| -> Option<usize> {
-            index_of
-                .get(&(lanelet.identity(), lanelet.is_inverted()))
-                .copied()
-        };
-
         // Every pairwise test below is still made, and in the original (from, to)
         // order, so the edges come out exactly as an all-pairs sweep would add
         // them. The indices only skip pairs the test is certain to reject:
@@ -243,18 +290,11 @@ impl RoutingGraph {
         // boxes to meet (found through `passable`'s spatial index). On a city map
         // that is the difference between ~40M pair tests per sweep and a few per
         // lanelet.
-        let candidates = PairIndex::new(&lanelets);
-        #[cfg(test)]
-        let every = || (0..lanelets.len()).collect::<Vec<usize>>();
+        let candidates = PairIndex::new(&lanelets, sweep);
 
         // --- successors ----------------------------------------------------
         for (from, lanelet) in lanelets.iter().enumerate() {
-            let followers = match sweep {
-                Sweep::Indexed => candidates.followers(lanelet).to_vec(),
-                #[cfg(test)]
-                Sweep::AllPairs => every(),
-            };
-            for to in followers {
+            for &to in candidates.followers(lanelet) {
                 let candidate = &lanelets[to];
                 if from == to || !llgeom::follows(lanelet, candidate) {
                     continue;
@@ -271,12 +311,7 @@ impl RoutingGraph {
 
         // --- sideways ------------------------------------------------------
         for (from, lanelet) in lanelets.iter().enumerate() {
-            let beside = match sweep {
-                Sweep::Indexed => candidates.beside(lanelet),
-                #[cfg(test)]
-                Sweep::AllPairs => every(),
-            };
-            for to in beside {
+            for to in candidates.beside(lanelet) {
                 let candidate = &lanelets[to];
                 if from == to {
                     continue;
@@ -334,30 +369,7 @@ impl RoutingGraph {
 
         // --- conflicts -----------------------------------------------------
         for (from, lanelet) in lanelets.iter().enumerate() {
-            // A conflict needs the boxes to meet, unless the two are one
-            // lanelet's two directions, which conflict whatever their shape.
-            let overlapping = match sweep {
-                Sweep::Indexed => {
-                    let mut overlapping: Vec<usize> = passable
-                        .lanelets
-                        .search(&bbox::of_lanelet_2d(lanelet))
-                        .into_iter()
-                        .filter_map(|primitive| match primitive {
-                            Primitive::Lanelet(hit) => Some(hit),
-                            _ => None,
-                        })
-                        .chain([lanelet.invert()])
-                        .flat_map(|hit| [find(&hit), find(&hit.invert())])
-                        .flatten()
-                        .collect();
-                    overlapping.sort_unstable();
-                    overlapping.dedup();
-                    overlapping
-                }
-                #[cfg(test)]
-                Sweep::AllPairs => every(),
-            };
-            for to in overlapping {
+            for to in candidates.overlapping(lanelet, &passable) {
                 let candidate = &lanelets[to];
                 if from >= to {
                     continue;
@@ -936,10 +948,11 @@ mod tests {
         RoutingGraph::build(map, rules, &default_costs())
     }
 
-    fn load_map(path: &str, lat: f64, lon: f64) -> Arc<LaneletMap> {
-        let origin = ll2_projection::Origin::new(ll2_projection::GpsPoint::new(lat, lon, 0.0));
-        let projector = ll2_projection::Utm::new(origin, true, false).unwrap();
-        ll2_io::load(std::path::Path::new(path), &projector).unwrap()
+    fn load_map(path: &str) -> Arc<LaneletMap> {
+        let text = std::fs::read_to_string(path).unwrap();
+        ll2_viz::load_osm_str(&text, &ll2_viz::LoadOptions::default())
+            .unwrap()
+            .map
     }
 
     /// Builds `map`'s graph both ways for each participant and asserts the edges
@@ -950,17 +963,7 @@ mod tests {
         let bits = |edges: Vec<EdgeSummary>| -> Vec<_> {
             edges
                 .into_iter()
-                .map(|(from, from_inv, to, to_inv, relation, cost_id, cost)| {
-                    (
-                        from,
-                        from_inv,
-                        to,
-                        to_inv,
-                        relation,
-                        cost_id,
-                        cost.to_bits(),
-                    )
-                })
+                .map(|e| (e.0, e.1, e.2, e.3, e.4, e.5, e.6.to_bits()))
                 .collect()
         };
         let mut compared = 0;
@@ -988,7 +991,7 @@ mod tests {
     /// out exactly as the all-pairs construction builds it.
     #[test]
     fn the_indexed_build_matches_the_all_pairs_build_on_the_example_map() {
-        let map = load_map("../../tests/data/mapping_example.osm", 49.0, 8.4);
+        let map = load_map("../../tests/data/mapping_example.osm");
         assert!(assert_matches_all_pairs(&map) > 1000);
     }
 
@@ -996,7 +999,7 @@ mod tests {
     /// all-pairs build takes minutes:
     ///
     /// ```text
-    /// LL2_ROUTING_EQUIVALENCE_MAP=map.osm LL2_ROUTING_EQUIVALENCE_ORIGIN=lat,lon \
+    /// LL2_ROUTING_EQUIVALENCE_MAP=map.osm \
     ///     cargo test --release -p ll2-routing -- --ignored given_map
     /// ```
     #[test]
@@ -1004,12 +1007,7 @@ mod tests {
     fn the_indexed_build_matches_the_all_pairs_build_on_a_given_map() {
         let path = std::env::var("LL2_ROUTING_EQUIVALENCE_MAP")
             .expect("set LL2_ROUTING_EQUIVALENCE_MAP to an .osm map");
-        let origin = std::env::var("LL2_ROUTING_EQUIVALENCE_ORIGIN").unwrap_or("0,0".into());
-        let (lat, lon) = origin
-            .split_once(',')
-            .and_then(|(lat, lon)| Some((lat.trim().parse().ok()?, lon.trim().parse().ok()?)))
-            .expect("LL2_ROUTING_EQUIVALENCE_ORIGIN must be lat,lon");
-        let map = load_map(&path, lat, lon);
+        let map = load_map(&path);
         println!("{} edges compared", assert_matches_all_pairs(&map));
     }
 
