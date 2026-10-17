@@ -345,8 +345,15 @@ impl PyRoutingGraph {
         } else {
             return Err(argument_error("RoutingGraph", "__init__"));
         };
+        // The build touches no Python object (the map, the rules and the cost
+        // models are all shared Rust values), so other Python threads may run
+        // while it does. One that edits this map meanwhile can leave the graph
+        // built from a mix of old and new geometry, as it would on any thread.
+        let graph = laneletMap
+            .py()
+            .detach(|| RoutingGraph::build(&map, rules, &costs));
         Ok(PyRoutingGraph {
-            graph: Arc::new(RoutingGraph::build(&map, rules, &costs)),
+            graph: Arc::new(graph),
         })
     }
 

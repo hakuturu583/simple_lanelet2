@@ -1972,6 +1972,7 @@ version = "1.2.2"
 dependencies = [
  "ll2-core",
  "ll2-traffic-rules",
+ "ll2-viz",
 ]
 
 [[package]]
