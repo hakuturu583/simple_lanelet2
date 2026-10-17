@@ -9,7 +9,7 @@
 //! Upstream: `lanelet2_core/src/LaneletMap.cpp:110-130, 340-380, 545-700`
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use parking_lot::{Mutex, RwLock};
@@ -23,7 +23,7 @@ use crate::id::{INVAL_ID, Id, get_id, register_id};
 use crate::lanelet::Lanelet;
 use crate::linestring::LineString;
 use crate::point::Point;
-use crate::refs::geometry_epoch;
+use crate::refs::{geometry_epoch, reference_epoch};
 use crate::regelem::{RegulatoryElement, RuleParameter};
 
 /// Anything a layer can hold.
@@ -141,6 +141,8 @@ pub struct Layer {
     items: RwLock<BTreeMap<Id, Primitive>>,
     /// Cleared by every insert; otherwise valid while the geometry epoch holds.
     index: Mutex<Option<Arc<SpatialIndex>>>,
+    /// Cleared by every insert; otherwise valid while the reference epoch holds.
+    usages: Mutex<Option<Arc<UsageIndex>>>,
 }
 
 /// An R-tree over the layer's 2D bounding boxes, built on first query.
@@ -180,13 +182,62 @@ impl SpatialIndex {
     }
 }
 
+/// For each referenced id, the primitives in the layer that reference it.
+///
+/// Like the spatial index it only narrows the search: `find_usages` still checks
+/// each candidate, since a lanelet or area a regulatory element points to may
+/// have been dropped since the index was built.
+struct UsageIndex {
+    epoch: u64,
+    /// Id-ordered, as `Layer::all` returns them; `users` stores positions in here.
+    items: Vec<Primitive>,
+    /// Ascending and without repeats, so the users come out in id order.
+    users: HashMap<Id, Vec<usize>>,
+}
+
+impl UsageIndex {
+    fn build(items: Vec<Primitive>, epoch: u64) -> Self {
+        let mut users: HashMap<Id, Vec<usize>> = HashMap::new();
+        for (position, primitive) in items.iter().enumerate() {
+            for_each_reference(primitive, |id| {
+                let positions = users.entry(id).or_default();
+                // A closed linestring names its first point twice.
+                if positions.last() != Some(&position) {
+                    positions.push(position);
+                }
+            });
+        }
+        UsageIndex {
+            epoch,
+            items,
+            users,
+        }
+    }
+}
+
 impl Layer {
     fn new(kind: LayerKind) -> Self {
         Layer {
             kind,
             items: RwLock::new(BTreeMap::new()),
             index: Mutex::new(None),
+            usages: Mutex::new(None),
         }
+    }
+
+    /// The usage index, rebuilt if the layer or any reference changed since.
+    fn usage_index(&self) -> Arc<UsageIndex> {
+        let mut slot = self.usages.lock();
+        // As in `spatial_index`: the epoch first, then the contents.
+        let epoch = reference_epoch();
+        if let Some(index) = slot.as_ref() {
+            if index.epoch == epoch {
+                return Arc::clone(index);
+            }
+        }
+        let index = Arc::new(UsageIndex::build(self.all(), epoch));
+        *slot = Some(Arc::clone(&index));
+        index
     }
 
     /// The spatial index, rebuilt if the layer or any geometry changed since.
@@ -254,6 +305,7 @@ impl Layer {
         // Taken after the insert is visible, so a build racing it either saw the
         // new primitive or is discarded here.
         *self.index.lock() = None;
+        *self.usages.lock() = None;
     }
 
     /// A fresh id. Upstream simply draws from the global counter.
@@ -273,21 +325,46 @@ impl Layer {
                 .filter(|primitive| primitive.bounding_box_2d().intersects(area))
                 .collect();
         }
+        self.search_indexed(area, |primitive| {
+            primitive.bounding_box_2d().intersects(area)
+        })
+    }
+
+    /// Everything whose bounding box meets `area`, plus everything that has no
+    /// usable box, ordered by id.
+    ///
+    /// For callers that go on to decide by an exact test, such as a distance: a
+    /// primitive without a box cannot be ruled out by one, so it is always kept.
+    pub fn search_candidates(&self, area: &BoundingBox2d) -> Vec<Primitive> {
+        if !area.is_indexable() {
+            return self.all();
+        }
+        self.search_indexed(area, |_| true)
+    }
+
+    /// The tree's hits for `area`, plus the unboxed primitives `keep_unboxed`
+    /// accepts, ordered by id.
+    fn search_indexed(
+        &self,
+        area: &BoundingBox2d,
+        keep_unboxed: impl Fn(&Primitive) -> bool,
+    ) -> Vec<Primitive> {
         let index = self.spatial_index();
         let envelope = AABB::from_corners(area.min, area.max);
         // Tree entries are the primitives' own boxes, and rstar's intersection is
         // inclusive like `BoundingBox2d::intersects`, so its hits need no recheck.
-        let mut positions: Vec<usize> =
-            index
-                .tree
-                .locate_in_envelope_intersecting(envelope)
-                .map(|entry| entry.data)
-                .chain(
-                    index.unboxed.iter().copied().filter(|&position| {
-                        index.items[position].bounding_box_2d().intersects(area)
-                    }),
-                )
-                .collect();
+        let mut positions: Vec<usize> = index
+            .tree
+            .locate_in_envelope_intersecting(envelope)
+            .map(|entry| entry.data)
+            .chain(
+                index
+                    .unboxed
+                    .iter()
+                    .copied()
+                    .filter(|&position| keep_unboxed(&index.items[position])),
+            )
+            .collect();
         // Positions follow id order, which is the order a full scan returns.
         positions.sort_unstable();
         positions
@@ -359,8 +436,23 @@ impl Layer {
             .collect()
     }
 
-    /// The primitives in this layer that reference `id`.
+    /// The primitives in this layer that reference `id`, ordered by id.
     pub fn find_usages(&self, id: Id) -> Vec<Primitive> {
+        let index = self.usage_index();
+        let Some(positions) = index.users.get(&id) else {
+            return Vec::new();
+        };
+        positions
+            .iter()
+            .map(|&position| &index.items[position])
+            .filter(|primitive| references(primitive, id))
+            .cloned()
+            .collect()
+    }
+
+    /// The reference behaviour `find_usages` must reproduce: check everything.
+    #[cfg(test)]
+    fn find_usages_by_scan(&self, id: Id) -> Vec<Primitive> {
         self.all()
             .into_iter()
             .filter(|primitive| references(primitive, id))
@@ -375,32 +467,44 @@ fn closer<A, B>(a: &(f64, Id, A), b: &(f64, Id, B)) -> Ordering {
 
 /// Whether `primitive` directly references something with the given id.
 fn references(primitive: &Primitive, id: Id) -> bool {
+    let mut found = false;
+    for_each_reference(primitive, |referenced| found |= referenced == id);
+    found
+}
+
+/// Calls `visit` with the id of everything `primitive` directly references.
+fn for_each_reference(primitive: &Primitive, mut visit: impl FnMut(Id)) {
     match primitive {
-        Primitive::Point(_) => false,
+        Primitive::Point(_) => {}
         Primitive::LineString(line) | Primitive::Polygon(line) => {
-            line.points().iter().any(|point| point.id() == id)
+            line.points().iter().for_each(|point| visit(point.id()));
         }
         Primitive::Lanelet(lanelet) => {
-            lanelet.left_bound().id() == id
-                || lanelet.right_bound().id() == id
-                || lanelet
-                    .regulatory_elements()
-                    .iter()
-                    .any(|regelem| regelem.id() == id)
+            visit(lanelet.left_bound().id());
+            visit(lanelet.right_bound().id());
+            for regelem in lanelet.regulatory_elements() {
+                visit(regelem.id());
+            }
         }
         Primitive::Area(area) => {
-            area.outer_bound().iter().any(|line| line.id() == id)
-                || area
-                    .inner_bounds()
-                    .iter()
-                    .flatten()
-                    .any(|line| line.id() == id)
-                || area
-                    .regulatory_elements()
-                    .iter()
-                    .any(|regelem| regelem.id() == id)
+            for line in area
+                .outer_bound()
+                .iter()
+                .chain(area.inner_bounds().iter().flatten())
+            {
+                visit(line.id());
+            }
+            for regelem in area.regulatory_elements() {
+                visit(regelem.id());
+            }
         }
-        Primitive::RegulatoryElement(regelem) => regelem.find(id).is_some(),
+        Primitive::RegulatoryElement(regelem) => {
+            for parameter in regelem.parameters().values().flatten() {
+                if let Some(id) = parameter.id() {
+                    visit(id);
+                }
+            }
+        }
     }
 }
 
@@ -653,6 +757,153 @@ mod tests {
 
         assert_eq!(map.line_strings.find_usages(shared.id()).len(), 1);
         assert!(map.line_strings.find_usages(123_456).is_empty());
+    }
+
+    /// Every id referenced anywhere in the map, plus one referenced nowhere.
+    fn every_referenced_id(map: &LaneletMap) -> Vec<Id> {
+        let mut ids = vec![123_456];
+        for layer in [
+            &map.line_strings,
+            &map.polygons,
+            &map.lanelets,
+            &map.areas,
+            &map.regulatory_elements,
+        ] {
+            for primitive in layer.all() {
+                for_each_reference(&primitive, |id| ids.push(id));
+            }
+        }
+        ids
+    }
+
+    fn assert_usages_match_a_full_scan(map: &LaneletMap) {
+        for id in every_referenced_id(map) {
+            for layer in [
+                &map.line_strings,
+                &map.polygons,
+                &map.lanelets,
+                &map.areas,
+                &map.regulatory_elements,
+            ] {
+                assert_eq!(
+                    ids(&layer.find_usages(id)),
+                    ids(&layer.find_usages_by_scan(id)),
+                    "id {id} in the {:?} layer",
+                    layer.kind()
+                );
+            }
+        }
+    }
+
+    fn traffic_light(id: Id, lanelet: &Lanelet, light: &LineString) -> RegulatoryElement {
+        let mut parameters = crate::regelem::RuleParameterMap::new();
+        parameters.insert(
+            "refers".into(),
+            vec![RuleParameter::LineString(light.clone())],
+        );
+        parameters.insert(
+            "ref_line".into(),
+            vec![RuleParameter::Lanelet(lanelet.downgrade())],
+        );
+        RegulatoryElement::new(
+            crate::regelem::RegElemKind::TrafficLight,
+            id,
+            AttributeMap::new(),
+            parameters,
+        )
+    }
+
+    #[test]
+    fn indexed_usages_match_a_full_scan() {
+        let map = LaneletMap::new_map();
+        let mut next = sequence(13);
+        let mut lanelets = Vec::new();
+        for id in 1..=200 {
+            let lanelet = lanelet_at(id, next() * 300.0, next() * 300.0, 20.0);
+            map.add(Primitive::Lanelet(lanelet.clone()));
+            lanelets.push(lanelet);
+        }
+        // Neighbours share a bound, so a linestring has two users.
+        for pair in lanelets.windows(2) {
+            let shared = pair[0].right_bound();
+            let lanelet = Lanelet::new(INVAL_ID, shared, pair[1].left_bound(), AttributeMap::new());
+            map.add(Primitive::Lanelet(lanelet));
+        }
+        // A closed linestring names its first point twice.
+        let corner = point(INVAL_ID, 0.0, 0.0);
+        map.add(Primitive::Polygon(LineString::new(
+            INVAL_ID,
+            vec![
+                corner.clone(),
+                point(INVAL_ID, 1.0, 0.0),
+                point(INVAL_ID, 1.0, 1.0),
+                corner,
+            ],
+            AttributeMap::new(),
+        )));
+        for (id, lanelet) in (5000..).zip(lanelets.iter().step_by(7)) {
+            let regelem = traffic_light(id, lanelet, &lanelet.left_bound());
+            lanelet.add_regulatory_element(regelem.clone());
+            lanelets[0].add_regulatory_element(regelem.clone());
+            map.add(Primitive::RegulatoryElement(regelem));
+        }
+        assert_usages_match_a_full_scan(&map);
+    }
+
+    #[test]
+    fn the_usage_index_follows_every_change_of_references() {
+        let map = LaneletMap::new_map();
+        let lanelet = lanelet_at(10, 0.0, 0.0, 10.0);
+        let other = lanelet_at(11, 0.0, 20.0, 10.0);
+        map.add(Primitive::Lanelet(lanelet.clone()));
+        map.add(Primitive::Lanelet(other.clone()));
+        let left = lanelet.left_bound();
+        let first = left.points()[0].clone();
+        assert_eq!(ids(&map.lanelets.find_usages(left.id())), [10]);
+        assert_eq!(ids(&map.line_strings.find_usages(first.id())), [left.id()]);
+
+        // A bound swapped for another linestring.
+        other.set_left_bound(left.clone());
+        assert_eq!(ids(&map.lanelets.find_usages(left.id())), [10, 11]);
+
+        // A point replaced in a linestring.
+        let replacement = point(900, 0.0, 0.0);
+        left.set_at(0, replacement.clone());
+        assert!(map.line_strings.find_usages(first.id()).is_empty());
+        assert_eq!(ids(&map.line_strings.find_usages(900)), [left.id()]);
+
+        // An id changed after the index was built.
+        replacement.set_id(901);
+        assert!(map.line_strings.find_usages(900).is_empty());
+        assert_eq!(ids(&map.line_strings.find_usages(901)), [left.id()]);
+
+        // Regulatory elements attached and detached.
+        let regelem = traffic_light(20, &other, &other.right_bound());
+        map.add(Primitive::RegulatoryElement(regelem.clone()));
+        assert!(map.lanelets.find_usages(20).is_empty());
+        lanelet.add_regulatory_element(regelem.clone());
+        assert_eq!(ids(&map.lanelets.find_usages(20)), [10]);
+        lanelet.remove_regulatory_element(&regelem);
+        assert!(map.lanelets.find_usages(20).is_empty());
+
+        // A regulatory element's parameters, including its weak lanelet reference.
+        assert_eq!(ids(&map.regulatory_elements.find_usages(11)), [20]);
+        regelem.set_parameters_for("ref_line", Vec::new());
+        assert!(map.regulatory_elements.find_usages(11).is_empty());
+        assert_usages_match_a_full_scan(&map);
+    }
+
+    #[test]
+    fn a_dropped_lanelet_is_no_longer_used_by_a_regulatory_element() {
+        let submap = LaneletMap::new_submap();
+        let lanelet = lanelet_at(30, 0.0, 0.0, 10.0);
+        let regelem = traffic_light(31, &lanelet, &lanelet.left_bound());
+        submap.add(Primitive::RegulatoryElement(regelem));
+        assert_eq!(ids(&submap.regulatory_elements.find_usages(30)), [31]);
+        // The submap holds only the regulatory element, so this was the last
+        // strong handle and the weak reference now expires.
+        drop(lanelet);
+        assert!(submap.regulatory_elements.find_usages(30).is_empty());
     }
 
     #[test]

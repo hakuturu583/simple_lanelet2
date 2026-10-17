@@ -23,7 +23,7 @@ use crate::id::Id;
 use crate::lanelet::WeakLanelet;
 use crate::linestring::LineString;
 use crate::point::Point;
-use crate::refs::{Attrs, attrs, geometry_changed};
+use crate::refs::{Attrs, attrs, geometry_changed, references_changed};
 
 /// The role names upstream gives a fast path. Any string may be used as a role.
 pub mod roles {
@@ -397,6 +397,7 @@ impl RegulatoryElement {
 
     pub fn set_id(&self, id: Id) {
         self.data.id.store(id, Ordering::Relaxed);
+        references_changed();
     }
 
     pub fn attributes(&self) -> &Attrs {
@@ -449,6 +450,7 @@ impl RegulatoryElement {
     pub fn set_parameters_for(&self, role: &str, values: Vec<RuleParameter>) {
         self.data.parameters.write().insert(role.to_owned(), values);
         geometry_changed();
+        references_changed();
     }
 
     /// Appends to a role, creating it if absent.
@@ -460,6 +462,7 @@ impl RegulatoryElement {
             .or_default()
             .push(value);
         geometry_changed();
+        references_changed();
     }
 
     /// Removes the first entry under `role` that is *the same object* as `target`,
@@ -477,6 +480,7 @@ impl RegulatoryElement {
         };
         values.remove(index);
         geometry_changed();
+        references_changed();
         true
     }
 

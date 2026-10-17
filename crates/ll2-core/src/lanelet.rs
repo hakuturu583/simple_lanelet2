@@ -21,7 +21,7 @@ use crate::compound::CompoundLineString;
 use crate::fmt::make_repr;
 use crate::id::{INVAL_ID, Id};
 use crate::linestring::LineString;
-use crate::refs::{Attrs, attrs, geometry_changed};
+use crate::refs::{Attrs, attrs, geometry_changed, references_changed};
 use crate::regelem::RegulatoryElement;
 
 pub struct LaneletData {
@@ -63,6 +63,7 @@ impl Lanelet {
 
     pub fn set_id(&self, id: Id) {
         self.data.id.store(id, Ordering::Relaxed);
+        references_changed();
     }
 
     pub fn attributes(&self) -> &Attrs {
@@ -125,6 +126,7 @@ impl Lanelet {
             self.reset_cache();
             *slot = bound;
             geometry_changed();
+            references_changed();
         }
     }
 
@@ -134,6 +136,7 @@ impl Lanelet {
             self.reset_cache();
             *slot = bound;
             geometry_changed();
+            references_changed();
         }
     }
 
@@ -195,6 +198,7 @@ impl Lanelet {
 
     pub fn add_regulatory_element(&self, regelem: RegulatoryElement) {
         self.data.regelems.write().push(regelem);
+        references_changed();
     }
 
     /// Removes the first attached element with the same storage, reporting whether
@@ -204,6 +208,7 @@ impl Lanelet {
         match regelems.iter().position(|held| held.is_same_data(regelem)) {
             Some(index) => {
                 regelems.remove(index);
+                references_changed();
                 true
             }
             None => false,

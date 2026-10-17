@@ -47,6 +47,23 @@ pub fn geometry_epoch() -> u64 {
     GEOMETRY_EPOCH.load(Ordering::Acquire)
 }
 
+/// Bumped on every write that can change which ids a primitive references: its
+/// own id, its points, bounds, parameters or regulatory elements.
+///
+/// The usage indices cache who references whom. Moving a point leaves that
+/// alone, so this is kept apart from the geometry epoch.
+static REFERENCE_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// Records that some primitive's id or references may have changed.
+pub fn references_changed() {
+    REFERENCE_EPOCH.fetch_add(1, Ordering::Release);
+}
+
+/// The current reference epoch; unchanged means no reference has changed since.
+pub fn reference_epoch() -> u64 {
+    REFERENCE_EPOCH.load(Ordering::Acquire)
+}
+
 /// A shared attribute map.
 pub type Attrs = Arc<RwLock<AttributeMap>>;
 
