@@ -325,21 +325,46 @@ impl Layer {
                 .filter(|primitive| primitive.bounding_box_2d().intersects(area))
                 .collect();
         }
+        self.search_indexed(area, |primitive| {
+            primitive.bounding_box_2d().intersects(area)
+        })
+    }
+
+    /// Everything whose bounding box meets `area`, plus everything that has no
+    /// usable box, ordered by id.
+    ///
+    /// For callers that go on to decide by an exact test, such as a distance: a
+    /// primitive without a box cannot be ruled out by one, so it is always kept.
+    pub fn search_candidates(&self, area: &BoundingBox2d) -> Vec<Primitive> {
+        if !area.is_indexable() {
+            return self.all();
+        }
+        self.search_indexed(area, |_| true)
+    }
+
+    /// The tree's hits for `area`, plus the unboxed primitives `keep_unboxed`
+    /// accepts, ordered by id.
+    fn search_indexed(
+        &self,
+        area: &BoundingBox2d,
+        keep_unboxed: impl Fn(&Primitive) -> bool,
+    ) -> Vec<Primitive> {
         let index = self.spatial_index();
         let envelope = AABB::from_corners(area.min, area.max);
         // Tree entries are the primitives' own boxes, and rstar's intersection is
         // inclusive like `BoundingBox2d::intersects`, so its hits need no recheck.
-        let mut positions: Vec<usize> =
-            index
-                .tree
-                .locate_in_envelope_intersecting(envelope)
-                .map(|entry| entry.data)
-                .chain(
-                    index.unboxed.iter().copied().filter(|&position| {
-                        index.items[position].bounding_box_2d().intersects(area)
-                    }),
-                )
-                .collect();
+        let mut positions: Vec<usize> = index
+            .tree
+            .locate_in_envelope_intersecting(envelope)
+            .map(|entry| entry.data)
+            .chain(
+                index
+                    .unboxed
+                    .iter()
+                    .copied()
+                    .filter(|&position| keep_unboxed(&index.items[position])),
+            )
+            .collect();
         // Positions follow id order, which is the order a full scan returns.
         positions.sort_unstable();
         positions

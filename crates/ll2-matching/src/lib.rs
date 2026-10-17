@@ -12,6 +12,7 @@
 //!
 //! Upstream: `lanelet2_matching/src/{LaneletMatching,Utilities}.cpp`
 
+use ll2_core::geometry::BoundingBox2d;
 use ll2_core::geometry::linestring::{self, Point2};
 use ll2_core::lanelet::Lanelet;
 use ll2_core::map::{LaneletMap, Primitive};
@@ -172,18 +173,46 @@ fn object_distance(lanelet: &Lanelet, object: &Object2d) -> f64 {
         .fold(f64::INFINITY, f64::min)
 }
 
+/// A box that every lanelet within `max_distance` of the object meets, or `None`
+/// if no finite box does.
+///
+/// A lanelet's box is never farther from a point than the lanelet itself, so one
+/// within `max_distance` of the pose or a hull corner has a box meeting this one.
+fn search_area(object: &Object2d, max_distance: f64) -> Option<BoundingBox2d> {
+    let mut area = BoundingBox2d::empty();
+    if object.absolute_hull.is_empty() {
+        area.extend_point([object.pose.x, object.pose.y]);
+    } else {
+        for &corner in &object.absolute_hull {
+            area.extend_point(corner);
+        }
+    }
+    // The slack absorbs rounding between the box and exact distance formulas,
+    // so a lanelet exactly at `max_distance` is still examined.
+    let magnitude = area
+        .min
+        .iter()
+        .chain(&area.max)
+        .fold(max_distance.abs(), |held, value| held.max(value.abs()));
+    let area = area.inflated(max_distance + 1e-9 * magnitude.max(1.0));
+    area.is_indexable().then_some(area)
+}
+
 fn candidates(map: &LaneletMap, object: &Object2d, max_distance: f64) -> Vec<(f64, Lanelet)> {
-    map.lanelets
-        .all()
-        .into_iter()
-        .filter_map(|primitive| match primitive {
-            Primitive::Lanelet(lanelet) => {
-                let distance = object_distance(&lanelet, object);
-                (distance <= max_distance).then_some((distance, lanelet))
-            }
-            _ => None,
-        })
-        .collect()
+    match search_area(object, max_distance) {
+        Some(area) => map.lanelets.search_candidates(&area),
+        // An infinite or undefined distance, or a position that cannot be placed.
+        None => map.lanelets.all(),
+    }
+    .into_iter()
+    .filter_map(|primitive| match primitive {
+        Primitive::Lanelet(lanelet) => {
+            let distance = object_distance(&lanelet, object);
+            (distance <= max_distance).then_some((distance, lanelet))
+        }
+        _ => None,
+    })
+    .collect()
 }
 
 /// Candidate lanelets within `max_distance`, closest first.
@@ -301,6 +330,98 @@ mod tests {
             map.add(Primitive::Lanelet(lanelet));
         }
         map
+    }
+
+    /// A deterministic stream of values in [0, 1), so the case below needs no
+    /// random-number dependency and fails the same way every run.
+    fn sequence(seed: u64) -> impl FnMut() -> f64 {
+        let mut state = seed;
+        move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    /// What `candidates` must reproduce: every lanelet, by exact distance.
+    fn candidates_by_scan(
+        map: &LaneletMap,
+        object: &Object2d,
+        max_distance: f64,
+    ) -> Vec<(f64, Lanelet)> {
+        map.lanelets
+            .all()
+            .into_iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Lanelet(lanelet) => {
+                    let distance = object_distance(&lanelet, object);
+                    (distance <= max_distance).then_some((distance, lanelet))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn summary(candidates: &[(f64, Lanelet)]) -> Vec<(u64, i64)> {
+        candidates
+            .iter()
+            .map(|(distance, lanelet)| (distance.to_bits(), lanelet.id()))
+            .collect()
+    }
+
+    #[test]
+    fn indexed_candidates_match_a_full_scan() {
+        let mut next = sequence(17);
+        let mut lanelets = Vec::new();
+        for id in 1..=300 {
+            let (x, y) = (next() * 400.0 + 1000.0, next() * 400.0 - 2000.0);
+            let (dx, dy) = (next() * 30.0 - 15.0, next() * 30.0 - 15.0);
+            lanelets.push(Lanelet::new(
+                id,
+                line(&[
+                    (x, y + 1.5),
+                    (x + dx * 0.5, y + dy * 0.5 + 1.8),
+                    (x + dx, y + dy + 1.5),
+                ]),
+                line(&[(x, y - 1.5), (x + dx, y + dy - 1.5)]),
+                AttributeMap::new(),
+            ));
+        }
+        // No points, so no box: it can never be ruled out by one.
+        lanelets.push(Lanelet::new(301, line(&[]), line(&[]), AttributeMap::new()));
+        let map = map_with(lanelets);
+
+        let mut objects = Vec::new();
+        for _ in 0..300 {
+            let (x, y) = (next() * 460.0 + 970.0, next() * 460.0 - 2030.0);
+            let hull = if next() < 0.5 {
+                Vec::new()
+            } else {
+                vec![[x - 1.0, y - 2.0], [x + 1.0, y - 2.0], [x + 1.0, y + 2.0]]
+            };
+            objects.push(Object2d {
+                object_id: 0,
+                pose: Pose2d { x, y, yaw: 0.0 },
+                absolute_hull: hull,
+            });
+        }
+        for object in &objects {
+            for max_distance in [0.0, 0.5, 2.0, 10.0, 50.0, f64::INFINITY, -1.0, f64::NAN] {
+                assert_eq!(
+                    summary(&candidates(&map, object, max_distance)),
+                    summary(&candidates_by_scan(&map, object, max_distance)),
+                    "pose {:?}, max distance {max_distance}",
+                    object.pose
+                );
+            }
+            // A limit equal to a candidate's exact distance keeps that candidate.
+            if let Some(&(distance, _)) = candidates_by_scan(&map, object, 30.0).last() {
+                let found = summary(&candidates(&map, object, distance));
+                assert_eq!(found, summary(&candidates_by_scan(&map, object, distance)));
+                assert!(!found.is_empty());
+            }
+        }
     }
 
     #[test]
