@@ -67,3 +67,13 @@ key = "module:utility.utilities"
 reason = """\
 Also missing getExpandedLanelet and getExpandedLanelets, which need offsetNoThrow and \
 checkForInversion -- lanelet2 internals not exposed to Python."""
+
+[[allow]]
+case = "0260_map_pickle"
+key = "pickle:*"
+reason = """\
+Deliberate addition, not a divergence in behaviour: LaneletMap and LaneletSubmap \
+pickle, as a versioned snapshot of their object graph. Upstream refuses to pickle \
+any of its objects, so the reference reports the error under every pickle: key. \
+The map each pickle is taken of is emitted under ordinary keys and compared \
+normally."""

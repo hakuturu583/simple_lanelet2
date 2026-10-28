@@ -18,6 +18,7 @@ pub mod map;
 pub mod point;
 pub mod refs;
 pub mod regelem;
+pub mod snapshot;
 
 pub use area::Area;
 pub use attribute::{Attribute, AttributeMap};
