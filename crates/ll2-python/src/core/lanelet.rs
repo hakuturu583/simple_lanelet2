@@ -134,7 +134,7 @@ fn construct(
 macro_rules! lanelet_class {
     ($py_name:literal, $rust:ident, $mutable:tt, $bound:ident) => {
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.core")]
+        #[pyclass(name = $py_name, module = "lanelet2.core", weakref)]
         pub struct $rust {
             lanelet: Lanelet,
         }

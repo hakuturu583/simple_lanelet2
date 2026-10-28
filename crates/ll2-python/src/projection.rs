@@ -46,7 +46,7 @@ impl SharedProjector {
 macro_rules! projector_class {
     ($py_name:literal, $rust:ident) => {
         #[doc = concat!("`lanelet2.projection.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.projection", frozen)]
+        #[pyclass(name = $py_name, module = "lanelet2.projection", frozen, weakref)]
         pub struct $rust {
             projector: SharedProjector,
         }
@@ -85,7 +85,7 @@ macro_rules! projector_class {
 }
 
 /// `lanelet2.projection.Projector`, the abstract base. Not constructible.
-#[pyclass(name = "Projector", module = "lanelet2.projection", frozen)]
+#[pyclass(name = "Projector", module = "lanelet2.projection", frozen, weakref)]
 pub struct PyProjector;
 
 #[pymethods]

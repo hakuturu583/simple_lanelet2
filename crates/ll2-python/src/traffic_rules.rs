@@ -17,7 +17,7 @@ use crate::core::linestring::linestring_of;
 use crate::err::{argument_error, runtime};
 
 /// `lanelet2.traffic_rules.Locations`.
-#[pyclass(name = "Locations", module = "lanelet2.traffic_rules", frozen)]
+#[pyclass(name = "Locations", module = "lanelet2.traffic_rules", frozen, weakref)]
 pub struct PyLocations;
 
 #[pymethods]
@@ -33,7 +33,12 @@ impl PyLocations {
 ///
 /// The strings are hierarchical and colon-separated, and the hierarchy is
 /// load-bearing: a rule written for `vehicle` applies to `vehicle:car`.
-#[pyclass(name = "Participants", module = "lanelet2.traffic_rules", frozen)]
+#[pyclass(
+    name = "Participants",
+    module = "lanelet2.traffic_rules",
+    frozen,
+    weakref
+)]
 pub struct PyParticipants;
 
 macro_rules! participant_constants {
@@ -70,7 +75,11 @@ participant_constants! {
 ///
 /// Only default construction works upstream: the two-argument form is registered
 /// but unreachable, so this is effectively a read-only result type.
-#[pyclass(name = "SpeedLimitInformation", module = "lanelet2.traffic_rules")]
+#[pyclass(
+    name = "SpeedLimitInformation",
+    module = "lanelet2.traffic_rules",
+    weakref
+)]
 #[derive(Clone, Copy)]
 pub struct PySpeedLimitInformation {
     limit: SpeedLimit,
@@ -129,7 +138,12 @@ impl PySpeedLimitInformation {
 }
 
 /// `lanelet2.traffic_rules.TrafficRules`.
-#[pyclass(name = "TrafficRules", module = "lanelet2.traffic_rules", frozen)]
+#[pyclass(
+    name = "TrafficRules",
+    module = "lanelet2.traffic_rules",
+    frozen,
+    weakref
+)]
 pub struct PyTrafficRules {
     rules: Arc<TrafficRules>,
 }

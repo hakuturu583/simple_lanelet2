@@ -45,7 +45,7 @@ fn eigen_matrix(rows: &[Vec<f64>]) -> String {
 }
 
 /// `lanelet2.matching.Pose2d`.
-#[pyclass(name = "Pose2d", module = "lanelet2.matching")]
+#[pyclass(name = "Pose2d", module = "lanelet2.matching", weakref)]
 #[derive(Clone, Copy)]
 pub struct PyPose2d {
     pub(crate) pose: Pose2d,
@@ -73,7 +73,7 @@ impl PyPose2d {
 }
 
 /// `lanelet2.matching.PositionCovariance2d`.
-#[pyclass(name = "PositionCovariance2d", module = "lanelet2.matching")]
+#[pyclass(name = "PositionCovariance2d", module = "lanelet2.matching", weakref)]
 #[derive(Clone, Copy)]
 pub struct PyPositionCovariance2d {
     pub(crate) covariance: PositionCovariance2d,
@@ -121,7 +121,7 @@ fn hull_from_any(obj: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<[f64; 2]>> {
 }
 
 /// `lanelet2.matching.Object2d`.
-#[pyclass(name = "Object2d", module = "lanelet2.matching", subclass)]
+#[pyclass(name = "Object2d", module = "lanelet2.matching", subclass, weakref)]
 #[derive(Clone)]
 pub struct PyObject2d {
     pub(crate) object: Object2d,
@@ -245,7 +245,7 @@ impl PyObjectWithCovariance2d {
 macro_rules! match_class {
     ($py_name:literal, $rust:ident, $probabilistic:tt) => {
         #[doc = concat!("`lanelet2.matching.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.matching")]
+        #[pyclass(name = $py_name, module = "lanelet2.matching", weakref)]
         pub struct $rust {
             found: LaneletMatch,
         }

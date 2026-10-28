@@ -21,7 +21,8 @@ use crate::conv::{attribute_map_dict_repr, attribute_map_from_any};
 #[pyclass(
     name = "map_indexing_suite_AttributeMap_entry",
     module = "lanelet2.core",
-    frozen
+    frozen,
+    weakref
 )]
 pub struct PyAttributeMapEntry {
     key: String,
@@ -48,7 +49,7 @@ impl PyAttributeMapEntry {
 }
 
 /// A primitive's attributes: a string-to-string mapping, ordered by key.
-#[pyclass(name = "AttributeMap", module = "lanelet2.core")]
+#[pyclass(name = "AttributeMap", module = "lanelet2.core", weakref)]
 pub struct PyAttributeMap {
     cell: Attrs,
 }

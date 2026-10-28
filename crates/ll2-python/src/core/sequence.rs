@@ -15,7 +15,7 @@ use crate::core::lanelet::{PyConstLanelet, lanelet_of};
 use crate::err::{argument_error, resolve_index};
 
 /// `lanelet2.core.LaneletSequence`.
-#[pyclass(name = "LaneletSequence", module = "lanelet2.core")]
+#[pyclass(name = "LaneletSequence", module = "lanelet2.core", weakref)]
 pub struct PyLaneletSequence {
     lanelets: Vec<Lanelet>,
     inverted: bool,
