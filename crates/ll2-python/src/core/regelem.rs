@@ -1119,6 +1119,12 @@ fn compat_speed_limit_kind() -> &'static RegElemKind {
     })
 }
 
+/// Registers the kinds this module creates on first use, so that a map snapshot
+/// holding one can be restored before any has been constructed in this process.
+pub fn register_compat_kinds() {
+    compat_speed_limit_kind();
+}
+
 #[pymethods]
 impl PySpeedLimit {
     #[new]

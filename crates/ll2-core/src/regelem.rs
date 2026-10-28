@@ -241,6 +241,20 @@ pub mod registry {
         registry().read().specs[kind.0 as usize]
     }
 
+    /// The kind registered under exactly this class and rule name, if any.
+    ///
+    /// Unlike [`resolve`] this does not follow the rule name to whichever class
+    /// currently owns it: a stock `TrafficLight` stays one after the Autoware
+    /// extension has claimed `traffic_light`.
+    pub fn find(class_name: &str, rule_name: &str) -> Option<RegElemKind> {
+        registry()
+            .read()
+            .specs
+            .iter()
+            .position(|spec| spec.class_name == class_name && spec.rule_name == rule_name)
+            .map(|index| RegElemKind(index as u16))
+    }
+
     /// The rule name a subtype tag maps to is not registered.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct UnknownRule(pub String);

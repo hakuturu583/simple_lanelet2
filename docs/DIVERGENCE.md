@@ -77,6 +77,21 @@ Not implemented in either mode. Listed with reasons in `tests/divergence.toml`.
 - **`TrafficRules.laneChangeType(boundary, virtualIsPassable=False)`** — the
   boundary rule the routing graph consults, exposed because it is cheap and makes
   the lane-change tables inspectable.
+- **Pickling `LaneletMap` and `LaneletSubmap`.** Upstream refuses to pickle any of
+  its objects, and its `.bin` format is out of scope (above), which left no way to
+  hand a loaded map to another process but writing OSM and parsing it again. A map
+  pickles as a versioned snapshot of its object graph
+  ([`ll2_core::snapshot`](../crates/ll2-core/src/snapshot.rs)): shared storage stays
+  shared, inverted views stay inverted, custom centerlines and regulatory elements
+  come back, and the six layers are restored exactly as they were rather than
+  rebuilt by `add`. Coordinates are written as they are, with no projection. A
+  regulatory element's weak lanelet or area parameter survives only if the map
+  itself holds the target; nothing else would keep it alive after restoring.
+  Restoring a map with Autoware regulatory elements imports
+  `autoware_lanelet2_extension_python.regulatory_elements`, since the process that
+  took the snapshot had. The format is this library's own: it is read back by the
+  same snapshot version only, and is not meant for files kept across upgrades —
+  use OSM for that. Individual primitives still do not pickle.
 
 ## 3a. A note on versions
 

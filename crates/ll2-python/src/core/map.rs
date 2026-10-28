@@ -11,7 +11,7 @@ use std::sync::Arc;
 use ll2_core::id::Id;
 use ll2_core::map::{LaneletMap, LayerKind, Primitive};
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyBytes, PyList};
 
 use crate::core::area::{PyArea, area_of};
 use crate::core::basic::{PyBasicPoint2d, PyBoundingBox2d};
@@ -322,6 +322,17 @@ macro_rules! map_class {
                 self.map.add(primitive);
                 Ok(())
             }
+
+            /// Pickles as a snapshot of the whole object graph; see `ll2_core::snapshot`.
+            /// Upstream refuses to pickle, so this is an addition, not a port.
+            fn __reduce__<'py>(
+                &self,
+                py: Python<'py>,
+            ) -> PyResult<(Bound<'py, PyAny>, (Bound<'py, PyBytes>,))> {
+                let restore = py.import("lanelet2.core")?.getattr("_map_from_snapshot")?;
+                let snapshot = ll2_core::snapshot::encode(&self.map);
+                Ok((restore, (PyBytes::new(py, &snapshot),)))
+            }
         }
     };
 }
@@ -397,6 +408,37 @@ impl PyLaneletSubmap {
         }
         Py::new(py, PyLaneletMap::wrap(full))
     }
+}
+
+/// The other half of `LaneletMap.__reduce__`: a map or submap from its snapshot.
+///
+/// A snapshot naming an Autoware regulatory element was taken in a process that had
+/// imported the extension, so the extension is imported here too rather than
+/// failing on a class the bytes plainly require.
+#[pyfunction]
+#[pyo3(name = "_map_from_snapshot")]
+fn map_from_snapshot(py: Python<'_>, data: &[u8]) -> PyResult<Py<PyAny>> {
+    use ll2_core::regelem::registry;
+
+    crate::core::regelem::register_compat_kinds();
+    let mut tried_extension = false;
+    let mut resolve = |class_name: &str, rule_name: &str| {
+        registry::find(class_name, rule_name).or_else(|| {
+            if !tried_extension {
+                tried_extension = true;
+                // A failed import leaves the class unregistered, and the decode
+                // error that follows names it.
+                let _ = py.import("autoware_lanelet2_extension_python.regulatory_elements");
+            }
+            registry::find(class_name, rule_name)
+        })
+    };
+    let map = ll2_core::snapshot::decode_with(data, &mut resolve).map_err(|e| runtime(e.0))?;
+    Ok(if map.is_recursive() {
+        Py::new(py, PyLaneletMap::wrap(map))?.into_any()
+    } else {
+        Py::new(py, PyLaneletSubmap::wrap(map))?.into_any()
+    })
 }
 
 /// Builds the `createMapFrom*` / `createSubmapFrom*` factory pair for one kind.
@@ -484,5 +526,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(create_submap_from_polygons, m)?)?;
     m.add_function(wrap_pyfunction!(create_submap_from_lanelets, m)?)?;
     m.add_function(wrap_pyfunction!(create_submap_from_areas, m)?)?;
+    m.add_function(wrap_pyfunction!(map_from_snapshot, m)?)?;
     Ok(())
 }
