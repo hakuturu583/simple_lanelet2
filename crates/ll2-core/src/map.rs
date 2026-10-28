@@ -584,6 +584,11 @@ impl LaneletMap {
             Primitive::Lanelet(lanelet) => {
                 self.add(Primitive::LineString(lanelet.left_bound()));
                 self.add(Primitive::LineString(lanelet.right_bound()));
+                // Upstream: `LaneletMap::add(Lanelet)` adds a custom centerline too;
+                // a computed one has no id and is not a map primitive.
+                if lanelet.has_custom_centerline() {
+                    self.add(Primitive::LineString(lanelet.centerline()));
+                }
                 for regelem in lanelet.regulatory_elements() {
                     self.add(Primitive::RegulatoryElement(regelem));
                 }
@@ -696,6 +701,29 @@ mod tests {
         // Everything was given an id on the way in.
         assert!(map.points.all().iter().all(|p| p.id() != INVAL_ID));
         assert!(map.lanelets.all().iter().all(|l| l.id() != INVAL_ID));
+    }
+
+    #[test]
+    fn adding_a_lanelet_pulls_in_its_custom_centerline() {
+        let map = LaneletMap::new_map();
+        let custom = lanelet(INVAL_ID);
+        custom.set_centerline(LineString::new(
+            42,
+            vec![point(INVAL_ID, 0.0, 0.0), point(INVAL_ID, 1.0, 0.0)],
+            AttributeMap::new(),
+        ));
+        map.add(Primitive::Lanelet(custom));
+        assert_eq!(map.line_strings.len(), 3);
+        assert!(map.line_strings.exists(42));
+        assert_eq!(map.points.len(), 6);
+
+        // A computed centerline is not a primitive and stays out of the map.
+        let computed = lanelet(INVAL_ID);
+        computed.centerline();
+        let other = LaneletMap::new_map();
+        other.add(Primitive::Lanelet(computed));
+        assert_eq!(other.line_strings.len(), 2);
+        assert_eq!(other.points.len(), 4);
     }
 
     #[test]

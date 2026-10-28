@@ -31,7 +31,7 @@ macro_rules! basic_point {
     ($py_name:literal, $rust:ident, $dims:expr, $ctor_sig:tt,
      $($accessor:ident / $setter:ident => $index:expr),+) => {
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.core")]
+        #[pyclass(name = $py_name, module = "lanelet2.core", weakref)]
         pub struct $rust {
             view: CoordView,
         }
@@ -168,7 +168,7 @@ basic_point!("BasicPoint3d", PyBasicPoint3d, 3, (x = 0.0, y = 0.0, z = 0.0),
 /// Upstream exports this as a distinct, non-constructible type that Eigen values
 /// implicitly convert to a `BasicPoint2d` from. Nothing in the Python API returns
 /// one, so it exists purely to keep the API surface identical.
-#[pyclass(name = "Vector2d", module = "lanelet2.core")]
+#[pyclass(name = "Vector2d", module = "lanelet2.core", weakref)]
 pub struct PyVector2d {
     view: CoordView,
 }
@@ -246,7 +246,7 @@ struct BoxData {
 macro_rules! bounding_box {
     ($py_name:literal, $rust:ident, $corner:ident) => {
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.core")]
+        #[pyclass(name = $py_name, module = "lanelet2.core", weakref)]
         pub struct $rust {
             data: BoxData,
         }

@@ -134,7 +134,7 @@ macro_rules! linestring_class {
         item: $item:ident,
     ) => {
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.core")]
+        #[pyclass(name = $py_name, module = "lanelet2.core", weakref)]
         pub struct $rust {
             line: LineString,
         }

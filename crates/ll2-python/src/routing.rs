@@ -30,7 +30,7 @@ fn relation_type(py: Python<'_>, relation: RelationType) -> PyResult<Py<PyAny>> 
 }
 
 /// `lanelet2.routing.LaneletRelation`.
-#[pyclass(name = "LaneletRelation", module = "lanelet2.routing")]
+#[pyclass(name = "LaneletRelation", module = "lanelet2.routing", weakref)]
 pub struct PyLaneletRelation {
     lanelet: Lanelet,
     relation: RelationType,
@@ -53,7 +53,7 @@ impl PyLaneletRelation {
 macro_rules! cost_class {
     ($py_name:literal, $rust:ident, $default_change:expr, $build:expr) => {
         #[doc = concat!("`lanelet2.routing.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.routing", frozen)]
+        #[pyclass(name = $py_name, module = "lanelet2.routing", frozen, weakref)]
         pub struct $rust {
             model: Arc<dyn RoutingCost>,
         }
@@ -90,7 +90,7 @@ macro_rules! cost_class {
 }
 
 /// `lanelet2.routing.RoutingCost`, the abstract base.
-#[pyclass(name = "RoutingCost", module = "lanelet2.routing", frozen)]
+#[pyclass(name = "RoutingCost", module = "lanelet2.routing", frozen, weakref)]
 pub struct PyRoutingCost;
 
 #[pymethods]
@@ -176,7 +176,7 @@ impl RoutingCost for SharedCost {
 }
 
 /// `lanelet2.routing.PossiblePathsParams`.
-#[pyclass(name = "PossiblePathsParams", module = "lanelet2.routing")]
+#[pyclass(name = "PossiblePathsParams", module = "lanelet2.routing", weakref)]
 #[derive(Clone, Default)]
 pub struct PyPossiblePathsParams {
     #[pyo3(get, set, name = "routingCostLimit")]
@@ -215,7 +215,7 @@ impl PyPossiblePathsParams {
 }
 
 /// `lanelet2.routing.LaneletPath`.
-#[pyclass(name = "LaneletPath", module = "lanelet2.routing")]
+#[pyclass(name = "LaneletPath", module = "lanelet2.routing", weakref)]
 #[derive(Clone)]
 pub struct PyLaneletPath {
     lanelets: Vec<Lanelet>,
@@ -319,7 +319,7 @@ fn to_lanelet_list<'py>(py: Python<'py>, lanelets: Vec<Lanelet>) -> PyResult<Bou
 }
 
 /// `lanelet2.routing.RoutingGraph`.
-#[pyclass(name = "RoutingGraph", module = "lanelet2.routing", frozen)]
+#[pyclass(name = "RoutingGraph", module = "lanelet2.routing", frozen, weakref)]
 pub struct PyRoutingGraph {
     graph: Arc<RoutingGraph>,
 }
@@ -910,7 +910,7 @@ impl PyRoutingGraph {
 }
 
 /// `lanelet2.routing.LaneletVisitInformation`, handed to the `forEach*` callbacks.
-#[pyclass(name = "LaneletVisitInformation", module = "lanelet2.routing")]
+#[pyclass(name = "LaneletVisitInformation", module = "lanelet2.routing", weakref)]
 pub struct PyLaneletVisitInformation {
     lanelet: Lanelet,
     predecessor: Lanelet,
@@ -950,7 +950,11 @@ impl PyLaneletVisitInformation {
 }
 
 /// The same, for the traversals that also walk areas.
-#[pyclass(name = "LaneletOrAreaVisitInformation", module = "lanelet2.routing")]
+#[pyclass(
+    name = "LaneletOrAreaVisitInformation",
+    module = "lanelet2.routing",
+    weakref
+)]
 pub struct PyLaneletOrAreaVisitInformation {
     lanelet: Lanelet,
     predecessor: Lanelet,
@@ -990,7 +994,7 @@ impl PyLaneletOrAreaVisitInformation {
 }
 
 /// `lanelet2.routing.Route`.
-#[pyclass(name = "Route", module = "lanelet2.routing", frozen)]
+#[pyclass(name = "Route", module = "lanelet2.routing", frozen, weakref)]
 pub struct PyRoute {
     route: Arc<ll2_routing::Route>,
     graph: Arc<RoutingGraph>,

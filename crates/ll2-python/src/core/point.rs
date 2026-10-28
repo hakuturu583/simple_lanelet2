@@ -136,7 +136,7 @@ macro_rules! point_class {
     ($py_name:literal, $rust:ident, $dim:expr, $alias_from:expr, $three_d:expr,
      $mutable:expr, $basic:ident, { $($extra:item)* }) => {
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.core")]
+        #[pyclass(name = $py_name, module = "lanelet2.core", weakref)]
         pub struct $rust {
             point: Point,
         }

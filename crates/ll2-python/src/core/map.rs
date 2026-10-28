@@ -65,7 +65,8 @@ pub fn primitive_from_any(obj: &Bound<'_, PyAny>) -> Option<Primitive> {
     name = "PrimitiveLayerLanelet",
     module = "lanelet2.core",
     subclass,
-    frozen
+    frozen,
+    weakref
 )]
 pub struct PyPrimitiveLayerLanelet;
 
@@ -73,7 +74,8 @@ pub struct PyPrimitiveLayerLanelet;
     name = "PrimitiveLayerArea",
     module = "lanelet2.core",
     subclass,
-    frozen
+    frozen,
+    weakref
 )]
 pub struct PyPrimitiveLayerArea;
 
@@ -84,7 +86,7 @@ macro_rules! layer_class {
 
     ($py_name:literal, $rust:ident, $kind:expr, $usages:tt, $($base:tt)*) => {
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.core", frozen $($base)*)]
+        #[pyclass(name = $py_name, module = "lanelet2.core", frozen $($base)*, weakref)]
         pub struct $rust {
             map: Arc<LaneletMap>,
         }
@@ -217,7 +219,13 @@ layer_class!(
 );
 
 /// The six layers, shared by `LaneletMap` and `LaneletSubmap`.
-#[pyclass(name = "LaneletMapLayers", module = "lanelet2.core", subclass, frozen)]
+#[pyclass(
+    name = "LaneletMapLayers",
+    module = "lanelet2.core",
+    subclass,
+    frozen,
+    weakref
+)]
 pub struct PyLaneletMapLayers {
     map: Arc<LaneletMap>,
 }

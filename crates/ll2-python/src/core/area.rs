@@ -111,7 +111,7 @@ macro_rules! inner_bounds_class {
         /// A live view of an area's holes. Upstream binds it as a real class rather
         /// than converting to a list, because the nested vectors would otherwise
         /// come back as temporaries.
-        #[pyclass(name = $py_name, module = "lanelet2.core")]
+        #[pyclass(name = $py_name, module = "lanelet2.core", weakref)]
         pub struct $rust {
             area: Area,
         }
@@ -214,7 +214,7 @@ macro_rules! area_class {
 
     ($py_name:literal, $rust:ident, $mutable:tt, $bound:ident, $holes:ident) => {
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.core")]
+        #[pyclass(name = $py_name, module = "lanelet2.core", weakref)]
         pub struct $rust {
             area: Area,
         }

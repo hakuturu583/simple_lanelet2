@@ -154,7 +154,7 @@ fn lanelet_repr_without_regelems(py: Python<'_>, lanelet: &Lanelet) -> PyResult<
 /// Carries a pre-rendered repr, so that a cycle can be broken by substitution.
 ///
 /// Upstream exports this under exactly this name.
-#[pyclass(name = "_ReprWrapper", module = "lanelet2.core", frozen)]
+#[pyclass(name = "_ReprWrapper", module = "lanelet2.core", frozen, weakref)]
 pub struct ReprWrapper {
     text: String,
 }
@@ -177,7 +177,7 @@ impl ReprWrapper {
 macro_rules! parameter_map {
     ($py_name:literal, $rust:ident, $is_const:tt, $entry:ident, $entry_name:literal) => {
         #[doc = concat!("One entry of a `", $py_name, "`.")]
-        #[pyclass(name = $entry_name, module = "lanelet2.core")]
+        #[pyclass(name = $entry_name, module = "lanelet2.core", weakref)]
         pub struct $entry {
             key: String,
             data: Py<PyAny>,
@@ -195,7 +195,7 @@ macro_rules! parameter_map {
         }
 
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.core")]
+        #[pyclass(name = $py_name, module = "lanelet2.core", weakref)]
         pub struct $rust {
             parameters: RuleParameterMap,
         }
@@ -335,7 +335,12 @@ parameter_map!(
 // ---------------------------------------------------------------------------
 
 /// `lanelet2.core.RegulatoryElement`, the abstract base of every typed element.
-#[pyclass(name = "RegulatoryElement", module = "lanelet2.core", subclass)]
+#[pyclass(
+    name = "RegulatoryElement",
+    module = "lanelet2.core",
+    subclass,
+    weakref
+)]
 pub struct PyRegulatoryElement {
     pub(crate) regelem: RegulatoryElement,
 }
@@ -794,7 +799,7 @@ impl PyRightOfWay {
 }
 
 /// `lanelet2.core.TrafficSignsWithType` — signs plus the sign type they share.
-#[pyclass(name = "TrafficSignsWithType", module = "lanelet2.core")]
+#[pyclass(name = "TrafficSignsWithType", module = "lanelet2.core", weakref)]
 pub struct PyTrafficSignsWithType {
     pub(crate) signs: Vec<RuleParameter>,
     pub(crate) sign_type: String,
@@ -1150,7 +1155,7 @@ impl PySpeedLimit {
 }
 
 /// `lanelet2.core.LaneletWithStopLine` — a lanelet paired with its stop line.
-#[pyclass(name = "LaneletWithStopLine", module = "lanelet2.core")]
+#[pyclass(name = "LaneletWithStopLine", module = "lanelet2.core", weakref)]
 pub struct PyLaneletWithStopLine {
     pub(crate) lanelet: Lanelet,
     pub(crate) stop_line: Option<LineString>,
@@ -1202,7 +1207,7 @@ impl PyLaneletWithStopLine {
 ///
 /// Despite the name, upstream's constructor takes a mutable `Lanelet` and its
 /// `stopLine` setter builds a `LineString3d`; only the accessors are const.
-#[pyclass(name = "ConstLaneletWithStopLine", module = "lanelet2.core")]
+#[pyclass(name = "ConstLaneletWithStopLine", module = "lanelet2.core", weakref)]
 pub struct PyConstLaneletWithStopLine {
     lanelet: Lanelet,
     stop_line: Option<LineString>,

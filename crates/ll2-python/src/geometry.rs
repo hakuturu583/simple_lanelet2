@@ -136,7 +136,7 @@ fn point_to_shape_2d(point: Point2, line: &[Point2], shape: Shape) -> f64 {
 // ---------------------------------------------------------------------------
 
 /// `lanelet2.geometry.ArcCoordinates`.
-#[pyclass(name = "ArcCoordinates", module = "lanelet2.geometry")]
+#[pyclass(name = "ArcCoordinates", module = "lanelet2.geometry", weakref)]
 #[derive(Clone, Copy)]
 pub struct PyArcCoordinates {
     pub(crate) arc: ArcCoordinates,

@@ -25,7 +25,8 @@ use crate::projection::to_py_error;
 #[pyclass(
     name = "TransverseMercatorProjector",
     module = "autoware_lanelet2_extension_python.projection",
-    frozen
+    frozen,
+    weakref
 )]
 pub struct PyTransverseMercatorProjector {
     projector: SharedProjector,
@@ -83,7 +84,8 @@ impl PyTransverseMercatorProjector {
 #[pyclass(
     name = "MGRSProjector",
     module = "autoware_lanelet2_extension_python.projection",
-    frozen
+    frozen,
+    weakref
 )]
 pub struct PyMgrsProjector {
     projector: SharedProjector,

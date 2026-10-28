@@ -37,7 +37,7 @@ macro_rules! compound_class {
         dimensions: $dims:tt,
     ) => {
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.core")]
+        #[pyclass(name = $py_name, module = "lanelet2.core", weakref)]
         pub struct $rust {
             compound: CompoundLineString,
         }
@@ -146,7 +146,7 @@ compound_class! {
 macro_rules! compound_hybrid {
     ($py_name:literal, $rust:ident, $item:ident, $dims:tt) => {
         #[doc = concat!("`lanelet2.core.", $py_name, "`.")]
-        #[pyclass(name = $py_name, module = "lanelet2.core")]
+        #[pyclass(name = $py_name, module = "lanelet2.core", weakref)]
         pub struct $rust {
             compound: CompoundLineString,
         }

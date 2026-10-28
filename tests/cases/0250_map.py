@@ -103,6 +103,23 @@ def main():
     emit("regelem_ids", [r.id for r in by_id(light_map.regulatoryElementLayer)])
     emit("regelem_types", [type(r).__name__ for r in by_id(light_map.regulatoryElementLayer)])
 
+    # A custom centerline is a map primitive and comes in with its lanelet, inverted
+    # or not; a computed one has no id and does not.
+    custom = lanelet(80)
+    custom.centerline = line(83, [(0.0, 0.0), (1.0, 0.0)])
+    inverted = lanelet(90, offset=5.0).invert()
+    inverted.centerline = line(93, [(6.0, 0.0), (5.0, 0.0)])
+    centerline_map = LaneletMap()
+    centerline_map.add(custom)
+    centerline_map.add(inverted)
+    centerline_map.add(lanelet(100, offset=10.0))
+    emit("centerline_map_sizes", layer_sizes(centerline_map))
+    emit("centerline_linestrings", [(ls.id, [p.id for p in ls])
+                                    for ls in by_id(centerline_map.lineStringLayer)])
+    centerline_submap = LaneletSubmap()
+    centerline_submap.add(custom)
+    emit("centerline_submap_sizes", layer_sizes(centerline_submap))
+
     # A submap records only what it is handed.
     submap = createSubmapFromLanelets([lanelet(60)])
     emit("submap_cls", type(submap).__name__)

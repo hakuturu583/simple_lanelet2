@@ -20,7 +20,7 @@ use crate::projection::projector_of;
 /// The `is_default` flag is not visible from Python but decides whether a parser
 /// will accept the origin: loading a georeferenced map through a default-built
 /// origin would silently produce meaningless coordinates, so it raises instead.
-#[pyclass(name = "Origin", module = "lanelet2.io")]
+#[pyclass(name = "Origin", module = "lanelet2.io", weakref)]
 #[derive(Clone, Copy)]
 pub struct PyOrigin {
     pub(crate) origin: Origin,

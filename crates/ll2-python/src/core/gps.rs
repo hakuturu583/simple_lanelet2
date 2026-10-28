@@ -7,7 +7,7 @@ use ll2_projection::GpsPoint;
 use pyo3::prelude::*;
 
 /// `lanelet2.core.GPSPoint`.
-#[pyclass(name = "GPSPoint", module = "lanelet2.core")]
+#[pyclass(name = "GPSPoint", module = "lanelet2.core", weakref)]
 #[derive(Clone, Copy)]
 pub struct PyGpsPoint {
     pub(crate) point: GpsPoint,
