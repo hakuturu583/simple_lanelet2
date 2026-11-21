@@ -1,0 +1,14 @@
+[package]
+name = "ll2-osm-roads"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Writes a Lanelet2 map as a plain OpenStreetMap road network (highway ways, junction nodes)"
+
+[dependencies]
+ll2-core.workspace = true
+ll2-io.workspace = true
+ll2-projection.workspace = true
