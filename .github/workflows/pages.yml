@@ -35,7 +35,9 @@ env:
 jobs:
   build:
     name: build the viewer
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: that moved to 26.04, which Playwright does not support
+    # yet ("Playwright does not support chromium on ubuntu26.04-x64").
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
