@@ -1941,6 +1941,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ll2-osm-roads"
+version = "1.3.0"
+dependencies = [
+ "ll2-core",
+ "ll2-io",
+ "ll2-projection",
+]
+
+[[package]]
 name = "ll2-projection"
 version = "1.3.0"
 

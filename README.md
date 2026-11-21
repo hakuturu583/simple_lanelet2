@@ -253,6 +253,36 @@ halves, which are defined but raise when called — upstream imports `geometry_m
 of upstream's own bindings do not work; those are repaired here and reproduced under
 `LANELET2_BUG_COMPAT=1`. See [`docs/DIVERGENCE.md`](docs/DIVERGENCE.md) for the list.
 
+## Writing a map as plain OpenStreetMap roads
+
+A Lanelet2 `.osm` file is OSM XML, but its ways are lane bounds, so a tool that reads
+OSM roads (`highway=*` centre lines meeting at shared nodes) finds nothing in it. The
+`ll2-osm-roads` crate rewrites a map in that vocabulary. It is a Rust crate only; the
+Python package does not expose it.
+
+```bash
+cargo run --release -p ll2-osm-roads --example ll2osm -- lanelet2_map.osm roads.osm
+```
+
+| Lanelet2 | Plain OSM |
+| --- | --- |
+| Adjacent vehicle lanelets (they share a bound, or their centre lines lie on top of each other) | One `highway=*` way along the middle of the outermost bounds, with `lanes`, `lanes:forward`/`lanes:backward` or `oneway=yes`, `width` and `maxspeed` |
+| Lanelets with Autoware's `turn_direction` (the inside of an intersection) | Not written. The roads that enter or leave them end at one shared junction node |
+| `traffic_light` regulatory elements | `highway=traffic_signals` on the junction node |
+| Stop signs | `highway=stop` with `direction`, on the approach |
+| Crosswalk lanelets | `highway=footway` + `footway=crossing` ways, with a `highway=crossing` node where they cross a road |
+| Walkway lanelets | `highway=footway` ways |
+| A road that passes over another one more than 3 m higher | `bridge=yes` + `layer=1` |
+| A road below the local ground level, under another one | `tunnel=yes` + `layer=-1` |
+
+A way is split only where its tags change, not at every lanelet boundary. The output
+has no buildings and no street names.
+
+`--oneway-ref=REF` puts the same `ref` on every one-way way. Some consumers pair the two
+carriageways of a divided road only when they share a name or a ref, and Lanelet2 maps
+carry neither. carla-digitaltwins' TwinModel is one of them. The ref is not data from
+the map, so the option is off by default.
+
 ## CI
 
 Four jobs, arranged around the compatibility claim rather than around the test suite:
