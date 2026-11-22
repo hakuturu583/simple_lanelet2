@@ -41,19 +41,30 @@ pub const LEVEL_DZ: f64 = 3.0;
 pub const COINCIDENT_M: f64 = 0.5;
 /// Spacing of the written centre line (m).
 const STEP: f64 = 5.0;
-/// A one-way road with a speed limit at or below this (km/h) is written as
-/// `highway=service`: a station rotary, a bus bay, a car park lane. Consumers keep such
-/// roads out of the street junctions next to them.
+/// Default of `Options::service_max_kmh`.
 pub const SERVICE_MAX_KMH: f64 = 15.0;
 
 /// Choices a caller can make.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Options {
     /// A `ref` for every one-way carriageway. Lanelet2 maps carry no street names, and some
     /// consumers only pair the two carriageways of a divided road when they share a name or
     /// a ref (carla-digitaltwins' TwinModel, for one); with a common ref they pair them by
     /// geometry alone. Off by default: the ref is not data from the map.
     pub oneway_ref: Option<String>,
+    /// A one-way road with a speed limit at or below this (km/h) is written as
+    /// `highway=service`: a station rotary, a bus bay, a car park lane. Consumers keep such
+    /// roads out of the street junctions next to them. 0 turns it off.
+    pub service_max_kmh: f64,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            oneway_ref: None,
+            service_max_kmh: SERVICE_MAX_KMH,
+        }
+    }
 }
 
 /// What the conversion made.
@@ -986,7 +997,7 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
         let width = chain.iter().map(|&(k, _)| ways[k].width).sum::<f64>() / chain.len() as f64;
         let lanes = lanes_fwd + lanes_bwd;
         let per_dir = lanes_fwd.max(lanes_bwd);
-        let slow = w.speed.is_some_and(|v| v <= SERVICE_MAX_KMH);
+        let slow = w.speed.is_some_and(|v| v <= options.service_max_kmh);
         let highway = if w.highway_subtype {
             "motorway"
         } else if lanes_bwd == 0 && slow {

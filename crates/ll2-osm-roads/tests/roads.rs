@@ -228,6 +228,7 @@ fn one_way_roads_get_the_requested_ref() {
     assert!(!roads(&plain)[0].tags.contains_key("ref"));
     let options = Options {
         oneway_ref: Some("L2".into()),
+        ..Options::default()
     };
     let (tagged, _) = to_road_osm(&m.doc, &options).unwrap();
     assert_eq!(roads(&tagged)[0].tags["ref"], "L2");
@@ -332,4 +333,27 @@ fn a_loop_road_back_to_the_same_junction_is_kept() {
     let (out, report) = to_road_osm(&turn_lane_beside(40.0), &Options::default()).unwrap();
     assert_eq!(report.inside_junctions, 0);
     assert_eq!(roads(&out).len(), 3);
+}
+
+#[test]
+fn the_service_speed_is_an_option() {
+    let mut m = Map::default();
+    let a = m.way(&[(0.0, 0.0), (100.0, 0.0)], "line_thin");
+    let b = m.way(&[(0.0, -W), (100.0, -W)], "line_thin");
+    m.lanelet(a, b, &[("speed_limit", "30")], &[]);
+    let highway = |options: &Options| {
+        let (out, _) = to_road_osm(&m.doc, options).unwrap();
+        roads(&out)[0].tags["highway"].clone()
+    };
+    assert_eq!(highway(&Options::default()), "unclassified");
+    let wide = Options {
+        service_max_kmh: 30.0,
+        ..Options::default()
+    };
+    assert_eq!(highway(&wide), "service");
+    let off = Options {
+        service_max_kmh: 0.0,
+        ..Options::default()
+    };
+    assert_eq!(highway(&off), "unclassified");
 }

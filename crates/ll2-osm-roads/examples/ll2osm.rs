@@ -1,7 +1,7 @@
 //! Writes a Lanelet2 `.osm` map as a plain OpenStreetMap road network.
 //!
 //! ```text
-//! cargo run -p ll2-osm-roads --example ll2osm -- lanelet2_map.osm roads.osm [--oneway-ref=REF]
+//! cargo run -p ll2-osm-roads --example ll2osm -- lanelet2_map.osm roads.osm [--oneway-ref=REF] [--service-max-kmh=KMH]
 //! ```
 
 use std::process::ExitCode;
@@ -16,11 +16,24 @@ fn main() -> ExitCode {
         eprintln!("usage: ll2osm <lanelet2_map.osm> <roads.osm> [--oneway-ref=REF]");
         return ExitCode::FAILURE;
     };
+    let service_max_kmh = match arguments
+        .iter()
+        .find_map(|a| a.strip_prefix("--service-max-kmh="))
+        .map(str::parse::<f64>)
+    {
+        None => ll2_osm_roads::SERVICE_MAX_KMH,
+        Some(Ok(v)) => v,
+        Some(Err(error)) => {
+            eprintln!("--service-max-kmh: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let options = Options {
         oneway_ref: arguments
             .iter()
             .find_map(|a| a.strip_prefix("--oneway-ref="))
             .map(str::to_string),
+        service_max_kmh,
     };
     let text = match std::fs::read_to_string(input) {
         Ok(text) => text,
