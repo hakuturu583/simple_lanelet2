@@ -267,7 +267,10 @@ cargo run --release -p ll2-osm-roads --example ll2osm -- lanelet2_map.osm roads.
 | Lanelet2 | Plain OSM |
 | --- | --- |
 | Adjacent vehicle lanelets (they share a bound, or their centre lines lie on top of each other) | One `highway=*` way along the middle of the outermost bounds, with `lanes`, `lanes:forward`/`lanes:backward` or `oneway=yes`, `width` and `maxspeed` |
+| One-way lanelets with a speed limit of 15 km/h or less (a station rotary, a bus bay; `Options::service_max_kmh`, `--service-max-kmh=KMH`, 0 turns it off) | `highway=service` |
 | Lanelets with Autoware's `turn_direction` (the inside of an intersection) | Not written. The roads that enter or leave them end at one shared junction node |
+| A short stretch that a turn lanelet runs alongside, from one end to the other | Not written. Both its ends are the same junction node, and the turn lanelets already carry its traffic |
+| The road surface (every carriageway between its outermost bounds, every turn lanelet) | `area:highway=*` polygons with the road's class (an intersection: the highest class meeting there) and `lanelet2:ids`. The turn lanelets of one intersection overlap; their union is its surface. `--no-area-highway` leaves them out |
 | `traffic_light` regulatory elements | `highway=traffic_signals` on the junction node |
 | Stop signs | `highway=stop` with `direction`, on the approach |
 | Crosswalk lanelets | `highway=footway` + `footway=crossing` ways, with a `highway=crossing` node where they cross a road |
