@@ -1,7 +1,7 @@
 //! Writes a Lanelet2 `.osm` map as a plain OpenStreetMap road network.
 //!
 //! ```text
-//! cargo run -p ll2-osm-roads --example ll2osm -- lanelet2_map.osm roads.osm [--oneway-ref=REF] [--service-max-kmh=KMH]
+//! cargo run -p ll2-osm-roads --example ll2osm -- lanelet2_map.osm roads.osm [--oneway-ref=REF] [--service-max-kmh=KMH] [--no-area-highway]
 //! ```
 
 use std::process::ExitCode;
@@ -13,7 +13,9 @@ fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let positional: Vec<&String> = arguments.iter().filter(|a| !a.starts_with("--")).collect();
     let [input, output] = positional.as_slice() else {
-        eprintln!("usage: ll2osm <lanelet2_map.osm> <roads.osm> [--oneway-ref=REF]");
+        eprintln!(
+            "usage: ll2osm <lanelet2_map.osm> <roads.osm> [--oneway-ref=REF] [--service-max-kmh=KMH] [--no-area-highway]"
+        );
         return ExitCode::FAILURE;
     };
     let service_max_kmh = match arguments
@@ -34,6 +36,7 @@ fn main() -> ExitCode {
             .find_map(|a| a.strip_prefix("--oneway-ref="))
             .map(str::to_string),
         service_max_kmh,
+        area_highway: !arguments.iter().any(|a| a == "--no-area-highway"),
     };
     let text = match std::fs::read_to_string(input) {
         Ok(text) => text,

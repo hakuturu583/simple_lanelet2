@@ -393,3 +393,52 @@ fn a_branch_off_a_straight_road_keeps_the_road_straight() {
         .fold(f64::INFINITY, |a, b| a.min(b.abs()));
     assert!(at_road < 0.1, "{at_road}");
 }
+
+#[test]
+fn the_road_surface_is_written_as_area_highway_polygons() {
+    let mut m = Map::default();
+    let d = 20.0;
+    m.two_way_x(-120.0, -d);
+    m.two_way_x(d, 120.0);
+    let straight = [("turn_direction", "straight")];
+    let c = m.way(&[(-d, 0.0), (d, 0.0)], "virtual");
+    let s = m.way(&[(-d, -W), (d, -W)], "virtual");
+    let n = m.way(&[(-d, W), (d, W)], "virtual");
+    m.lanelet(c, s, &straight, &[]);
+    m.lanelet(c, n, &straight, &[]);
+    let (out, report) = to_road_osm(&m.doc, &Options::default()).unwrap();
+    // two carriageways and two turn lanelets
+    assert_eq!(report.road_areas, 4);
+    let areas: Vec<&Way> = out
+        .ways
+        .values()
+        .filter(|w| w.tags.contains_key("area:highway"))
+        .collect();
+    assert_eq!(areas.len(), 4);
+    for w in &areas {
+        assert_eq!(w.nodes.first(), w.nodes.last(), "a closed ring");
+        assert_eq!(w.tags["area:highway"], "tertiary");
+    }
+    // a carriageway's polygon spans its full width: 2 W across, 100 m along
+    let span = |w: &Way, f: fn(&Node) -> f64| {
+        let v: Vec<f64> = w.nodes.iter().map(|id| f(&out.nodes[id])).collect();
+        v.iter().cloned().fold(f64::MIN, f64::max) - v.iter().cloned().fold(f64::MAX, f64::min)
+    };
+    let widest = areas
+        .iter()
+        .map(|w| span(w, |n| (n.lat - LAT0) * 111_320.0))
+        .fold(0.0, f64::max);
+    assert!((widest - 2.0 * W).abs() < 0.05, "{widest}");
+    let off = Options {
+        area_highway: false,
+        ..Options::default()
+    };
+    let (plain, report) = to_road_osm(&m.doc, &off).unwrap();
+    assert_eq!(report.road_areas, 0);
+    assert!(
+        plain
+            .ways
+            .values()
+            .all(|w| !w.tags.contains_key("area:highway"))
+    );
+}

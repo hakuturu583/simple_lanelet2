@@ -56,6 +56,12 @@ pub struct Options {
     /// `highway=service`: a station rotary, a bus bay, a car park lane. Consumers keep such
     /// roads out of the street junctions next to them. 0 turns it off.
     pub service_max_kmh: f64,
+    /// Also write the road surface as `area:highway=*` polygons: one per carriageway (between
+    /// its outermost lane bounds) and one per turn lanelet inside an intersection, so a
+    /// consumer can take the kerb lines, corner radii included, from the map instead of
+    /// rebuilding them from centre lines and widths. The turn lanelets of one intersection
+    /// overlap; their union is the intersection's surface.
+    pub area_highway: bool,
 }
 
 impl Default for Options {
@@ -63,6 +69,7 @@ impl Default for Options {
         Self {
             oneway_ref: None,
             service_max_kmh: SERVICE_MAX_KMH,
+            area_highway: true,
         }
     }
 }
@@ -86,6 +93,8 @@ pub struct Report {
     pub inside_junctions: usize,
     /// Ways written as `highway=service` (`SERVICE_MAX_KMH`).
     pub service: usize,
+    /// `area:highway` polygons written (`Options::area_highway`).
+    pub road_areas: usize,
 }
 
 type P3 = [f64; 3];
@@ -264,6 +273,47 @@ fn lerp(a: &P3, b: &P3, t: f64) -> P3 {
         a[1] + t * (b[1] - a[1]),
         a[2] + t * (b[2] - a[2]),
     ]
+}
+
+/// The `highway` value of a road: motorway for Lanelet2's `highway` subtype, service for a
+/// slow one-way road, else by lanes per direction.
+fn highway_class(
+    highway_subtype: bool,
+    lanes_fwd: usize,
+    lanes_bwd: usize,
+    speed: Option<f64>,
+    service_max_kmh: f64,
+) -> &'static str {
+    let per_dir = lanes_fwd.max(lanes_bwd);
+    let slow = speed.is_some_and(|v| v <= service_max_kmh);
+    if highway_subtype {
+        "motorway"
+    } else if lanes_bwd == 0 && slow {
+        "service"
+    } else if per_dir >= 3 {
+        "primary"
+    } else if per_dir >= 2 {
+        "secondary"
+    } else if lanes_bwd > 0 {
+        "tertiary"
+    } else {
+        "unclassified"
+    }
+}
+
+/// Lower is a higher road class (`highway_class` values).
+fn class_rank(c: &str) -> usize {
+    [
+        "motorway",
+        "primary",
+        "secondary",
+        "tertiary",
+        "unclassified",
+        "service",
+    ]
+    .iter()
+    .position(|&x| x == c)
+    .unwrap_or(9)
 }
 
 /// Two arms leaving a junction this close to opposite directions (cosine) are one road
@@ -491,6 +541,8 @@ struct Carriageway {
     width: f64,
     speed: Option<f64>,
     highway_subtype: bool,
+    /// left outermost bound, then the right one backwards: the carriageway's surface
+    outline: Vec<P3>,
 }
 
 /// Builds the plain-OSM road network of a Lanelet2 document.
@@ -609,6 +661,7 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
         }
         let line = mid_line(&left, &right);
         let width = mean_width(&left, &right);
+        let outline: Vec<P3> = left.iter().chain(right.iter().rev()).copied().collect();
         let speed = members
             .iter()
             .filter_map(|&i| ll[i].speed())
@@ -634,6 +687,7 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
             width,
             speed,
             highway_subtype,
+            outline,
         });
     }
     report.roads = ways.len();
@@ -1041,6 +1095,7 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
 
     // -- write the ways -------------------------------------------------------------------------
     let mut wid: Id = 1;
+    let mut class_of: Vec<Option<&'static str>> = vec![None; ways.len()];
     for chain in &chains {
         let (k, rev0) = chain[0];
         let w = &ways[k];
@@ -1051,22 +1106,19 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
         };
         let width = chain.iter().map(|&(k, _)| ways[k].width).sum::<f64>() / chain.len() as f64;
         let lanes = lanes_fwd + lanes_bwd;
-        let per_dir = lanes_fwd.max(lanes_bwd);
-        let slow = w.speed.is_some_and(|v| v <= options.service_max_kmh);
-        let highway = if w.highway_subtype {
-            "motorway"
-        } else if lanes_bwd == 0 && slow {
+        let highway = highway_class(
+            w.highway_subtype,
+            lanes_fwd,
+            lanes_bwd,
+            w.speed,
+            options.service_max_kmh,
+        );
+        if highway == "service" {
             report.service += 1;
-            "service"
-        } else if per_dir >= 3 {
-            "primary"
-        } else if per_dir >= 2 {
-            "secondary"
-        } else if lanes_bwd > 0 {
-            "tertiary"
-        } else {
-            "unclassified"
-        };
+        }
+        for &(k, _) in chain {
+            class_of[k] = Some(highway);
+        }
         let mut tags = Tags::new();
         tags.insert("highway".into(), highway.into());
         tags.insert("lanes".into(), lanes.to_string());
@@ -1120,6 +1172,80 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
         );
         way_ids.push(wid);
         wid += 1;
+    }
+    // -- the road surface as area:highway polygons ----------------------------------------------
+    if options.area_highway {
+        let class = |k: usize| {
+            class_of[k].unwrap_or_else(|| {
+                let w = &ways[k];
+                highway_class(
+                    w.highway_subtype,
+                    w.lanes_fwd,
+                    w.lanes_bwd,
+                    w.speed,
+                    options.service_max_kmh,
+                )
+            })
+        };
+        // an intersection's surface takes the highest class among the roads meeting there
+        let mut set_class: HashMap<usize, &'static str> = HashMap::new();
+        for k in 0..ways.len() {
+            for side in 0..2 {
+                let e = set_class.entry(ends.find(2 * k + side)).or_insert(class(k));
+                if class_rank(class(k)) < class_rank(e) {
+                    *e = class(k);
+                }
+            }
+        }
+        let mut polygons: Vec<(Vec<P3>, &'static str, String)> = Vec::new();
+        for (k, w) in ways.iter().enumerate() {
+            let ids: Vec<String> = w.members.iter().map(|&i| ll[i].id.to_string()).collect();
+            polygons.push((w.outline.clone(), class(k), ids.join(";")));
+        }
+        for &i in &jl {
+            let l = &ll[i];
+            let ring: Vec<P3> = l.left.iter().chain(l.right.iter().rev()).copied().collect();
+            let c = set_class
+                .get(&ends.find(jkey(i)))
+                .copied()
+                .unwrap_or("unclassified");
+            polygons.push((ring, c, l.id.to_string()));
+        }
+        let mut at: HashMap<(i64, i64), Id> = HashMap::new();
+        for (ring, c, ids) in polygons {
+            let mut nodes: Vec<Id> = Vec::new();
+            for p in &ring {
+                let key = (
+                    (p[0] * 1000.0).round() as i64,
+                    (p[1] * 1000.0).round() as i64,
+                );
+                let id = *at
+                    .entry(key)
+                    .or_insert_with(|| new_node(&mut out, *p, Tags::new()));
+                if nodes.last() != Some(&id) {
+                    nodes.push(id);
+                }
+            }
+            if nodes.len() < 3 {
+                continue;
+            }
+            if nodes.first() != nodes.last() {
+                nodes.push(nodes[0]);
+            }
+            let mut tags = Tags::new();
+            tags.insert("area:highway".into(), c.into());
+            tags.insert("lanelet2:ids".into(), ids);
+            out.ways.insert(
+                wid,
+                Way {
+                    id: wid,
+                    nodes,
+                    tags,
+                },
+            );
+            wid += 1;
+            report.road_areas += 1;
+        }
     }
     for (nodes, tags) in foot_ways {
         let mut ids: Vec<Id> = nodes.iter().map(|n| n.0).collect();
