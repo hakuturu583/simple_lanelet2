@@ -41,6 +41,10 @@ pub const LEVEL_DZ: f64 = 3.0;
 pub const COINCIDENT_M: f64 = 0.5;
 /// Spacing of the written centre line (m).
 const STEP: f64 = 5.0;
+/// A one-way road with a speed limit at or below this (km/h) is written as
+/// `highway=service`: a station rotary, a bus bay, a car park lane. Consumers keep such
+/// roads out of the street junctions next to them.
+pub const SERVICE_MAX_KMH: f64 = 15.0;
 
 /// Choices a caller can make.
 #[derive(Debug, Default, Clone)]
@@ -66,6 +70,11 @@ pub struct Report {
     pub bridges: usize,
     pub tunnels: usize,
     pub dead_ends: usize,
+    /// Carriageways left out because they start and end in the same intersection, within
+    /// its turn lanelets (a short stretch a turn lane runs alongside).
+    pub inside_junctions: usize,
+    /// Ways written as `highway=service` (`SERVICE_MAX_KMH`).
+    pub service: usize,
 }
 
 type P3 = [f64; 3];
@@ -244,6 +253,46 @@ fn lerp(a: &P3, b: &P3, t: f64) -> P3 {
         a[1] + t * (b[1] - a[1]),
         a[2] + t * (b[2] - a[2]),
     ]
+}
+
+/// Convex hull of the points' x, y (Andrew's monotone chain), counter-clockwise.
+fn convex_hull(pts: &[P3]) -> Vec<[f64; 2]> {
+    let mut p: Vec<[f64; 2]> = pts.iter().map(|q| [q[0], q[1]]).collect();
+    p.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+    p.dedup();
+    if p.len() < 3 {
+        return p;
+    }
+    let cross = |o: &[f64; 2], a: &[f64; 2], b: &[f64; 2]| {
+        (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    };
+    let mut h: Vec<[f64; 2]> = Vec::with_capacity(2 * p.len());
+    for pass in 0..2 {
+        let start = h.len();
+        let it: Box<dyn Iterator<Item = &[f64; 2]>> = if pass == 0 {
+            Box::new(p.iter())
+        } else {
+            Box::new(p.iter().rev())
+        };
+        for q in it {
+            while h.len() >= start + 2 && cross(&h[h.len() - 2], &h[h.len() - 1], q) <= 0.0 {
+                h.pop();
+            }
+            h.push(*q);
+        }
+        h.pop();
+    }
+    h
+}
+
+/// Whether `p` lies inside a counter-clockwise convex polygon, or within `END_TOL` of it.
+fn in_convex(hull: &[[f64; 2]], p: &P3) -> bool {
+    hull.len() >= 3
+        && (0..hull.len()).all(|i| {
+            let (a, b) = (hull[i], hull[(i + 1) % hull.len()]);
+            let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+            (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= -END_TOL * len
+        })
 }
 
 // ----------------------------------------------------------------------------- union-find
@@ -648,6 +697,29 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
     }
     report.junctions = set_node.values().filter(|v| v.2).count();
 
+    // a carriageway whose two ends meet in one intersection, with its middle inside the
+    // intersection's turn lanelets, is a stretch a turn lane runs alongside (a right-turn
+    // lane that leaves before a short through stretch and rejoins after it). Written, it
+    // would be a way from the junction node back to itself; the turn lanelets already
+    // stand for the traffic through it. A loop road that leaves a junction and comes back
+    // to it keeps its middle outside the junction and is written.
+    let hulls: HashMap<usize, Vec<[f64; 2]>> = junction_pts
+        .iter()
+        .map(|(root, pts)| (*root, convex_hull(pts)))
+        .collect();
+    let inside: Vec<bool> = ways
+        .iter()
+        .enumerate()
+        .map(|(k, w)| {
+            let root = ends.find(2 * k);
+            root == ends.find(2 * k + 1)
+                && hulls
+                    .get(&root)
+                    .is_some_and(|h| in_convex(h, &w.line[w.line.len() / 2]))
+        })
+        .collect();
+    report.inside_junctions = inside.iter().filter(|&&b| b).count();
+
     // -- levels -----------------------------------------------------------------------------
     let level = levels(&ways);
     // -- the road ways ------------------------------------------------------------------------
@@ -655,7 +727,7 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
     let mut approach: Vec<[Id; 2]> = Vec::new(); // the node just before each end (stop signs)
     let mut way_ids: Vec<Id> = Vec::new();
     let mut set_degree: HashMap<usize, usize> = HashMap::new();
-    for k in 0..ways.len() {
+    for k in (0..ways.len()).filter(|&k| !inside[k]) {
         for side in 0..2 {
             *set_degree.entry(ends.find(2 * k + side)).or_default() += 1;
         }
@@ -687,7 +759,7 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
         if !e.2 {
             appr[1] = e.0;
         }
-        for side in 0..2 {
+        for side in (0..2).filter(|_| !inside[k]) {
             let root = ends.find(2 * k + side);
             if set_degree[&root] == 1 && !set_node[&root].2 {
                 report.dead_ends += 1;
@@ -843,7 +915,7 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
     };
     let roots: Vec<usize> = (0..2 * ways.len()).map(|x| ends.find(x)).collect();
     let mut at_root: HashMap<usize, Vec<(usize, usize)>> = HashMap::new(); // root -> (way, side)
-    for k in 0..ways.len() {
+    for k in (0..ways.len()).filter(|&k| !inside[k]) {
         for side in 0..2 {
             at_root
                 .entry(roots[2 * k + side])
@@ -871,7 +943,7 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
         let rev2 = leaving_end != entering_start;
         (signature(k, reversed) == signature(k2, rev2)).then_some((k2, rev2))
     };
-    let mut used = vec![false; ways.len()];
+    let mut used = inside.clone();
     let mut chains: Vec<Vec<(usize, bool)>> = Vec::new();
     for k0 in 0..ways.len() {
         if used[k0] {
@@ -914,8 +986,12 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
         let width = chain.iter().map(|&(k, _)| ways[k].width).sum::<f64>() / chain.len() as f64;
         let lanes = lanes_fwd + lanes_bwd;
         let per_dir = lanes_fwd.max(lanes_bwd);
+        let slow = w.speed.is_some_and(|v| v <= SERVICE_MAX_KMH);
         let highway = if w.highway_subtype {
             "motorway"
+        } else if lanes_bwd == 0 && slow {
+            report.service += 1;
+            "service"
         } else if per_dir >= 3 {
             "primary"
         } else if per_dir >= 2 {

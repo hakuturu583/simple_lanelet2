@@ -237,3 +237,99 @@ fn one_way_roads_get_the_requested_ref() {
 fn a_map_without_coordinates_is_refused() {
     assert!(to_road_osm(&Document::default(), &Options::default()).is_err());
 }
+
+#[test]
+fn slow_one_way_roads_are_service_roads() {
+    let mut m = Map::default();
+    let a = m.way(&[(0.0, 0.0), (100.0, 0.0)], "line_thin");
+    let b = m.way(&[(0.0, -W), (100.0, -W)], "line_thin");
+    m.lanelet(a, b, &[("speed_limit", "8")], &[]);
+    let c = m.way(&[(0.0, 50.0), (100.0, 50.0)], "line_thin");
+    let d = m.way(&[(0.0, 50.0 - W), (100.0, 50.0 - W)], "line_thin");
+    m.lanelet(c, d, &[("speed_limit", "30")], &[]);
+    let e = m.way(&[(0.0, 100.0), (100.0, 100.0)], "line_thin");
+    let f = m.way(&[(0.0, 100.0 - W), (100.0, 100.0 - W)], "road_border");
+    let g = m.way(&[(0.0, 100.0 + W), (100.0, 100.0 + W)], "road_border");
+    m.lanelet(e, f, &[("speed_limit", "8")], &[]);
+    m.lanelet(e, g, &[("speed_limit", "8")], &[]);
+    let (out, report) = to_road_osm(&m.doc, &Options::default()).unwrap();
+    let mut by_speed: Vec<(String, bool, String)> = roads(&out)
+        .iter()
+        .map(|w| {
+            (
+                w.tags["maxspeed"].clone(),
+                w.tags.contains_key("oneway"),
+                w.tags["highway"].clone(),
+            )
+        })
+        .collect();
+    by_speed.sort();
+    assert_eq!(
+        by_speed,
+        [
+            ("30".into(), true, "unclassified".into()),
+            ("8".into(), false, "tertiary".into()),
+            ("8".into(), true, "service".into()),
+        ]
+    );
+    assert_eq!(report.service, 1);
+}
+
+/// A one-way road along x: lanelets 0..50 and 63..120, and between them either a short
+/// through stretch (`detour` = 0) or a loop `detour` m to the north; a right-turn lanelet
+/// runs from 50 to 63 just south of the road, beside the short stretch.
+fn turn_lane_beside(detour: f64) -> Document {
+    let mut m = Map::default();
+    let lane = |m: &mut Map, pts: &[(f64, f64)]| {
+        let l = m.way(pts, "line_thin");
+        let r: Vec<(f64, f64)> = pts.iter().map(|&(x, y)| (x, y - W)).collect();
+        let r = m.way(&r, "line_thin");
+        (l, r)
+    };
+    let (l, r) = lane(&mut m, &[(0.0, 0.0), (50.0, 0.0)]);
+    m.lanelet(l, r, &[], &[]);
+    let (l, r) = lane(&mut m, &[(63.0, 0.0), (120.0, 0.0)]);
+    m.lanelet(l, r, &[], &[]);
+    let through: Vec<(f64, f64)> = if detour > 0.0 {
+        vec![(50.0, 0.0), (50.0, detour), (63.0, detour), (63.0, 0.0)]
+    } else {
+        vec![(50.0, 0.0), (63.0, 0.0)]
+    };
+    let (l, r) = lane(&mut m, &through);
+    m.lanelet(l, r, &[], &[]);
+    // the turn lane leaves at 50 and rejoins at 63, swinging up to 4 m south
+    let (l, r) = lane(
+        &mut m,
+        &[(50.0, 0.0), (54.0, -4.0), (59.0, -4.0), (63.0, 0.0)],
+    );
+    m.lanelet(l, r, &[("turn_direction", "right")], &[]);
+    m.doc
+}
+
+#[test]
+fn a_stretch_a_turn_lane_runs_alongside_is_not_a_way_back_to_its_own_node() {
+    let (out, report) = to_road_osm(&turn_lane_beside(0.0), &Options::default()).unwrap();
+    assert_eq!(report.inside_junctions, 1);
+    let r = roads(&out);
+    assert!(
+        r.iter().all(|w| w.nodes[0] != *w.nodes.last().unwrap()),
+        "{r:?}"
+    );
+    assert_eq!(r.len(), 2, "{r:?}");
+    // the two roads meet at the junction node
+    let ends: Vec<Id> = r
+        .iter()
+        .flat_map(|w| [w.nodes[0], *w.nodes.last().unwrap()])
+        .collect();
+    assert!(
+        ends.iter()
+            .any(|n| ends.iter().filter(|m| *m == n).count() == 2)
+    );
+}
+
+#[test]
+fn a_loop_road_back_to_the_same_junction_is_kept() {
+    let (out, report) = to_road_osm(&turn_lane_beside(40.0), &Options::default()).unwrap();
+    assert_eq!(report.inside_junctions, 0);
+    assert_eq!(roads(&out).len(), 3);
+}
