@@ -357,3 +357,39 @@ fn the_service_speed_is_an_option() {
     };
     assert_eq!(highway(&off), "unclassified");
 }
+
+#[test]
+fn a_branch_off_a_straight_road_keeps_the_road_straight() {
+    // an east-west road with a one-way branch to the north at x = 50; the branch's turn
+    // lanelet swings north, so its centre is off the road
+    let mut m = Map::default();
+    m.two_way_x(0.0, 45.0);
+    m.two_way_x(55.0, 100.0);
+    let through = [("turn_direction", "straight")];
+    let c = m.way(&[(45.0, 0.0), (55.0, 0.0)], "virtual");
+    let s = m.way(&[(45.0, -W), (55.0, -W)], "virtual");
+    let n = m.way(&[(45.0, W), (55.0, W)], "virtual");
+    m.lanelet(c, s, &through, &[]);
+    m.lanelet(c, n, &through, &[]);
+    // the branch: one lane from y = 10 north, entered by a left turn from the eastbound lane
+    let bl = m.way(&[(48.0, 10.0), (48.0, 60.0)], "line_thin");
+    let br = m.way(&[(48.0 + W, 10.0), (48.0 + W, 60.0)], "line_thin");
+    m.lanelet(bl, br, &[], &[]);
+    let tl = m.way(&[(45.0, 0.0), (47.0, 3.0), (48.0, 10.0)], "virtual");
+    let tr = m.way(&[(45.0, -W), (50.0, 2.0), (48.0 + W, 10.0)], "virtual");
+    m.lanelet(tl, tr, &[("turn_direction", "left")], &[]);
+    let (out, _) = to_road_osm(&m.doc, &Options::default()).unwrap();
+    let r = roads(&out);
+    let lat_of = |id: &Id| (out.nodes[id].lat - LAT0) * 111_320.0;
+    // the node where the branch leaves lies on the road (y = 0), not up the branch
+    let branch = r
+        .iter()
+        .find(|w| w.tags.contains_key("oneway"))
+        .expect("the branch");
+    let ends = [branch.nodes[0], *branch.nodes.last().unwrap()];
+    let at_road = ends
+        .iter()
+        .map(lat_of)
+        .fold(f64::INFINITY, |a, b| a.min(b.abs()));
+    assert!(at_road < 0.1, "{at_road}");
+}

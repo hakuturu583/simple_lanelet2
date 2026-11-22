@@ -266,6 +266,38 @@ fn lerp(a: &P3, b: &P3, t: f64) -> P3 {
     ]
 }
 
+/// Two arms leaving a junction this close to opposite directions (cosine) are one road
+/// running through it.
+const THROUGH_COS: f64 = -0.95;
+
+/// `p` moved onto the segment between the two ends of the one road that runs straight through
+/// the junction, when exactly one pair of its arms is such a road and the junction has
+/// three arms (a T or a branch); otherwise `p`.
+fn on_through_road(arms: &[(P3, [f64; 2])], p: P3) -> P3 {
+    if arms.len() != 3 {
+        return p;
+    }
+    let mut through = Vec::new();
+    for i in 0..arms.len() {
+        for j in i + 1..arms.len() {
+            let (a, b) = (&arms[i], &arms[j]);
+            if a.1[0] * b.1[0] + a.1[1] * b.1[1] < THROUGH_COS {
+                through.push((a.0, b.0));
+            }
+        }
+    }
+    let [(a, b)] = through.as_slice() else {
+        return p;
+    };
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let len2 = dx * dx + dy * dy;
+    if len2 == 0.0 {
+        return p;
+    }
+    let t = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2).clamp(0.0, 1.0);
+    [a[0] + t * dx, a[1] + t * dy, a[2] + t * (b[2] - a[2])]
+}
+
 /// Convex hull of the points' x, y (Andrew's monotone chain), counter-clockwise.
 fn convex_hull(pts: &[P3]) -> Vec<[f64; 2]> {
     let mut p: Vec<[f64; 2]> = pts.iter().map(|q| [q[0], q[1]]).collect();
@@ -695,19 +727,6 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
         );
         id
     };
-    let mut set_node: HashMap<usize, (Id, P3, bool)> = HashMap::new();
-    for (root, (pts, is_junction)) in &set_points {
-        let n = pts.len() as f64;
-        let p = [
-            pts.iter().map(|q| q[0]).sum::<f64>() / n,
-            pts.iter().map(|q| q[1]).sum::<f64>() / n,
-            pts.iter().map(|q| q[2]).sum::<f64>() / n,
-        ];
-        let id = new_node(&mut out, p, Tags::new());
-        set_node.insert(*root, (id, p, *is_junction));
-    }
-    report.junctions = set_node.values().filter(|v| v.2).count();
-
     // a carriageway whose two ends meet in one intersection, with its middle inside the
     // intersection's turn lanelets, is a stretch a turn lane runs alongside (a right-turn
     // lane that leaves before a short through stretch and rejoins after it). Written, it
@@ -730,6 +749,42 @@ pub fn to_road_osm(doc: &Document, options: &Options) -> Result<(Document, Repor
         })
         .collect();
     report.inside_junctions = inside.iter().filter(|&&b| b).count();
+
+    // where the roads leave each junction: (end point, unit direction away from the junction)
+    let mut arms: HashMap<usize, Vec<(P3, [f64; 2])>> = HashMap::new();
+    for (k, w) in ways.iter().enumerate().filter(|&(k, _)| !inside[k]) {
+        let n = w.line.len();
+        for (side, p, q) in [(0, w.line[0], w.line[1]), (1, w.line[n - 1], w.line[n - 2])] {
+            let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
+            let len = dx.hypot(dy);
+            if len > 0.0 {
+                arms.entry(ends.find(2 * k + side))
+                    .or_default()
+                    .push((p, [dx / len, dy / len]));
+            }
+        }
+    }
+    let mut set_node: HashMap<usize, (Id, P3, bool)> = HashMap::new();
+    for (root, (pts, is_junction)) in &set_points {
+        let n = pts.len() as f64;
+        let mut p = [
+            pts.iter().map(|q| q[0]).sum::<f64>() / n,
+            pts.iter().map(|q| q[1]).sum::<f64>() / n,
+            pts.iter().map(|q| q[2]).sum::<f64>() / n,
+        ];
+        // a road that runs straight through a junction where one other road branches off
+        // (a rotary entrance, a T): the turn lanelets swing toward the branch, so their
+        // centre is off the through road and the through road would bend to reach it. The
+        // node goes on the line between the through road's two ends instead.
+        if *is_junction {
+            if let Some(a) = arms.get(root) {
+                p = on_through_road(a, p);
+            }
+        }
+        let id = new_node(&mut out, p, Tags::new());
+        set_node.insert(*root, (id, p, *is_junction));
+    }
+    report.junctions = set_node.values().filter(|v| v.2).count();
 
     // -- levels -----------------------------------------------------------------------------
     let level = levels(&ways);
